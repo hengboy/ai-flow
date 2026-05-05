@@ -412,35 +412,15 @@ ensure_reviewable_git_changes
 require_root_cause_review_loop_record
 
 # --- 检测审查引擎 ---
-OPENCODE_MODEL="zhipuai-coding-plan/glm-5.1"
-
-reasoning_to_variant() {
-    case "$1" in
-        xhigh|maximum) echo "max" ;;
-        high)          echo "high" ;;
-        medium|med)    echo "minimal" ;;
-        low|minimal)   echo "minimal" ;;
-        *)             echo "max" ;;
-    esac
-}
-
 if [[ "$MODEL" == zhipuai-coding-plan/* ]] || [[ "$MODEL" == glm* ]]; then
-    # 指定了 OpenCode 模型，必须使用 opencode
-    if ! command -v opencode >/dev/null 2>&1; then
-        echo "错误: 模型 ${MODEL} 需要通过 opencode 调用，但 opencode 未安装"
-        exit 1
-    fi
-    ENGINE="opencode"
-    REASONING=$(reasoning_to_variant "${REASONING}")
-elif command -v codex >/dev/null 2>&1; then
-    ENGINE="codex"
-elif command -v opencode >/dev/null 2>&1; then
-    ENGINE="opencode"
-    MODEL="$OPENCODE_MODEL"
-    REASONING=$(reasoning_to_variant "${REASONING}")
-    echo ">>> Codex 不可用，降级使用 OpenCode (${MODEL}) 审查"
-else
-    echo "错误: Codex 和 OpenCode 均不可用，无法执行审查"
+    echo "错误: OpenCode 模型 (${MODEL}) 请使用 opencode-review.sh"
+    echo "    用法: ~/.claude/workflows/opencode-review.sh {需求关键词}"
+    exit 1
+fi
+
+if ! command -v codex >/dev/null 2>&1; then
+    echo "错误: codex 未安装，无法执行审查"
+    echo "    如需使用 OpenCode，请执行: ~/.claude/workflows/opencode-review.sh {需求关键词}"
     exit 1
 fi
 
@@ -448,7 +428,7 @@ echo ">>> 匹配到状态: $SLUG [$PLAN_STATUS]"
 echo "    对比计划: $PLAN_FILE"
 echo "    审查模式: $REVIEW_MODE"
 echo "    审查轮次: $CURRENT_ROUND"
-echo "    审查引擎: $ENGINE ($MODEL)"
+echo "    审查引擎: codex ($MODEL)"
 echo "    输出文件: $REPORT_FILE"
 if [ -n "$PREV_REVIEW" ]; then
     echo "    上一轮报告: ${PREV_REVIEW}（用于缺陷正文与追踪）"
@@ -552,18 +532,9 @@ $TEMPLATE_CONTENT
 PROMPT_END
 )
 
-echo ">>> 调用 ${ENGINE} (${MODEL}) 审查中..."
-if [ "$ENGINE" = "codex" ]; then
-    CODEX_ARGS=(exec -m "$MODEL" -c "model_reasoning_effort=\"$REASONING\"" --sandbox workspace-write -o "$REPORT_FILE")
-    printf '%s\n' "$REVIEW_PROMPT" | codex "${CODEX_ARGS[@]}"
-else
-    opencode run \
-        -m "$MODEL" \
-        --variant "$REASONING" \
-        --dangerously-skip-permissions \
-        --format default \
-        "$REVIEW_PROMPT" > "$REPORT_FILE"
-fi
+echo ">>> 调用 codex ($MODEL) 审查中..."
+CODEX_ARGS=(exec -m "$MODEL" -c "model_reasoning_effort=\"$REASONING\"" --sandbox workspace-write -o "$REPORT_FILE")
+printf '%s\n' "$REVIEW_PROMPT" | codex "${CODEX_ARGS[@]}"
 
 echo ""
 echo ">>> 审查报告已生成: $REPORT_FILE"
