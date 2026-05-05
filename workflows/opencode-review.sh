@@ -1,6 +1,6 @@
 #!/bin/bash
-# codex-review.sh — 调用 Codex 审查代码变更并生成报告
-# 用法: codex-review.sh {需求简称} [模型名] [推理强度] [轮次]
+# opencode-review.sh — 调用 OpenCode 审查代码变更并生成报告
+# 用法: opencode-review.sh {需求简称} [模型名] [推理强度] [轮次]
 
 set -euo pipefail
 
@@ -279,7 +279,10 @@ PY
 }
 
 if [ -z "${1:-}" ]; then
-    echo "用法: codex-review.sh {需求关键词} [模型名] [推理强度] [轮次]"
+    echo "用法: opencode-review.sh {需求关键词} [模型名] [推理强度] [轮次]"
+    echo ""
+    echo "  默认模型: zhipuai-coding-plan/glm-5.1"
+    echo "  默认推理: max"
     echo ""
     echo "可用状态："
     if [ -d "$FLOW_DIR/state" ]; then
@@ -307,8 +310,8 @@ PY
     exit 1
 fi
 
-MODEL="${2:-gpt-5.4}"
-REASONING="${3:-xhigh}"
+MODEL="${2:-zhipuai-coding-plan/glm-5.1}"
+REASONING="${3:-max}"
 ROUND_OVERRIDE="${4:-}"
 
 MATCHED_STATES=()
@@ -411,36 +414,9 @@ mkdir -p "$(dirname "$REPORT_FILE")"
 ensure_reviewable_git_changes
 require_root_cause_review_loop_record
 
-# --- 检测审查引擎 ---
-OPENCODE_MODEL="zhipuai-coding-plan/glm-5.1"
-
-reasoning_to_variant() {
-    case "$1" in
-        xhigh|maximum) echo "max" ;;
-        high)          echo "high" ;;
-        medium|med)    echo "minimal" ;;
-        low|minimal)   echo "minimal" ;;
-        *)             echo "max" ;;
-    esac
-}
-
-if [[ "$MODEL" == zhipuai-coding-plan/* ]] || [[ "$MODEL" == glm* ]]; then
-    # 指定了 OpenCode 模型，必须使用 opencode
-    if ! command -v opencode >/dev/null 2>&1; then
-        echo "错误: 模型 ${MODEL} 需要通过 opencode 调用，但 opencode 未安装"
-        exit 1
-    fi
-    ENGINE="opencode"
-    REASONING=$(reasoning_to_variant "${REASONING}")
-elif command -v codex >/dev/null 2>&1; then
-    ENGINE="codex"
-elif command -v opencode >/dev/null 2>&1; then
-    ENGINE="opencode"
-    MODEL="$OPENCODE_MODEL"
-    REASONING=$(reasoning_to_variant "${REASONING}")
-    echo ">>> Codex 不可用，降级使用 OpenCode (${MODEL}) 审查"
-else
-    echo "错误: Codex 和 OpenCode 均不可用，无法执行审查"
+# --- 检查 OpenCode 可用性 ---
+if ! command -v opencode >/dev/null 2>&1; then
+    echo "错误: opencode 未安装，无法执行审查"
     exit 1
 fi
 
@@ -448,7 +424,7 @@ echo ">>> 匹配到状态: $SLUG [$PLAN_STATUS]"
 echo "    对比计划: $PLAN_FILE"
 echo "    审查模式: $REVIEW_MODE"
 echo "    审查轮次: $CURRENT_ROUND"
-echo "    审查引擎: $ENGINE ($MODEL)"
+echo "    审查引擎: opencode ($MODEL)"
 echo "    输出文件: $REPORT_FILE"
 if [ -n "$PREV_REVIEW" ]; then
     echo "    上一轮报告: ${PREV_REVIEW}（用于缺陷正文与追踪）"
@@ -483,7 +459,7 @@ case "$REVIEW_MODE:$CURRENT_ROUND" in
 esac
 
 HISTORY_CONTEXT=""
-HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入“4. 缺陷清单”，并同步更新“6. 缺陷修复追踪”。\n6. “3.6 缺陷族覆盖度”至少要覆盖 plan 中与本次变更相关的缺陷族，并说明已覆盖 / 未覆盖 / 需人工验证。'
+HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入"4. 缺陷清单"，并同步更新"6. 缺陷修复追踪"。\n6. "3.6 缺陷族覆盖度"至少要覆盖 plan 中与本次变更相关的缺陷族，并说明已覆盖 / 未覆盖 / 需人工验证。'
 if [ -n "$PREV_REVIEW" ] && [ -f "$PREV_REVIEW" ]; then
     PREV_DEFECTS=$(extract_defect_section "$PREV_REVIEW")
     PREV_TRACKING=$(extract_tracking_section "$PREV_REVIEW")
@@ -499,11 +475,11 @@ $PREV_TRACKING
 EOF
 )
     HISTORY_RULES=$(cat <<'EOF'
-5. 必须同时参考上一轮“4. 缺陷清单”和“6. 缺陷修复追踪”：
+5. 必须同时参考上一轮"4. 缺陷清单"和"6. 缺陷修复追踪"：
    - 已修复项要重新验证；修复无效或不完整时，必须改回 [待修复] 并重新列入缺陷清单
-   - 上一轮涉及的缺陷族，本轮必须在“3.6 缺陷族覆盖度”中逐项写出已覆盖 / 未覆盖 / 需人工验证及原因
+   - 上一轮涉及的缺陷族，本轮必须在"3.6 缺陷族覆盖度"中逐项写出已覆盖 / 未覆盖 / 需人工验证及原因
    - 不要只继承 DEF 编号状态，要继承上一轮严重缺陷的正文语义、影响面和修复追踪
-6. 仅列出当前仍未修复的缺陷和新增缺陷到“4. 缺陷清单”；“6. 缺陷修复追踪”需要保留并更新历史条目。
+6. 仅列出当前仍未修复的缺陷和新增缺陷到"4. 缺陷清单"；"6. 缺陷修复追踪"需要保留并更新历史条目。
 EOF
 )
 fi
@@ -512,18 +488,18 @@ REVIEW_PROMPT=$(cat <<PROMPT_END
 你是高级代码审查员。请执行以下审查任务：
 
 1. 先运行 \`git status --porcelain\` 列出所有 staged、unstaged、untracked 文件，然后对每个变更文件审查其内容（不仅看 git diff，还要读取新增的 untracked 文件）
-2. 对比以下实施计划，审查变更是否完整实现了计划中的所有步骤，并检查 Step 的“本轮 review 预期关注面”“本步关闭条件”是否被真实满足
-3. **计划外变更识别**：识别所有变更（包括 untracked 新文件）中 plan 未描述的部分，判断是合理补充还是偏差，记录到模板的“2.1 计划外变更识别”中
+2. 对比以下实施计划，审查变更是否完整实现了计划中的所有步骤，并检查 Step 的"本轮 review 预期关注面""本步关闭条件"是否被真实满足
+3. **计划外变更识别**：识别所有变更（包括 untracked 新文件）中 plan 未描述的部分，判断是合理补充还是偏差，记录到模板的"2.1 计划外变更识别"中
    - 已经同步写入 plan 的需求变动视为计划内变更，不得再按计划外变更处理
    - execute 完成后的额外变动必须纳入审查，但不得默认要求恢复或删除
-   - 只有明确无关、有害、破坏计划目标或引入风险的额外变动，才判定为“回退”
-   - 合理补充判定为“接受”；新增功能或业务语义不确定时判定为“需确认”
+   - 只有明确无关、有害、破坏计划目标或引入风险的额外变动，才判定为"回退"
+   - 合理补充判定为"接受"；新增功能或业务语义不确定时判定为"需确认"
 4. $REVIEW_SCOPE_GUIDANCE
 $HISTORY_RULES
-7. 允许执行**有边界的定向验证**，优先使用 plan 的“4.4 定向验证矩阵”：
+7. 允许执行**有边界的定向验证**，优先使用 plan 的"4.4 定向验证矩阵"：
    - 允许：\`test-compile\`、单个测试类/测试用例、单个 Mapper/集成用例、轻量 build/check
-   - 禁止：无边界全量回归，除非 plan 的“4.4 定向验证矩阵”明确要求
-   - 非文档代码变更时，必须在“1.2 定向验证执行证据”中写出本轮实际执行的命令、结果、结果含义；未执行也要说明原因和人工验证边界
+   - 禁止：无边界全量回归，除非 plan 的"4.4 定向验证矩阵"明确要求
+   - 非文档代码变更时，必须在"1.2 定向验证执行证据"中写出本轮实际执行的命令、结果、结果含义；未执行也要说明原因和人工验证边界
 8. 检查代码质量、规范性、安全性、性能，并按缺陷族组织思路，不要只做逐文件表面扫描
 
 实施计划内容：
@@ -537,32 +513,35 @@ $TEMPLATE_CONTENT
 - **问题优先**：优先报告会导致行为错误、回归、安全风险、数据损坏、测试缺失的具体问题
 - **证据完整**：每个问题必须给出文件位置、影响、复现或推理依据、修复建议
 - **严重级别**：Critical/Important 问题必须进入缺陷清单；Minor 建议进入建议改进
-- **对抗性审查**：不要只看表面实现，要模拟攻击者思维——“这段代码在什么情况下会出错？”
+- **对抗性审查**：不要只看表面实现，要模拟攻击者思维——"这段代码在什么情况下会出错？"
 - **数据流追踪**：追踪关键参数从 Controller → Service → Mapper 的完整传递路径，检查是否有类型错误、丢失、越权
 - **边界思维**：空值、空集合、null、最大值、分页边界、并发修改，这些是最容易出问题的地方
-- **缺陷族思维**：结合 plan 里的“2.6 高风险路径与缺陷族”和“4.4 定向验证矩阵”，按家族扫描相邻风险，不要只修或只报单一症状
-- **不要放过**：如果不确定是否有问题，标记为“需要人工验证”，不要跳过或静默通过
+- **缺陷族思维**：结合 plan 里的"2.6 高风险路径与缺陷族"和"4.4 定向验证矩阵"，按家族扫描相邻风险，不要只修或只报单一症状
+- **不要放过**：如果不确定是否有问题，标记为"需要人工验证"，不要跳过或静默通过
 
 输出要求：
 1. 填充模板中的所有占位符，**1.1 审查上下文**、**1.2 定向验证执行证据**、**3.5 逻辑正确性**、**3.6 缺陷族覆盖度** 必须填写，不能省略
 2. 顶部元数据中的 \`需求简称\` 必须是 ${SLUG}，\`审查模式\` 必须是 ${REVIEW_MODE}，\`审查轮次\` 必须是 ${CURRENT_ROUND}，\`审查结果\` 只能填写 passed 或 failed
-3. “3.6 缺陷族覆盖度”必须覆盖 plan 里相关缺陷族，以及上一轮严重缺陷涉及的缺陷族（如果存在）
+3. "3.6 缺陷族覆盖度"必须覆盖 plan 里相关缺陷族，以及上一轮严重缺陷涉及的缺陷族（如果存在）
 4. 首行必须保持 \`# 审查报告：${PLAN_TITLE}\`
 5. 直接输出完整的审查报告 Markdown 内容，不要包含其他解释文字
 PROMPT_END
 )
 
-echo ">>> 调用 ${ENGINE} (${MODEL}) 审查中..."
-if [ "$ENGINE" = "codex" ]; then
-    CODEX_ARGS=(exec -m "$MODEL" -c "model_reasoning_effort=\"$REASONING\"" --sandbox workspace-write -o "$REPORT_FILE")
-    printf '%s\n' "$REVIEW_PROMPT" | codex "${CODEX_ARGS[@]}"
-else
-    opencode run \
-        -m "$MODEL" \
-        --variant "$REASONING" \
-        --dangerously-skip-permissions \
-        --format default \
-        "$REVIEW_PROMPT" > "$REPORT_FILE"
+echo ">>> 调用 opencode ($MODEL) 审查中..."
+opencode run \
+    -m "$MODEL" \
+    --variant "$REASONING" \
+    --dangerously-skip-permissions \
+    --format default \
+    "$REVIEW_PROMPT" > "$REPORT_FILE"
+
+# --- 截掉思考过程（opencode --format default 可能在报告前输出思考文字） ---
+if grep -q '^# 审查报告：' "$REPORT_FILE"; then
+    REPORT_START=$(grep -n '^# 审查报告：' "$REPORT_FILE" | head -1 | cut -d: -f1)
+    if [ "$REPORT_START" -gt 1 ]; then
+        sed -i '' "1,$((REPORT_START - 1))d" "$REPORT_FILE"
+    fi
 fi
 
 echo ""
@@ -718,7 +697,7 @@ fi
 echo "    结构校验通过"
 
 # --- 严重度推导审查结果 ---
-# 由 shell 脚本根据报告内容推导，不依赖 Codex 自评
+# 由 shell 脚本根据报告内容推导
 # 规则：Critical/Important 存在 → failed；任何 [待修复] → failed；
 #       只有 Minor → passed_with_notes；无任何缺陷 → passed
 SEVERITY_CRITICAL=$(grep -cE '^\| (DEF-[0-9]+|SUG-[0-9]+) \| (Critical|Important) ' "$REPORT_FILE" || true)
@@ -737,7 +716,6 @@ echo ""
 echo ">>> 严重度推导: Critical/Important=${SEVERITY_CRITICAL}, Minor=${SEVERITY_MINOR}, 待修复=${TODO_MARKERS}"
 echo "    推导结果: ${DERIVED_RESULT}"
 
-# 校验 Codex 自评结果与推导结果是否一致
 if [ "$META_RESULT" != "$DERIVED_RESULT" ]; then
     echo "    警告: 审查引擎自评结果为 ${META_RESULT}，但 shell 推导为 ${DERIVED_RESULT}"
     echo "    以 shell 推导结果为准，将覆盖为 ${DERIVED_RESULT}"
