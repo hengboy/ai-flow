@@ -7,9 +7,12 @@ set -euo pipefail
 PROJECT_DIR="$(pwd)"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 REPORTS_DIR="$FLOW_DIR/reports"
-TEMPLATE="$HOME/.claude/templates/review-template.md"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEMPLATE="$SKILL_DIR/templates/review-template.md"
+PROMPT_TEMPLATE="$SKILL_DIR/prompts/review-generation.md"
+AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
+FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
 
 display_path() {
     local base="$1"
@@ -22,6 +25,40 @@ display_path() {
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
+}
+
+render_prompt_template() {
+    local prompt_template="$1"
+    AI_FLOW_REVIEW_SCOPE_GUIDANCE="$REVIEW_SCOPE_GUIDANCE" \
+    AI_FLOW_HISTORY_RULES="$HISTORY_RULES" \
+    AI_FLOW_PLAN_CONTENT="$PLAN_CONTENT" \
+    AI_FLOW_HISTORY_CONTEXT="$HISTORY_CONTEXT" \
+    AI_FLOW_TEMPLATE_CONTENT="$TEMPLATE_CONTENT" \
+    AI_FLOW_SLUG="$SLUG" \
+    AI_FLOW_REVIEW_MODE="$REVIEW_MODE" \
+    AI_FLOW_CURRENT_ROUND="$CURRENT_ROUND" \
+    AI_FLOW_PLAN_TITLE="$PLAN_TITLE" \
+    python3 - "$prompt_template" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+replacements = {
+    "__AI_FLOW_REVIEW_SCOPE_GUIDANCE__": os.environ["AI_FLOW_REVIEW_SCOPE_GUIDANCE"],
+    "__AI_FLOW_HISTORY_RULES__": os.environ["AI_FLOW_HISTORY_RULES"],
+    "__AI_FLOW_PLAN_CONTENT__": os.environ["AI_FLOW_PLAN_CONTENT"],
+    "__AI_FLOW_HISTORY_CONTEXT__": os.environ["AI_FLOW_HISTORY_CONTEXT"],
+    "__AI_FLOW_TEMPLATE_CONTENT__": os.environ["AI_FLOW_TEMPLATE_CONTENT"],
+    "__AI_FLOW_SLUG__": os.environ["AI_FLOW_SLUG"],
+    "__AI_FLOW_REVIEW_MODE__": os.environ["AI_FLOW_REVIEW_MODE"],
+    "__AI_FLOW_CURRENT_ROUND__": os.environ["AI_FLOW_CURRENT_ROUND"],
+    "__AI_FLOW_PLAN_TITLE__": os.environ["AI_FLOW_PLAN_TITLE"],
+}
+for needle, value in replacements.items():
+    text = text.replace(needle, value)
+sys.stdout.write(text)
+PY
 }
 
 state_field() {
@@ -153,6 +190,75 @@ report_section_between() {
         $0 ~ end && in_section {exit}
         in_section {print}
     ' "$report_file"
+}
+
+validate_optional_markers() {
+    python3 - "$REPORT_FILE" <<'PY'
+import sys
+from pathlib import Path
+
+
+def parse_rows(lines):
+    rows = []
+    for line in lines:
+        if not line.startswith("|"):
+            continue
+        cells = [part.strip() for part in line.split("|")[1:-1]]
+        if not cells:
+            continue
+        if cells[0] in {"#", "缺陷编号"}:
+            continue
+        if set(cells[0]) == {"-"}:
+            continue
+        rows.append(cells)
+    return rows
+
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+lines = text.splitlines()
+errors = []
+section = None
+current = []
+tracking = []
+
+for line in lines:
+    if line.startswith("## 4. 缺陷清单"):
+        section = "current"
+        continue
+    if line.startswith("## 5. 审查结论"):
+        section = None
+    if line.startswith("## 6. 缺陷修复追踪"):
+        section = "tracking"
+        continue
+    if section == "current":
+        current.append(line)
+    elif section == "tracking":
+        tracking.append(line)
+
+for cells in parse_rows(current):
+    issue_id = cells[0]
+    if issue_id.startswith("DEF-") and "[可选]" in cells:
+        errors.append(f"{issue_id} 为阻塞缺陷，不能标记为 [可选]")
+    if issue_id.startswith("SUG-"):
+        severity = cells[1] if len(cells) > 1 else ""
+        status = cells[-1] if cells else ""
+        if severity != "Minor":
+            errors.append(f"{issue_id} 作为建议项时严重级别必须是 Minor")
+        if status == "[待修复]":
+            errors.append(f"{issue_id} 为 Minor 建议，未处理时必须标记为 [可选] 而不是 [待修复]")
+
+for cells in parse_rows(tracking):
+    issue_id = cells[0]
+    status = cells[2] if len(cells) > 2 else ""
+    if issue_id.startswith("DEF-") and status == "[可选]":
+        errors.append(f"{issue_id} 为阻塞缺陷追踪项，不能标记为 [可选]")
+    if issue_id.startswith("SUG-") and status == "[待修复]":
+        errors.append(f"{issue_id} 为 Minor 建议追踪项，未处理时必须标记为 [可选]")
+
+if errors:
+    sys.stderr.write("\n".join(errors) + "\n")
+    sys.exit(1)
+PY
 }
 
 require_root_cause_review_loop_record() {
@@ -432,6 +538,12 @@ fi
 echo ""
 
 PLAN_CONTENT=$(cat "$PLAN_FILE")
+for required_file in "$FLOW_STATE_SH" "$TEMPLATE" "$PROMPT_TEMPLATE"; do
+    if [ ! -f "$required_file" ]; then
+        echo "错误: 缺少运行时资源: $required_file"
+        exit 1
+    fi
+done
 TEMPLATE_CONTENT=$(sed \
     -e "s/{需求名称}/$(escape_sed_replacement "$PLAN_TITLE")/g" \
     -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
@@ -475,58 +587,17 @@ $PREV_TRACKING
 EOF
 )
     HISTORY_RULES=$(cat <<'EOF'
-5. 必须同时参考上一轮"4. 缺陷清单"和"6. 缺陷修复追踪"：
+5. 必须同时参考上一轮“4. 缺陷清单”和“6. 缺陷修复追踪”：
    - 已修复项要重新验证；修复无效或不完整时，必须改回 [待修复] 并重新列入缺陷清单
-   - 上一轮涉及的缺陷族，本轮必须在"3.6 缺陷族覆盖度"中逐项写出已覆盖 / 未覆盖 / 需人工验证及原因
+   - Minor 建议未处理时保持 [可选]；只有严重度升级为 Critical/Important 时才改为 [待修复]
+   - 上一轮涉及的缺陷族，本轮必须在“3.6 缺陷族覆盖度”中逐项写出已覆盖 / 未覆盖 / 需人工验证及原因
    - 不要只继承 DEF 编号状态，要继承上一轮严重缺陷的正文语义、影响面和修复追踪
-6. 仅列出当前仍未修复的缺陷和新增缺陷到"4. 缺陷清单"；"6. 缺陷修复追踪"需要保留并更新历史条目。
+6. 仅列出当前仍未修复的缺陷和新增缺陷到“4. 缺陷清单”；“6. 缺陷修复追踪”需要保留并更新历史条目。
 EOF
 )
 fi
 
-REVIEW_PROMPT=$(cat <<PROMPT_END
-你是高级代码审查员。请执行以下审查任务：
-
-1. 先运行 \`git status --porcelain\` 列出所有 staged、unstaged、untracked 文件，然后对每个变更文件审查其内容（不仅看 git diff，还要读取新增的 untracked 文件）
-2. 对比以下实施计划，审查变更是否完整实现了计划中的所有步骤，并检查 Step 的"本轮 review 预期关注面""本步关闭条件"是否被真实满足
-3. **计划外变更识别**：识别所有变更（包括 untracked 新文件）中 plan 未描述的部分，判断是合理补充还是偏差，记录到模板的"2.1 计划外变更识别"中
-   - 已经同步写入 plan 的需求变动视为计划内变更，不得再按计划外变更处理
-   - execute 完成后的额外变动必须纳入审查，但不得默认要求恢复或删除
-   - 只有明确无关、有害、破坏计划目标或引入风险的额外变动，才判定为"回退"
-   - 合理补充判定为"接受"；新增功能或业务语义不确定时判定为"需确认"
-4. $REVIEW_SCOPE_GUIDANCE
-$HISTORY_RULES
-7. 允许执行**有边界的定向验证**，优先使用 plan 的"4.4 定向验证矩阵"：
-   - 允许：\`test-compile\`、单个测试类/测试用例、单个 Mapper/集成用例、轻量 build/check
-   - 禁止：无边界全量回归，除非 plan 的"4.4 定向验证矩阵"明确要求
-   - 非文档代码变更时，必须在"1.2 定向验证执行证据"中写出本轮实际执行的命令、结果、结果含义；未执行也要说明原因和人工验证边界
-8. 检查代码质量、规范性、安全性、性能，并按缺陷族组织思路，不要只做逐文件表面扫描
-
-实施计划内容：
-$PLAN_CONTENT$HISTORY_CONTEXT
-
-审查模板结构：
-$TEMPLATE_CONTENT
-
-审查原则（必须严格执行）：
-- **精确上下文**：只基于 plan 文件、上一轮缺陷正文/追踪、git status、git diff、untracked 文件内容、实际文件内容和本轮定向验证结果审查，不依赖执行者会话历史或口头解释
-- **问题优先**：优先报告会导致行为错误、回归、安全风险、数据损坏、测试缺失的具体问题
-- **证据完整**：每个问题必须给出文件位置、影响、复现或推理依据、修复建议
-- **严重级别**：Critical/Important 问题必须进入缺陷清单；Minor 建议进入建议改进
-- **对抗性审查**：不要只看表面实现，要模拟攻击者思维——"这段代码在什么情况下会出错？"
-- **数据流追踪**：追踪关键参数从 Controller → Service → Mapper 的完整传递路径，检查是否有类型错误、丢失、越权
-- **边界思维**：空值、空集合、null、最大值、分页边界、并发修改，这些是最容易出问题的地方
-- **缺陷族思维**：结合 plan 里的"2.6 高风险路径与缺陷族"和"4.4 定向验证矩阵"，按家族扫描相邻风险，不要只修或只报单一症状
-- **不要放过**：如果不确定是否有问题，标记为"需要人工验证"，不要跳过或静默通过
-
-输出要求：
-1. 填充模板中的所有占位符，**1.1 审查上下文**、**1.2 定向验证执行证据**、**3.5 逻辑正确性**、**3.6 缺陷族覆盖度** 必须填写，不能省略
-2. 顶部元数据中的 \`需求简称\` 必须是 ${SLUG}，\`审查模式\` 必须是 ${REVIEW_MODE}，\`审查轮次\` 必须是 ${CURRENT_ROUND}，\`审查结果\` 只能填写 passed 或 failed
-3. "3.6 缺陷族覆盖度"必须覆盖 plan 里相关缺陷族，以及上一轮严重缺陷涉及的缺陷族（如果存在）
-4. 首行必须保持 \`# 审查报告：${PLAN_TITLE}\`
-5. 直接输出完整的审查报告 Markdown 内容，不要包含其他解释文字
-PROMPT_END
-)
+REVIEW_PROMPT=$(render_prompt_template "$PROMPT_TEMPLATE")
 
 echo ">>> 调用 opencode ($MODEL) 审查中..."
 opencode run \
@@ -664,13 +735,22 @@ fi
 if ! previous_family_error=$(validate_previous_family_coverage 2>&1); then
     ERRORS="${ERRORS}${previous_family_error}\n"
 fi
+if ! optional_marker_error=$(validate_optional_markers 2>&1); then
+    ERRORS="${ERRORS}${optional_marker_error}\n"
+fi
 
 if [ "$META_RESULT" = "passed" ]; then
     if grep -q '\[待修复\]' "$REPORT_FILE"; then
         ERRORS="${ERRORS}审查结果为 passed，但报告仍包含 [待修复] 项\n"
     fi
+    if grep -q '\[可选\]' "$REPORT_FILE"; then
+        ERRORS="${ERRORS}审查结果为 passed，但报告仍包含 [可选] 的 Minor 建议\n"
+    fi
     if printf '%s\n' "$CONCLUSION_SECTION" | grep -qE '^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*\*\*需要修复\*\*'; then
         ERRORS="${ERRORS}审查结果为 passed，但审查结论勾选了需要修复\n"
+    fi
+    if printf '%s\n' "$CONCLUSION_SECTION" | grep -qE '^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*\*\*通过（附建议）\*\*'; then
+        ERRORS="${ERRORS}审查结果为 passed，但审查结论勾选了通过（附建议）\n"
     fi
     if printf '%s\n' "$OVERALL_SECTION" | grep -qE '^[[:space:]]*(需要修复|存在风险)([[:space:]]|[。；;，,、.]|$)'; then
         ERRORS="${ERRORS}审查结果为 passed，但总体评价描述为需要修复或存在风险\n"
@@ -682,6 +762,18 @@ if [ "$META_RESULT" = "passed_with_notes" ]; then
     fi
     if grep -q '\[待修复\]' "$REPORT_FILE"; then
         ERRORS="${ERRORS}审查结果为 passed_with_notes，但报告仍包含 [待修复] 项\n"
+    fi
+    if ! grep -qE '^\| SUG-[0-9]+ \| Minor ' "$REPORT_FILE"; then
+        ERRORS="${ERRORS}审查结果为 passed_with_notes，但报告缺少 Minor 建议项\n"
+    fi
+    if ! grep -q '\[可选\]' "$REPORT_FILE"; then
+        ERRORS="${ERRORS}审查结果为 passed_with_notes，但报告缺少 [可选] 的 Minor 状态标记\n"
+    fi
+    if printf '%s\n' "$CONCLUSION_SECTION" | grep -qE '^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*\*\*需要修复\*\*'; then
+        ERRORS="${ERRORS}审查结果为 passed_with_notes，但审查结论勾选了需要修复\n"
+    fi
+    if ! printf '%s\n' "$CONCLUSION_SECTION" | grep -qE '^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*\*\*通过（附建议）\*\*'; then
+        ERRORS="${ERRORS}审查结果为 passed_with_notes，但审查结论未勾选通过（附建议）\n"
     fi
 fi
 if [ "$META_RESULT" = "failed" ] && ! grep -qE '\[待修复\]|DEF-[0-9]+|SUG-[0-9]+' "$REPORT_FILE"; then
@@ -698,8 +790,8 @@ echo "    结构校验通过"
 
 # --- 严重度推导审查结果 ---
 # 由 shell 脚本根据报告内容推导
-# 规则：Critical/Important 存在 → failed；任何 [待修复] → failed；
-#       只有 Minor → passed_with_notes；无任何缺陷 → passed
+# 规则：Critical/Important 存在 → failed；任何阻塞 [待修复] → failed；
+#       只有 Minor（未处理项为 [可选]）→ passed_with_notes；无任何缺陷 → passed
 SEVERITY_CRITICAL=$(grep -cE '^\| (DEF-[0-9]+|SUG-[0-9]+) \| (Critical|Important) ' "$REPORT_FILE" || true)
 SEVERITY_MINOR=$(grep -cE '^\| (DEF-[0-9]+|SUG-[0-9]+) \| Minor ' "$REPORT_FILE" || true)
 TODO_MARKERS=$(grep -c '\[待修复\]' "$REPORT_FILE" || true)

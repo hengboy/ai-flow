@@ -1,0 +1,980 @@
+#!/bin/bash
+# codex-plan.sh — 调用 Codex 生成 draft plan，并在同一入口内完成计划审核
+# 用法: codex-plan.sh "需求描述" [英文简称] [模型名]
+
+set -euo pipefail
+
+if [ -z "${1:-}" ]; then
+    echo "用法: codex-plan.sh \"需求描述\" [英文简称] [模型名]"
+    echo "示例: codex-plan.sh \"新增用户权限管理模块\" user-permission"
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
+FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
+
+REQUIREMENT="$1"
+SLUG="${2:-}"
+MODEL="${3:-gpt-5.4}"
+PLAN_REVIEW_REASONING="${AI_FLOW_PLAN_REVIEW_REASONING:-xhigh}"
+PLAN_REVIEW_MAX_ROUNDS="${AI_FLOW_PLAN_MAX_REVIEW_ROUNDS:-3}"
+PLAN_REVIEW_OPENCODE_MODEL="${AI_FLOW_PLAN_OPENCODE_MODEL:-zhipuai-coding-plan/glm-5.1}"
+PROJECT_DIR="$(pwd)"
+FLOW_DIR="$PROJECT_DIR/.ai-flow"
+STATE_DIR="$FLOW_DIR/state"
+DATE_DIR="$(date +%Y%m%d)"
+PLANS_DIR="$FLOW_DIR/plans/$DATE_DIR"
+TEMPLATE="$SKILL_DIR/templates/plan-template.md"
+PLAN_PROMPT_TEMPLATE="$SKILL_DIR/prompts/plan-generation.md"
+PLAN_REVIEW_PROMPT_TEMPLATE="$SKILL_DIR/prompts/plan-review.md"
+PLAN_REVISION_PROMPT_TEMPLATE="$SKILL_DIR/prompts/plan-revision.md"
+PLAN_REVIEW_FALLBACK_ACTIVE=false
+PLAN_REVIEW_ENGINE=""
+PLAN_REVIEW_MODEL=""
+
+escape_sed_replacement() {
+    printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
+}
+
+render_prompt_template() {
+    local prompt_template="$1"
+    AI_FLOW_TEMPLATE_CONTENT="${TEMPLATE_CONTENT:-}" \
+    AI_FLOW_DETECT_STACK="${DETECT_STACK:-}" \
+    AI_FLOW_REQUIREMENT="$REQUIREMENT" \
+    AI_FLOW_SLUG="$SLUG" \
+    AI_FLOW_PLAN_CONTENT="${PLAN_CONTENT_FOR_PROMPT:-}" \
+    AI_FLOW_REVIEW_ITEMS="${PLAN_REVIEW_ITEMS_FOR_PROMPT:-}" \
+    python3 - "$prompt_template" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+replacements = {
+    "__AI_FLOW_TEMPLATE_CONTENT__": os.environ.get("AI_FLOW_TEMPLATE_CONTENT", ""),
+    "__AI_FLOW_DETECT_STACK__": os.environ.get("AI_FLOW_DETECT_STACK", ""),
+    "__AI_FLOW_REQUIREMENT__": os.environ["AI_FLOW_REQUIREMENT"],
+    "__AI_FLOW_SLUG__": os.environ["AI_FLOW_SLUG"],
+    "__AI_FLOW_PLAN_CONTENT__": os.environ.get("AI_FLOW_PLAN_CONTENT", ""),
+    "__AI_FLOW_REVIEW_ITEMS__": os.environ.get("AI_FLOW_REVIEW_ITEMS", ""),
+}
+for needle, value in replacements.items():
+    text = text.replace(needle, value)
+sys.stdout.write(text)
+PY
+}
+
+render_core_decisions() {
+    local plan_file="$1"
+    python3 - "$plan_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+lines = text.splitlines()
+steps = []
+current = None
+in_file_boundary = False
+
+for line in lines:
+    if line.startswith("### Step "):
+        if current:
+            steps.append(current)
+        current = {
+            "title": line.replace("### ", "", 1).strip(),
+            "goal": "",
+            "files": [],
+            "commands": [],
+        }
+        in_file_boundary = False
+        continue
+
+    if current is None:
+        continue
+
+    if line.startswith("**目标**："):
+        current["goal"] = line.replace("**目标**：", "", 1).strip()
+        continue
+
+    if line.startswith("**文件边界**："):
+        in_file_boundary = True
+        continue
+
+    if line.startswith("**") and not line.startswith("**文件边界**："):
+        in_file_boundary = False
+
+    if in_file_boundary:
+        match = re.match(r"-\s*(Create|Modify|Test):\s*`?([^`]+?)`?\s*[—-]\s*(.+)", line.strip())
+        if match:
+            current["files"].append({
+                "action": match.group(1),
+                "path": match.group(2).strip(),
+                "desc": match.group(3).strip(),
+            })
+        continue
+
+    command_match = re.search(r"命令：`?([^`]+)`?", line)
+    if command_match:
+        command = command_match.group(1).strip()
+        if command not in current["commands"]:
+            current["commands"].append(command)
+
+if current:
+    steps.append(current)
+
+if not steps:
+    print("- 未提取到可结构化的修改项，请以实施步骤中的文件边界和执行动作为准。")
+    sys.exit(0)
+
+for step in steps:
+    parts = []
+    if step["goal"]:
+        parts.append(f"目标是{step['goal']}")
+    if step["files"]:
+        file_summary = "；".join(
+            f"{item['action']} {item['path']}（{item['desc']}）"
+            for item in step["files"]
+        )
+        parts.append(f"修改项包括 {file_summary}")
+    if step["commands"]:
+        parts.append(f"关键验证命令：{step['commands'][0]}")
+    summary = "；".join(parts) if parts else "请按该 Step 的文件边界和执行动作执行。"
+    print(f"- {step['title']}：{summary}")
+PY
+}
+
+slug_exists() {
+    local candidate="$1"
+    if [ -f "$STATE_DIR/${candidate}.json" ]; then
+        return 0
+    fi
+    find "$FLOW_DIR/plans" -name "${candidate}.md" -type f 2>/dev/null | grep -q .
+}
+
+map_reasoning_to_opencode_variant() {
+    case "$1" in
+        xhigh) echo "max" ;;
+        high) echo "high" ;;
+        *) echo "minimal" ;;
+    esac
+}
+
+trim_generated_file_to_marker() {
+    local file="$1"
+    local marker="$2"
+    python3 - "$file" "$marker" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+marker = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+lines = text.splitlines()
+for index, line in enumerate(lines):
+    if line.startswith(marker):
+        trimmed = "\n".join(lines[index:])
+        if text.endswith("\n"):
+            trimmed += "\n"
+        path.write_text(trimmed, encoding="utf-8")
+        sys.exit(0)
+sys.exit(0)
+PY
+}
+
+ensure_requirement_literal() {
+    local plan_file="$1"
+    python3 - "$plan_file" "$REQUIREMENT" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+requirement = sys.argv[2].strip()
+text = path.read_text(encoding="utf-8")
+requirement_block = f"**原始需求（原文）**：\n{requirement}\n"
+pattern = re.compile(
+    r"(?ms)(\*\*原始需求（原文）\*\*：\n)(.*?)(?=\n\*\*[^*]+\*\*：|\n## |\Z)"
+)
+if pattern.search(text):
+    text = pattern.sub(requirement_block, text, count=1)
+else:
+    section_pattern = re.compile(r"(?ms)(## 1\. 需求概述\n\n.*?)(?=\n## 2\. )")
+    match = section_pattern.search(text)
+    if not match:
+        raise SystemExit("plan 缺少 ## 1. 需求概述，无法写入原始需求原文")
+    section = match.group(1)
+    non_goal = section.find("\n**非目标**：")
+    if non_goal != -1:
+        updated = section[:non_goal].rstrip() + "\n\n" + requirement_block + "\n" + section[non_goal + 1:]
+    else:
+        updated = section.rstrip() + "\n\n" + requirement_block
+    text = text[:match.start(1)] + updated + text[match.end(1):]
+path.write_text(text, encoding="utf-8")
+PY
+}
+
+save_plan_review_record_section() {
+    local plan_file="$1"
+    local output_file="$2"
+    python3 - "$plan_file" "$output_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"(?ms)^## 8\. 计划审核记录\n.*\Z", text)
+content = match.group(0) if match else ""
+Path(sys.argv[2]).write_text(content, encoding="utf-8")
+PY
+}
+
+restore_plan_review_record_section() {
+    local plan_file="$1"
+    local review_section_file="$2"
+    python3 - "$plan_file" "$review_section_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+plan_path = Path(sys.argv[1])
+section_text = Path(sys.argv[2]).read_text(encoding="utf-8").strip()
+if not section_text:
+    sys.exit(0)
+text = plan_path.read_text(encoding="utf-8").rstrip() + "\n"
+if re.search(r"(?m)^## 8\. 计划审核记录$", text):
+    text = re.sub(r"(?ms)^## 8\. 计划审核记录\n.*\Z", section_text + "\n", text, count=1)
+else:
+    text = text.rstrip() + "\n\n" + section_text + "\n"
+plan_path.write_text(text, encoding="utf-8")
+PY
+}
+
+validate_plan_structure() {
+    local plan_file="$1"
+    local phase="${2:-draft}"
+    local errors=""
+
+    if [ ! -s "$plan_file" ]; then
+        errors="${errors}计划文件为空或未生成\n"
+    else
+        local first_line
+        first_line=$(head -1 "$plan_file")
+        if ! echo "$first_line" | grep -qE '^# 实施计划：'; then
+            errors="${errors}首行必须是 '# 实施计划：...'\n"
+        fi
+        for section in \
+            "## 1. 需求概述" \
+            "## 2. 技术分析" \
+            "## 3. 实施步骤" \
+            "## 4. 测试计划" \
+            "## 5. 风险与注意事项" \
+            "## 6. 验收标准" \
+            "## 7. 需求变更记录" \
+            "## 8. 计划审核记录"; do
+            if ! grep -Fq "$section" "$plan_file"; then
+                errors="${errors}缺少章节: $section\n"
+            fi
+        done
+        for section in \
+            "### 2.6 高风险路径与缺陷族" \
+            "### 4.4 定向验证矩阵" \
+            "### 8.1 当前审核结论" \
+            "### 8.2 偏差与建议" \
+            "### 8.3 审核历史"; do
+            if ! grep -Fq "$section" "$plan_file"; then
+                errors="${errors}缺少强制小节: $section\n"
+            fi
+        done
+        if ! grep -Fq '**原始需求（原文）**' "$plan_file"; then
+            errors="${errors}缺少原始需求（原文）字段\n"
+        fi
+        if ! grep -q '^### Step ' "$plan_file"; then
+            errors="${errors}缺少可执行 Step\n"
+        fi
+        if ! grep -q '^- \[ \]' "$plan_file"; then
+            errors="${errors}缺少待执行复选框动作\n"
+        fi
+        if ! grep -q '命令：' "$plan_file"; then
+            errors="${errors}缺少验证命令\n"
+        fi
+        if ! grep -q '预期：' "$plan_file"; then
+            errors="${errors}缺少验证预期\n"
+        fi
+        if ! grep -q '\*\*本轮 review 预期关注面\*\*' "$plan_file"; then
+            errors="${errors}缺少 Step 级别的本轮 review 预期关注面\n"
+        fi
+        if ! grep -q '\*\*本步关闭条件\*\*' "$plan_file"; then
+            errors="${errors}缺少 Step 级别的本步关闭条件\n"
+        fi
+        if ! awk '
+            /^### 2\.6 高风险路径与缺陷族/ {in_section=1; next}
+            /^## / && in_section {exit}
+            in_section && /^\| .* \|/ {count++}
+            END {exit(count >= 2 ? 0 : 1)}
+        ' "$plan_file"; then
+            errors="${errors}2.6 高风险路径与缺陷族缺少有效表格内容\n"
+        fi
+        if ! awk '
+            /^### 4\.4 定向验证矩阵/ {in_section=1; next}
+            /^## / && in_section {exit}
+            in_section && /^\| .* \|/ {count++}
+            END {exit(count >= 2 ? 0 : 1)}
+        ' "$plan_file"; then
+            errors="${errors}4.4 定向验证矩阵缺少有效表格内容\n"
+        fi
+        if ! awk '
+            /^### 4\.4 定向验证矩阵/ {in_section=1; next}
+            /^## / && in_section {exit}
+            in_section && /`[^`]+`/ {found=1}
+            END {exit(found ? 0 : 1)}
+        ' "$plan_file"; then
+            errors="${errors}4.4 定向验证矩阵缺少确切命令\n"
+        fi
+        if grep -qE '^\# \[[^]]+\]' "$plan_file"; then
+            errors="${errors}plan 首行不允许再携带状态码\n"
+        fi
+
+        local -a plan_placeholders=(
+            "{需求名称}"
+            "{需求简称}"
+            "{YYYY-MM-DD}"
+            "{需求文档/口头描述/Jira 等}"
+            "{一句话说明要交付什么能力}"
+            "{简要描述业务背景、目标用户、预期效果}"
+            "{原始需求原文}"
+            "{明确本次不做什么，避免执行阶段扩范围}"
+            "{module}"
+            "{做什么}"
+            "{新增/修改的表结构、字段、索引等}"
+            "{是否引入新依赖、是否影响现有接口}"
+            "{file_path}"
+            "{这个文件负责什么}"
+            "{例如：SQL 查询链路}"
+            "{影响哪些接口/流程/数据}"
+            "{例如：条件遗漏、映射错误、结果集偏差}"
+            "{缺陷族名称}"
+            "{test-compile / 单测 / Mapper / 集成 / build / 人工验证}"
+            "{步骤标题}"
+            "{这一步完成后系统具备什么能力}"
+            "{新文件职责；没有则删除本行}"
+            "{修改点；没有则删除本行}"
+            "{测试覆盖什么；没有则删除本行}"
+            "{本步完成后 review 必须重点检查的缺陷族、关键路径和回归面}"
+            "{为什么读，了解什么；仅在需要参考现有代码范式、接口调用方或配置约束时保留}"
+            "{test_path}"
+            "{输入、操作、断言点}"
+            "{明确失败原因}"
+            "{exact_test_command}"
+            "{expected_failure_message}"
+            "{source_path}"
+            "{具体函数、类型、配置、分支逻辑、错误处理和边界条件}"
+            "{兼容性、权限、事务、性能或回退要求}"
+            "{changed_paths}"
+            "{可观察验收条件 1}"
+            "{可观察验收条件 2}"
+            "{修复/实现完成前必须通过的验证与证据，例如 test-compile、目标单测、Mapper 验证、报告补录}"
+            "{具体阻塞条件}"
+            "{需要测试的类/方法}"
+            "{需要覆盖的边界场景}"
+            "{按项目现有测试框架补充测试，例如 JUnit、pytest、Vitest 等}"
+            "{需要测试的接口/流程}"
+            "{完整回归命令，例如 npm test、pytest、go test ./...、bash tests/run.sh}"
+            "{必要的手工验证步骤；没有则删除}"
+            "{对应能力/链路}"
+            "{exact_command}"
+            "{如何判定关闭}"
+            "{可能的坑、需要特别注意的边界情况}"
+            "{可验证的验收条件 1}"
+            "{可验证的验收条件 2}"
+            "{YYYY-MM-DD HH:MM}"
+            "{执行过程中新增或调整的需求；无则保留空表}"
+            "{用户确认/文档同步/其他}"
+        )
+        local -a disallowed_state_schema_fields=(
+            '`requirement_key`:'
+            '`status`:'
+            '`steps`:'
+            '`verification_results`:'
+            '`change_register`:'
+        )
+        local placeholder
+        for placeholder in "${plan_placeholders[@]}"; do
+            if grep -Fq "$placeholder" "$plan_file"; then
+                errors="${errors}未替换的模板占位符: $placeholder\n"
+            fi
+        done
+        local field_marker
+        for field_marker in "${disallowed_state_schema_fields[@]}"; do
+            if grep -Fq "$field_marker" "$plan_file"; then
+                errors="${errors}计划中不得为状态文件设计自定义 schema 字段: $field_marker\n"
+            fi
+        done
+        if grep -qE 'TBD|TODO|后续补充|类似上一步|适当处理异常|根据情况处理' "$plan_file"; then
+            errors="${errors}包含不可执行描述或临时标记\n"
+        fi
+        if ! python3 - "$plan_file" "$REQUIREMENT" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+requirement = sys.argv[2].strip()
+match = re.search(
+    r"(?ms)\*\*原始需求（原文）\*\*：\n(.*?)(?=\n\*\*[^*]+\*\*：|\n## |\Z)",
+    text,
+)
+if not match:
+    sys.exit(1)
+actual = match.group(1).strip()
+sys.exit(0 if actual == requirement else 1)
+PY
+        then
+            errors="${errors}原始需求（原文）字段必须与输入需求原文完全一致\n"
+        fi
+        if [ "$phase" = "reviewed" ]; then
+            if ! grep -Fq '是否允许进入 `/ai-flow-execute`' "$plan_file"; then
+                errors="${errors}计划审核记录缺少 execute 门禁结论\n"
+            fi
+        fi
+    fi
+
+    if [ -n "$errors" ]; then
+        echo "⚠ 计划结构校验失败："
+        echo -e "$errors"
+        echo "    计划文件已保留但标记为无效: $plan_file"
+        exit 1
+    fi
+}
+
+validate_plan_review_record() {
+    local plan_file="$1"
+    local expected_result="$2"
+    local expected_execute="$3"
+    python3 - "$plan_file" "$expected_result" "$expected_execute" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+expected_result = sys.argv[2]
+expected_execute = sys.argv[3]
+match = re.search(r"(?ms)^## 8\. 计划审核记录\n(.*)\Z", text)
+if not match:
+    raise SystemExit("缺少 ## 8. 计划审核记录")
+section = match.group(1)
+
+def subsection(title: str, next_titles):
+    pattern = rf"(?ms)^### {re.escape(title)}\n\n(.*?)(?=^### {'|^### '.join(map(re.escape, next_titles))}|\Z)"
+    found = re.search(pattern, section)
+    if not found:
+        raise SystemExit(f"缺少 {title}")
+    return found.group(1).strip()
+
+current = subsection("8.1 当前审核结论", ["8.2 偏差与建议", "8.3 审核历史"])
+items = subsection("8.2 偏差与建议", ["8.3 审核历史"])
+history = subsection("8.3 审核历史", [])
+
+status_match = re.search(r"^- 审核状态：(.+)$", current, re.M)
+execute_match = re.search(r"^- 是否允许进入 `/ai-flow-execute`：(.+)$", current, re.M)
+if not status_match or not execute_match:
+    raise SystemExit("8.1 当前审核结论缺少审核状态或 execute 结论")
+
+status = status_match.group(1).strip()
+execute = execute_match.group(1).strip()
+if status != expected_result:
+    raise SystemExit(f"8.1 当前审核状态与预期不一致: {status} != {expected_result}")
+if execute != expected_execute:
+    raise SystemExit(f"8.1 execute 门禁与预期不一致: {execute} != {expected_execute}")
+if not history.strip():
+    raise SystemExit("8.3 审核历史不能为空")
+
+item_lines = [line.strip() for line in items.splitlines() if line.strip()]
+if expected_result == "passed":
+    if item_lines != ["- 无"]:
+        raise SystemExit("passed 时 8.2 只能为 - 无")
+if expected_result == "passed_with_notes":
+    if not item_lines or item_lines == ["- 无"]:
+        raise SystemExit("passed_with_notes 时必须保留 Minor/[可选] 建议项")
+    for line in item_lines:
+        if "[待修订]" in line:
+            raise SystemExit("passed_with_notes 不能保留 [待修订] 项")
+        if "[可选][Minor]" not in line:
+            raise SystemExit("passed_with_notes 的建议项必须全部是 [可选][Minor]")
+if expected_result == "failed":
+    if not any("[待修订]" in line for line in item_lines):
+        raise SystemExit("failed 时至少要有一条 [待修订] 阻断项")
+PY
+}
+
+parse_plan_review_response() {
+    local response_file="$1"
+    local items_file="$2"
+    python3 - "$response_file" "$items_file" <<'PY'
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+items_out = Path(sys.argv[2])
+lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+data = {}
+items = []
+in_items = False
+for line in lines:
+    if line.startswith("ITEMS:"):
+        in_items = True
+        continue
+    if in_items:
+        if line.startswith("- "):
+            items.append(line)
+        continue
+    if ":" in line:
+        key, value = line.split(":", 1)
+        data[key.strip()] = value.strip()
+
+required = {"RESULT", "ALIGNMENT", "EXECUTE_READY", "SUMMARY"}
+missing = sorted(required - set(data.keys()))
+if missing:
+    raise SystemExit(f"计划审核输出缺少字段: {', '.join(missing)}")
+if data["RESULT"] not in {"passed", "passed_with_notes", "failed"}:
+    raise SystemExit("计划审核 RESULT 非法")
+if data["EXECUTE_READY"] not in {"yes", "no"}:
+    raise SystemExit("计划审核 EXECUTE_READY 非法")
+if not items:
+    raise SystemExit("计划审核 ITEMS 不能为空")
+
+if data["RESULT"] == "passed":
+    if items != ["- 无"]:
+        raise SystemExit("计划审核 passed 时 ITEMS 只能为 - 无")
+    if data["EXECUTE_READY"] != "yes":
+        raise SystemExit("计划审核 passed 时 EXECUTE_READY 必须为 yes")
+elif data["RESULT"] == "passed_with_notes":
+    if data["EXECUTE_READY"] != "yes":
+        raise SystemExit("计划审核 passed_with_notes 时 EXECUTE_READY 必须为 yes")
+    for item in items:
+        if "[待修订]" in item:
+            raise SystemExit("计划审核 passed_with_notes 不允许包含 [待修订]")
+        if "[可选][Minor]" not in item:
+            raise SystemExit("计划审核 passed_with_notes 只允许 [可选][Minor] 建议")
+elif data["RESULT"] == "failed":
+    if data["EXECUTE_READY"] != "no":
+        raise SystemExit("计划审核 failed 时 EXECUTE_READY 必须为 no")
+    if not any("[待修订]" in item for item in items):
+        raise SystemExit("计划审核 failed 时必须至少包含一条 [待修订]")
+
+items_out.write_text("\n".join(items) + "\n", encoding="utf-8")
+print(data["RESULT"])
+print(data["ALIGNMENT"])
+print(data["EXECUTE_READY"])
+print(data["SUMMARY"])
+PY
+}
+
+write_plan_review_record() {
+    local plan_file="$1"
+    local round="$2"
+    local result="$3"
+    local alignment="$4"
+    local execute_ready="$5"
+    local summary="$6"
+    local engine="$7"
+    local model="$8"
+    local items_file="$9"
+    python3 - "$plan_file" "$round" "$result" "$alignment" "$execute_ready" "$summary" "$engine" "$model" "$items_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+plan_path = Path(sys.argv[1])
+round_no = sys.argv[2]
+result = sys.argv[3]
+alignment = sys.argv[4]
+execute_ready = "是" if sys.argv[5] == "yes" else "否"
+summary = sys.argv[6]
+engine = sys.argv[7]
+model = sys.argv[8]
+items = [line.rstrip() for line in Path(sys.argv[9]).read_text(encoding="utf-8").splitlines() if line.strip()]
+if not items:
+    items = ["- 无"]
+
+text = plan_path.read_text(encoding="utf-8").rstrip() + "\n"
+history_body = ""
+section_match = re.search(r"(?ms)^## 8\. 计划审核记录\n(.*)\Z", text)
+if section_match:
+    history_match = re.search(r"(?ms)^### 8\.3 审核历史\n\n(.*)\Z", section_match.group(1))
+    if history_match:
+        history_body = history_match.group(1).strip()
+if "第 0 轮：初始化 draft，待审核。" in history_body:
+    history_body = ""
+
+history_parts = []
+if history_body:
+    history_parts.append(history_body)
+item_history = "\n".join(f"  {line}" for line in items)
+history_parts.append(
+    f"#### 第 {round_no} 轮\n"
+    f"- 结果：{result}\n"
+    f"- 与原始需求一致性：{alignment}\n"
+    f"- 是否允许进入 `/ai-flow-execute`：{execute_ready}\n"
+    f"- 审核引擎/模型：{engine} / {model}\n"
+    f"- 结论摘要：{summary}\n"
+    f"- 条目：\n"
+    f"{item_history}"
+)
+history_text = "\n\n".join(history_parts).strip()
+items_text = "\n".join(items)
+
+review_section = (
+    "## 8. 计划审核记录\n\n"
+    "### 8.1 当前审核结论\n\n"
+    f"- 审核状态：{result}\n"
+    f"- 与原始需求一致性：{alignment}\n"
+    "- 是否允许进入 `/ai-flow-execute`："
+    f"{execute_ready}\n"
+    f"- 当前审核轮次：{round_no}\n"
+    f"- 审核引擎/模型：{engine} / {model}\n"
+    f"- 结论摘要：{summary}\n\n"
+    "### 8.2 偏差与建议\n\n"
+    f"{items_text}\n\n"
+    "### 8.3 审核历史\n\n"
+    f"{history_text}\n"
+)
+
+if re.search(r"(?m)^## 8\. 计划审核记录$", text):
+    text = re.sub(r"(?ms)^## 8\. 计划审核记录\n.*\Z", review_section, text, count=1)
+else:
+    text = text.rstrip() + "\n\n" + review_section
+plan_path.write_text(text, encoding="utf-8")
+PY
+}
+
+run_codex_prompt() {
+    local prompt="$1"
+    local output_file="$2"
+    local reasoning="$3"
+    if [ -n "$reasoning" ]; then
+        printf '%s\n' "$prompt" | codex exec \
+            -m "$MODEL" \
+            -c "model_reasoning_effort=\"$reasoning\"" \
+            --sandbox workspace-write \
+            -o "$output_file"
+    else
+        printf '%s\n' "$prompt" | codex exec \
+            -m "$MODEL" \
+            --sandbox workspace-write \
+            -o "$output_file"
+    fi
+}
+
+run_opencode_prompt() {
+    local prompt="$1"
+    local output_file="$2"
+    local variant="$3"
+    opencode run \
+        -m "$PLAN_REVIEW_OPENCODE_MODEL" \
+        --variant "$variant" \
+        --dangerously-skip-permissions \
+        --format default \
+        "$prompt" > "$output_file"
+}
+
+is_codex_unavailable_error() {
+    local rc="$1"
+    local stderr_file="$2"
+    if [ "$rc" -eq 127 ]; then
+        return 0
+    fi
+    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable' "$stderr_file"
+}
+
+run_review_phase_prompt() {
+    local prompt="$1"
+    local output_file="$2"
+    local marker="$3"
+    local variant
+    variant=$(map_reasoning_to_opencode_variant "$PLAN_REVIEW_REASONING")
+
+    if [ "${AI_FLOW_PLAN_REVIEW_FORCE_OPENCODE:-0}" = "1" ]; then
+        PLAN_REVIEW_FALLBACK_ACTIVE=true
+    fi
+
+    if [ "$PLAN_REVIEW_FALLBACK_ACTIVE" = false ]; then
+        if ! command -v codex >/dev/null 2>&1; then
+            PLAN_REVIEW_FALLBACK_ACTIVE=true
+        else
+            local stderr_file rc
+            stderr_file=$(mktemp)
+            set +e
+            run_codex_prompt "$prompt" "$output_file" "$PLAN_REVIEW_REASONING" 2>"$stderr_file"
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then
+                PLAN_REVIEW_ENGINE="Codex"
+                PLAN_REVIEW_MODEL="$MODEL"
+                trim_generated_file_to_marker "$output_file" "$marker"
+                rm -f "$stderr_file"
+                return 0
+            fi
+            if is_codex_unavailable_error "$rc" "$stderr_file"; then
+                echo ">>> 计划审核阶段 Codex 不可用，降级到 OpenCode ($PLAN_REVIEW_OPENCODE_MODEL)"
+                PLAN_REVIEW_FALLBACK_ACTIVE=true
+            else
+                cat "$stderr_file" >&2
+                rm -f "$stderr_file"
+                echo "错误: Codex 执行计划审核阶段失败，且不属于可降级的不可用场景"
+                exit 1
+            fi
+            rm -f "$stderr_file"
+        fi
+    fi
+
+    if ! command -v opencode >/dev/null 2>&1; then
+        echo "错误: 计划审核阶段需要降级到 OpenCode，但 opencode 不可用"
+        exit 1
+    fi
+    run_opencode_prompt "$prompt" "$output_file" "$variant"
+    trim_generated_file_to_marker "$output_file" "$marker"
+    PLAN_REVIEW_ENGINE="OpenCode"
+    PLAN_REVIEW_MODEL="$PLAN_REVIEW_OPENCODE_MODEL"
+}
+
+revise_plan_from_failed_review() {
+    local round="$1"
+    local review_items_file="$2"
+    local revision_prompt revision_output review_section_backup
+    review_section_backup=$(mktemp)
+    save_plan_review_record_section "$PLAN_FILE" "$review_section_backup"
+
+    PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
+    PLAN_REVIEW_ITEMS_FOR_PROMPT=$(cat "$review_items_file")
+    revision_prompt=$(render_prompt_template "$PLAN_REVISION_PROMPT_TEMPLATE")
+    revision_output=$(mktemp)
+
+    echo ">>> 第 ${round} 轮计划审核未通过，按审核意见修订 plan..."
+    run_review_phase_prompt "$revision_prompt" "$revision_output" "# 实施计划："
+    mv "$revision_output" "$PLAN_FILE"
+    restore_plan_review_record_section "$PLAN_FILE" "$review_section_backup"
+    rm -f "$review_section_backup"
+
+    ensure_requirement_literal "$PLAN_FILE"
+    validate_plan_structure "$PLAN_FILE" "draft"
+}
+
+SLUG_AUTO=false
+if [ -z "$SLUG" ]; then
+    SLUG_AUTO=true
+    ENG_WORDS=$(echo "$REQUIREMENT" | grep -oE '[A-Za-z]+' | head -3 | tr '\n' '-' | sed 's/-$//' || true)
+    if [ -n "$ENG_WORDS" ]; then
+        SLUG=$(echo "$ENG_WORDS" | tr '[:upper:]' '[:lower:]')
+    else
+        SLUG="plan-$DATE_DIR"
+    fi
+fi
+
+if ! echo "$SLUG" | grep -qE '^[a-z0-9][a-z0-9-]*$'; then
+    echo "错误: 英文简称 '$SLUG' 包含非法字符，只允许小写字母、数字和连字符（-）"
+    exit 1
+fi
+
+if slug_exists "$SLUG" && [ "$SLUG_AUTO" = true ]; then
+    BASE_SLUG="$SLUG"
+    SUFFIX=2
+    while slug_exists "$SLUG"; do
+        SLUG="${BASE_SLUG}-${SUFFIX}"
+        SUFFIX=$((SUFFIX + 1))
+    done
+fi
+
+if slug_exists "$SLUG"; then
+    echo "⚠ 警告: 同名计划或状态已存在: $SLUG"
+    echo "    如需重新生成，请先清理对应的 .ai-flow/state/${SLUG}.json 和计划文件，或更换简称"
+    exit 1
+fi
+
+PLAN_FILE="$PLANS_DIR/$SLUG.md"
+
+mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports/$DATE_DIR" "$STATE_DIR"
+
+FRAMEWORKS=""
+if [ -f "$PROJECT_DIR/package.json" ]; then
+    grep -q '"next"' "$PROJECT_DIR/package.json" 2>/dev/null && FRAMEWORKS="${FRAMEWORKS}Next.js, "
+    grep -q '"react"' "$PROJECT_DIR/package.json" 2>/dev/null && FRAMEWORKS="${FRAMEWORKS}React, "
+    grep -q '"vue"' "$PROJECT_DIR/package.json" 2>/dev/null && FRAMEWORKS="${FRAMEWORKS}Vue, "
+    grep -q '"@angular/core"' "$PROJECT_DIR/package.json" 2>/dev/null && FRAMEWORKS="${FRAMEWORKS}Angular, "
+    grep -q '"electron"' "$PROJECT_DIR/package.json" 2>/dev/null && FRAMEWORKS="${FRAMEWORKS}Electron, "
+    grep -q '"tailwindcss"' "$PROJECT_DIR/package.json" 2>/dev/null && FRAMEWORKS="${FRAMEWORKS}TailwindCSS, "
+fi
+if [ -d "$PROJECT_DIR/src-tauri" ]; then
+    FRAMEWORKS="${FRAMEWORKS}Tauri(Rust), "
+fi
+if [ -d "$PROJECT_DIR/src-electron" ]; then
+    FRAMEWORKS="${FRAMEWORKS}Electron(Node.js), "
+fi
+POM_FILE=""
+if [ -f "$PROJECT_DIR/pom.xml" ]; then
+    POM_FILE="$PROJECT_DIR/pom.xml"
+else
+    POM_FILE=$(find "$PROJECT_DIR" -maxdepth 2 -name "pom.xml" -type f 2>/dev/null | head -1 || true)
+fi
+if [ -n "$POM_FILE" ] || [ -d "$PROJECT_DIR/src/main/java" ]; then
+    FRAMEWORKS="${FRAMEWORKS}Java"
+    if [ -n "$POM_FILE" ]; then
+        grep -q "spring-boot" "$POM_FILE" 2>/dev/null && FRAMEWORKS="${FRAMEWORKS}/Spring Boot"
+        grep -q "mybatis" "$POM_FILE" 2>/dev/null && FRAMEWORKS="${FRAMEWORKS}/MyBatis"
+        grep -q "postgresql" "$POM_FILE" 2>/dev/null && FRAMEWORKS="${FRAMEWORKS}/PostgreSQL"
+    fi
+    FRAMEWORKS="${FRAMEWORKS}, "
+fi
+if [ -f "$PROJECT_DIR/go.mod" ]; then
+    FRAMEWORKS="${FRAMEWORKS}Go, "
+fi
+if [ -f "$PROJECT_DIR/requirements.txt" ] || [ -f "$PROJECT_DIR/pyproject.toml" ]; then
+    FRAMEWORKS="${FRAMEWORKS}Python, "
+fi
+if [ -f "$PROJECT_DIR/Cargo.toml" ] && [ ! -d "$PROJECT_DIR/src-tauri" ]; then
+    FRAMEWORKS="${FRAMEWORKS}Rust, "
+fi
+if [ -f "$PROJECT_DIR/Gemfile" ]; then
+    FRAMEWORKS="${FRAMEWORKS}Ruby, "
+fi
+if [ -f "$PROJECT_DIR/composer.json" ]; then
+    FRAMEWORKS="${FRAMEWORKS}PHP, "
+fi
+SHELL_FILE=$(find "$PROJECT_DIR" -maxdepth 3 -type f \( -name "*.sh" -o -name "*.bash" \) ! -path "$FLOW_DIR/*" 2>/dev/null | head -1 || true)
+if [ -n "$SHELL_FILE" ]; then
+    FRAMEWORKS="${FRAMEWORKS}Shell/Bash, "
+fi
+MARKDOWN_FILE=$(find "$PROJECT_DIR" -maxdepth 3 -type f \( -name "*.md" -o -name "*.markdown" \) ! -path "$FLOW_DIR/*" 2>/dev/null | head -1 || true)
+if [ -n "$MARKDOWN_FILE" ]; then
+    FRAMEWORKS="${FRAMEWORKS}Markdown, "
+fi
+if [ -n "$FRAMEWORKS" ] && echo "$FRAMEWORKS" | grep -q "Next.js\|React\|Vue\|Angular\|Electron\|TailwindCSS" && ! echo "$FRAMEWORKS" | grep -q "Java\|Go\|Python\|Ruby\|PHP"; then
+    FRAMEWORKS="TypeScript/JavaScript, ${FRAMEWORKS}"
+fi
+if [ -z "$FRAMEWORKS" ] && [ -d "$PROJECT_DIR/.git" ]; then
+    LANG_LIST=$(find "$PROJECT_DIR" -maxdepth 3 \( -name "*.java" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.py" -o -name "*.go" -o -name "*.rs" -o -name "*.vue" \) 2>/dev/null | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -3)
+    if [ -n "$LANG_LIST" ]; then
+        FRAMEWORKS=$(echo "$LANG_LIST" | awk '{print $2}' | tr '\n' ', ' | sed 's/,$//')
+    fi
+fi
+DETECT_STACK="${FRAMEWORKS%, }"
+[ -z "$DETECT_STACK" ] && DETECT_STACK="未检测到明确技术栈"
+
+for required_file in \
+    "$FLOW_STATE_SH" \
+    "$TEMPLATE" \
+    "$PLAN_PROMPT_TEMPLATE" \
+    "$PLAN_REVIEW_PROMPT_TEMPLATE" \
+    "$PLAN_REVISION_PROMPT_TEMPLATE"; do
+    if [ ! -f "$required_file" ]; then
+        echo "错误: 缺少运行时资源: $required_file"
+        exit 1
+    fi
+done
+
+TEMPLATE_CONTENT=$(sed \
+    -e "s/{需求名称}/$(escape_sed_replacement "$REQUIREMENT")/g" \
+    -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
+    -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
+    -e "s#{需求文档/口头描述/Jira 等}#需求描述#g" \
+    -e "s/{原始需求原文}/$(escape_sed_replacement "$REQUIREMENT")/g" \
+    "$TEMPLATE")
+
+echo ">>> 将需求描述发送给 Codex 生成 draft plan (模型: $MODEL)..."
+echo "    输出文件: $PLAN_FILE"
+echo "    检测到技术栈: $DETECT_STACK"
+echo ""
+
+PLAN_PROMPT=$(render_prompt_template "$PLAN_PROMPT_TEMPLATE")
+run_codex_prompt "$PLAN_PROMPT" "$PLAN_FILE" ""
+ensure_requirement_literal "$PLAN_FILE"
+
+echo ""
+echo ">>> 校验 draft plan 结构..."
+validate_plan_structure "$PLAN_FILE" "draft"
+echo "    结构校验通过"
+
+PLAN_TITLE=$(sed -n '1s/^# 实施计划：//p' "$PLAN_FILE")
+[ -z "$PLAN_TITLE" ] && PLAN_TITLE="$REQUIREMENT"
+
+echo ">>> 初始化状态文件..."
+"$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
+
+REVIEW_ROUND=1
+FINAL_RESULT=""
+while [ "$REVIEW_ROUND" -le "$PLAN_REVIEW_MAX_ROUNDS" ]; do
+    local_review_output=$(mktemp)
+    local_review_items=$(mktemp)
+    PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
+    PLAN_REVIEW_ITEMS_FOR_PROMPT=""
+    REVIEW_PROMPT=$(render_prompt_template "$PLAN_REVIEW_PROMPT_TEMPLATE")
+
+    echo ""
+    echo ">>> 执行第 ${REVIEW_ROUND} 轮计划审核..."
+    run_review_phase_prompt "$REVIEW_PROMPT" "$local_review_output" "RESULT:"
+
+    review_meta_output=$(parse_plan_review_response "$local_review_output" "$local_review_items")
+    REVIEW_RESULT=$(printf '%s\n' "$review_meta_output" | sed -n '1p')
+    REVIEW_ALIGNMENT=$(printf '%s\n' "$review_meta_output" | sed -n '2p')
+    REVIEW_EXECUTE_READY=$(printf '%s\n' "$review_meta_output" | sed -n '3p')
+    REVIEW_SUMMARY=$(printf '%s\n' "$review_meta_output" | sed -n '4p')
+
+    write_plan_review_record \
+        "$PLAN_FILE" \
+        "$REVIEW_ROUND" \
+        "$REVIEW_RESULT" \
+        "$REVIEW_ALIGNMENT" \
+        "$REVIEW_EXECUTE_READY" \
+        "$REVIEW_SUMMARY" \
+        "$PLAN_REVIEW_ENGINE" \
+        "$PLAN_REVIEW_MODEL" \
+        "$local_review_items"
+    validate_plan_structure "$PLAN_FILE" "reviewed"
+    validate_plan_review_record \
+        "$PLAN_FILE" \
+        "$REVIEW_RESULT" \
+        "$( [ "$REVIEW_EXECUTE_READY" = "yes" ] && echo "是" || echo "否" )"
+
+    echo ">>> 写回计划审核结论..."
+    "$FLOW_STATE_SH" record-plan-review \
+        --slug "$SLUG" \
+        --result "$REVIEW_RESULT" \
+        --engine "$PLAN_REVIEW_ENGINE" \
+        --model "$PLAN_REVIEW_MODEL" >/dev/null
+    CURRENT_STATUS=$("$FLOW_STATE_SH" show "$SLUG" --field current_status)
+    echo "    状态已验证为 [$CURRENT_STATUS]"
+
+    rm -f "$local_review_output"
+
+    if [ "$REVIEW_RESULT" = "passed" ] || [ "$REVIEW_RESULT" = "passed_with_notes" ]; then
+        FINAL_RESULT="$REVIEW_RESULT"
+        rm -f "$local_review_items"
+        break
+    fi
+
+    if [ "$REVIEW_ROUND" -ge "$PLAN_REVIEW_MAX_ROUNDS" ]; then
+        FINAL_RESULT="$REVIEW_RESULT"
+        rm -f "$local_review_items"
+        break
+    fi
+
+    revise_plan_from_failed_review "$REVIEW_ROUND" "$local_review_items"
+    rm -f "$local_review_items"
+    REVIEW_ROUND=$((REVIEW_ROUND + 1))
+done
+
+echo ""
+echo ">>> 计划文件: $PLAN_FILE"
+echo ""
+cat "$PLAN_FILE"
+echo ""
+echo "整理并输出这份方案的核心决策内容"
+render_core_decisions "$PLAN_FILE"
+
+if [ "$FINAL_RESULT" = "passed" ] || [ "$FINAL_RESULT" = "passed_with_notes" ]; then
+    echo "AI-FLOW执行方案已经通过计划审核，建议在新的会话窗口调用/ai-flow-execute 技能开始执行"
+else
+    echo "AI-FLOW执行方案当前状态为 PLAN_REVIEW_FAILED，禁止进入 /ai-flow-execute；请重新运行 ai-flow-plan 继续修订"
+fi

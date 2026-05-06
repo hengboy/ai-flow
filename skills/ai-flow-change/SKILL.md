@@ -16,7 +16,7 @@ description: 处理需求变更，更新实施计划各章节（步骤/文件边
 运行：
 
 ```bash
-~/.claude/workflows/flow-status.sh
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
 ```
 
 根据 `.ai-flow/state/*.json` 选择要变更的 `slug`。
@@ -49,7 +49,7 @@ description: 处理需求变更，更新实施计划各章节（步骤/文件边
 仅在 `AWAITING_REVIEW` / `DONE` / `REVIEW_FAILED` / `FIXING_REVIEW` 状态时执行：
 
 ```bash
-~/.claude/workflows/flow-state.sh repair \
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh repair \
   --slug {slug} \
   --status IMPLEMENTING \
   --clear-active-fix \
@@ -59,7 +59,7 @@ description: 处理需求变更，更新实施计划各章节（步骤/文件边
 转换后确认：
 
 ```bash
-~/.claude/workflows/flow-state.sh show {slug} --field current_status
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh show {slug} --field current_status
 ```
 
 预期输出：`IMPLEMENTING`
@@ -118,7 +118,7 @@ description: 处理需求变更，更新实施计划各章节（步骤/文件边
 运行：
 
 ```bash
-~/.claude/workflows/flow-change.sh {slug} "变更描述"
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-change.sh {slug} "变更描述"
 ```
 
 变更描述格式建议：`[新增/修改/删除] {具体内容} — 影响步骤: Step N, M`
@@ -126,7 +126,7 @@ description: 处理需求变更，更新实施计划各章节（步骤/文件边
 如果是 regular 第 2 轮失败后的根因补录，必须使用：
 
 ```bash
-~/.claude/workflows/flow-change.sh {slug} "[root-cause-review-loop] 根因：...；受影响缺陷族：...；前两轮遗漏原因：...；补充验证：..."
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-change.sh {slug} "[root-cause-review-loop] 根因：...；受影响缺陷族：...；前两轮遗漏原因：...；补充验证：..."
 ```
 
 该记录是进入 regular 第 3 轮 review 的硬门禁，不能只改代码不补录。

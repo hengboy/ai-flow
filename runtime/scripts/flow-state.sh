@@ -17,6 +17,8 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 STATUS_VALUES = {
+    "AWAITING_PLAN_REVIEW",
+    "PLAN_REVIEW_FAILED",
     "PLANNED",
     "IMPLEMENTING",
     "AWAITING_REVIEW",
@@ -26,8 +28,13 @@ STATUS_VALUES = {
 }
 REVIEW_MODES = {"regular", "recheck"}
 REVIEW_RESULTS = {"passed", "failed", "passed_with_notes"}
+PLAN_REVIEW_RESULTS = {"passed", "failed", "passed_with_notes"}
 ALLOWED_TRANSITIONS = {
-    ("plan_created", None): "PLANNED",
+    ("plan_created", None): "AWAITING_PLAN_REVIEW",
+    ("plan_review_failed", "AWAITING_PLAN_REVIEW"): "PLAN_REVIEW_FAILED",
+    ("plan_review_failed", "PLAN_REVIEW_FAILED"): "PLAN_REVIEW_FAILED",
+    ("plan_review_passed", "AWAITING_PLAN_REVIEW"): "PLANNED",
+    ("plan_review_passed", "PLAN_REVIEW_FAILED"): "PLANNED",
     ("execute_started", "PLANNED"): "IMPLEMENTING",
     ("implementation_completed", "IMPLEMENTING"): "AWAITING_REVIEW",
     ("review_passed", "AWAITING_REVIEW"): "DONE",
@@ -204,8 +211,8 @@ def validate_transition_item(item: dict, previous_to, index: int) -> None:
     if item["from"] is not None and item["from"] not in STATUS_VALUES:
         raise FlowError(f"transitions[{index}].from 不是合法状态: {item['from']}")
     if index == 0:
-        if item["event"] != "plan_created" or item["from"] is not None or item["to"] != "PLANNED":
-            raise FlowError("第一条 transition 必须是 null -> PLANNED 的 plan_created")
+        if item["event"] != "plan_created" or item["from"] is not None or item["to"] != "AWAITING_PLAN_REVIEW":
+            raise FlowError("第一条 transition 必须是 null -> AWAITING_PLAN_REVIEW 的 plan_created")
     else:
         if item["from"] != previous_to:
             raise FlowError(f"transitions[{index}] 的 from 必须等于上一条 to")
@@ -221,6 +228,21 @@ def validate_transition_item(item: dict, previous_to, index: int) -> None:
         raise FlowError(f"transitions[{index}].artifacts 必须是对象")
     if not isinstance(item["note"], str):
         raise FlowError(f"transitions[{index}].note 必须是字符串")
+    if item["event"] in {"plan_review_passed", "plan_review_failed"}:
+        required_artifacts = {"round", "result", "engine", "model"}
+        missing = required_artifacts - set(item["artifacts"].keys())
+        if missing:
+            raise FlowError(
+                f"transitions[{index}] 的计划审核 artifacts 缺少字段: {', '.join(sorted(missing))}"
+            )
+        if item["artifacts"]["result"] not in PLAN_REVIEW_RESULTS:
+            raise FlowError(f"transitions[{index}] 的计划审核 result 非法")
+        if not isinstance(item["artifacts"]["round"], int) or item["artifacts"]["round"] <= 0:
+            raise FlowError(f"transitions[{index}] 的计划审核 round 必须是正整数")
+        if not isinstance(item["artifacts"]["engine"], str) or not item["artifacts"]["engine"]:
+            raise FlowError(f"transitions[{index}] 的计划审核 engine 不能为空")
+        if not isinstance(item["artifacts"]["model"], str) or not item["artifacts"]["model"]:
+            raise FlowError(f"transitions[{index}] 的计划审核 model 不能为空")
 
 
 def validate_state(state: dict, *, expected_slug: str = None) -> None:
@@ -366,7 +388,7 @@ def cmd_create(args):
             "schema_version": SCHEMA_VERSION,
             "slug": ensure_slug(args.slug),
             "title": title,
-            "current_status": "PLANNED",
+            "current_status": "AWAITING_PLAN_REVIEW",
             "created_at": at,
             "updated_at": at,
             "plan_file": plan_file,
@@ -381,7 +403,7 @@ def cmd_create(args):
                     "at": at,
                     "event": "plan_created",
                     "from": None,
-                    "to": "PLANNED",
+                    "to": "AWAITING_PLAN_REVIEW",
                     "actor": ACTOR,
                     "artifacts": {"plan_file": plan_file},
                     "note": "",
@@ -391,6 +413,48 @@ def cmd_create(args):
 
     state = with_lock(args.slug, mutator)
     print(f"已创建状态: {state_path_for_slug(args.slug)} -> {state['current_status']}")
+
+
+def cmd_record_plan_review(args):
+    result = args.result
+    engine = args.engine.strip()
+    model = args.model.strip()
+    if not engine:
+        raise FlowError("engine 不能为空")
+    if not model:
+        raise FlowError("model 不能为空")
+
+    def mutator(state):
+        state = require_state(state, args.slug)
+        current_status = state["current_status"]
+        if current_status not in {"AWAITING_PLAN_REVIEW", "PLAN_REVIEW_FAILED"}:
+            raise FlowError(
+                f"计划审核只允许 AWAITING_PLAN_REVIEW 或 PLAN_REVIEW_FAILED，当前是 {current_status}"
+            )
+
+        round_number = 1
+        for item in state["transitions"]:
+            if item["event"] in {"plan_review_passed", "plan_review_failed"}:
+                round_number += 1
+
+        event = "plan_review_passed" if result in {"passed", "passed_with_notes"} else "plan_review_failed"
+        to_status = ALLOWED_TRANSITIONS[(event, current_status)]
+        append_transition(
+            state,
+            event=event,
+            to_status=to_status,
+            at=now_iso(),
+            artifacts={
+                "round": round_number,
+                "result": result,
+                "engine": engine,
+                "model": model,
+            },
+        )
+        return state
+
+    state = with_lock(args.slug, mutator)
+    print(f"{args.slug}: {state['current_status']}")
 
 
 def require_state(state, slug: str) -> dict:
@@ -629,6 +693,13 @@ def build_parser():
     create.add_argument("--title", required=True)
     create.add_argument("--plan-file", required=True)
     create.set_defaults(func=cmd_create)
+
+    record_plan_review = subparsers.add_parser("record-plan-review")
+    record_plan_review.add_argument("--slug", required=True)
+    record_plan_review.add_argument("--result", required=True, choices=sorted(PLAN_REVIEW_RESULTS))
+    record_plan_review.add_argument("--engine", required=True)
+    record_plan_review.add_argument("--model", required=True)
+    record_plan_review.set_defaults(func=cmd_record_plan_review)
 
     start_execute = subparsers.add_parser("start-execute")
     start_execute.add_argument("slug")

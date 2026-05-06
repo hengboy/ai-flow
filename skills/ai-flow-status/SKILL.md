@@ -16,14 +16,16 @@ description: 查看当前项目 .ai-flow/state/ 下所有流程状态，并按 J
 运行：
 
 ```bash
-~/.claude/workflows/flow-status.sh
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
 ```
 
 ### 2. 读取分类
 
 输出只基于 `.ai-flow/state/*.json` 的 `current_status` 分类：
 
-- `PLANNED`：待编码
+- `AWAITING_PLAN_REVIEW`：待计划审核
+- `PLAN_REVIEW_FAILED`：待修订计划
+- `PLANNED`：计划已审核通过，待编码
 - `IMPLEMENTING`：开发中
 - `AWAITING_REVIEW`：待审查
 - `REVIEW_FAILED`：待修复
@@ -32,6 +34,7 @@ description: 查看当前项目 .ai-flow/state/ 下所有流程状态，并按 J
 
 ### 3. 选择后续动作
 
+- 选中 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED`：进入 `/ai-flow-plan`
 - 选中 `PLANNED` / `IMPLEMENTING` / `REVIEW_FAILED` / `FIXING_REVIEW`：进入 `/ai-flow-execute`
 - 选中 `AWAITING_REVIEW` / `DONE`：进入 `/ai-flow-review`
 

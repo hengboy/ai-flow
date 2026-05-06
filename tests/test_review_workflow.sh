@@ -14,7 +14,7 @@ test_invalid_state_rejected() {
     setup_git_repo_with_change "$project"
 
     set +e
-    (cd "$project" && HOME="$temp_root/home" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && HOME="$temp_root/home" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
     rc=$?
     set -e
 
@@ -33,12 +33,31 @@ test_regular_pass_updates_state_to_done() {
     write_fake_codex_review "$temp_root" "passed"
     setup_git_repo_with_change "$project"
 
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo gpt-test high) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo gpt-test high) > "$temp_root/review.out" 2>&1
 
     status=$(state_field "$project" "demo" "current_status")
     assert_equals "DONE" "$status"
     assert_file_exists "$project/.ai-flow/reports/20260503/demo-review.md"
     assert_contains "$temp_root/review.out" "状态已验证为 \\[DONE\\]"
+    rm -rf "$temp_root"
+}
+
+test_regular_passed_with_notes_updates_state_to_done() {
+    local temp_root project status
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    setup_home_with_templates "$temp_root"
+    create_state "$project" "demo" "AWAITING_REVIEW" "20260503"
+    write_fake_codex_review "$temp_root" "passed_with_notes" "passed_with_notes_valid"
+    setup_git_repo_with_change "$project"
+
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
+
+    status=$(state_field "$project" "demo" "current_status")
+    assert_equals "DONE" "$status"
+    assert_file_exists "$project/.ai-flow/reports/20260503/demo-review.md"
+    assert_contains "$temp_root/review.out" "常规审查通过（存在 Minor 建议）"
     rm -rf "$temp_root"
 }
 
@@ -52,7 +71,7 @@ test_regular_failed_updates_state_to_review_failed() {
     write_fake_codex_review "$temp_root" "failed" "failed_valid"
     setup_git_repo_with_change "$project"
 
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
 
     status=$(state_field "$project" "demo" "current_status")
     assert_equals "REVIEW_FAILED" "$status"
@@ -71,7 +90,7 @@ test_recheck_pass_keeps_done() {
     write_fake_codex_review "$temp_root" "passed"
     setup_git_repo_with_change "$project"
 
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
 
     status=$(state_field "$project" "demo" "current_status")
     assert_equals "DONE" "$status"
@@ -90,7 +109,7 @@ test_recheck_failed_updates_state_to_review_failed() {
     write_fake_codex_review "$temp_root" "failed" "failed_valid"
     setup_git_repo_with_change "$project"
 
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
 
     status=$(state_field "$project" "demo" "current_status")
     assert_equals "REVIEW_FAILED" "$status"
@@ -108,17 +127,17 @@ test_regular_review_after_failed_recheck_uses_recheck_report() {
     setup_git_repo_with_change "$project"
 
     write_fake_codex_review "$temp_root" "failed" "failed_valid"
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/recheck.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/recheck.out" 2>&1
     status=$(state_field "$project" "demo" "current_status")
     assert_equals "REVIEW_FAILED" "$status"
 
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" start-fix demo >/dev/null)
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" finish-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" start-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" finish-fix demo >/dev/null)
     status=$(state_field "$project" "demo" "current_status")
     assert_equals "AWAITING_REVIEW" "$status"
 
     write_fake_codex_review "$temp_root" "passed"
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
 
     assert_contains "$temp_root/review.out" "上一轮报告: .*demo-review-recheck.md"
     assert_file_exists "$project/.ai-flow/reports/20260503/demo-review-v2.md"
@@ -163,13 +182,13 @@ PREV_OVERALL_ONLY
 | DEF-9 | v1 | [待修复] | PREV_TRACKING_ONLY | 未验证 |
 REPORT
 
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" start-fix demo >/dev/null)
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" finish-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" start-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" finish-fix demo >/dev/null)
     status=$(state_field "$project" "demo" "current_status")
     assert_equals "AWAITING_REVIEW" "$status"
 
     write_fake_codex_review "$temp_root" "passed"
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
 
     assert_contains "$temp_root/captured-prompt.txt" "PREV_DEFECT_ONLY"
     assert_contains "$temp_root/captured-prompt.txt" "PREV_TRACKING_ONLY"
@@ -188,7 +207,7 @@ test_report_validation_rejects_placeholders() {
     setup_git_repo_with_change "$project"
 
     set +e
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
     rc=$?
     set -e
 
@@ -208,12 +227,52 @@ test_report_validation_rejects_passed_with_pending_defects() {
     setup_git_repo_with_change "$project"
 
     set +e
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
     rc=$?
     set -e
 
-    [ "$rc" -ne 0 ] || fail "Expected passed report with pending defects to fail"
-    assert_contains "$temp_root/review.out" "仍包含 \\[待修复\\] 项"
+    [ "$rc" -ne 0 ] || fail "Expected passed report with optional Minor notes to fail"
+    assert_contains "$temp_root/review.out" "仍包含 \\[可选\\] 的 Minor 建议"
+    rm -rf "$temp_root"
+}
+
+test_report_validation_rejects_passed_with_notes_with_pending_minor() {
+    local temp_root project rc
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    setup_home_with_templates "$temp_root"
+    create_state "$project" "demo" "AWAITING_REVIEW" "20260503"
+    write_fake_codex_review "$temp_root" "passed_with_notes" "passed_with_notes_pending"
+    setup_git_repo_with_change "$project"
+
+    set +e
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected passed_with_notes report with pending Minor to fail"
+    assert_contains "$temp_root/review.out" "Minor 建议，未处理时必须标记为 \\[可选\\]"
+    rm -rf "$temp_root"
+}
+
+test_report_validation_rejects_optional_marker_on_defect() {
+    local temp_root project rc
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    setup_home_with_templates "$temp_root"
+    create_state "$project" "demo" "AWAITING_REVIEW" "20260503"
+    write_fake_codex_review "$temp_root" "failed" "optional_on_defect"
+    setup_git_repo_with_change "$project"
+
+    set +e
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected DEF optional marker to fail"
+    assert_contains "$temp_root/review.out" "阻塞缺陷，不能标记为 \\[可选\\]"
     rm -rf "$temp_root"
 }
 
@@ -228,7 +287,7 @@ test_report_validation_rejects_missing_targeted_verification_evidence() {
     setup_git_repo_with_change "$project"
 
     set +e
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
     rc=$?
     set -e
 
@@ -305,12 +364,12 @@ ok
 | DEF-9 | v1 | [待修复] | PREV_TRACKING_ONLY | 未验证 |
 REPORT
 
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" start-fix demo >/dev/null)
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" finish-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" start-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" finish-fix demo >/dev/null)
     write_fake_codex_review "$temp_root" "passed" "missing_previous_family_coverage"
 
     set +e
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
     rc=$?
     set -e
 
@@ -328,18 +387,18 @@ test_regular_round_three_requires_root_cause_review_loop_record() {
     create_state "$project" "demo" "REVIEW_FAILED" "20260503"
     setup_git_repo_with_change "$project"
 
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" start-fix demo >/dev/null)
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" finish-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" start-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" finish-fix demo >/dev/null)
     write_fake_codex_review "$temp_root" "failed" "failed_valid"
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review-round2.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review-round2.out" 2>&1
     status=$(state_field "$project" "demo" "current_status")
     assert_equals "REVIEW_FAILED" "$status"
 
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" start-fix demo >/dev/null)
-    (cd "$project" && bash "$TEST_ROOT/workflows/flow-state.sh" finish-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" start-fix demo >/dev/null)
+    (cd "$project" && bash "$AI_FLOW_STATE_SCRIPT" finish-fix demo >/dev/null)
 
     set +e
-    (cd "$project" && HOME="$temp_root/home" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && HOME="$temp_root/home" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
     rc=$?
     set -e
 
@@ -360,7 +419,7 @@ test_review_rejects_no_git_changes_before_state_update() {
     setup_git_repo_clean "$project"
 
     set +e
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-review.sh" demo) > "$temp_root/review.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo) > "$temp_root/review.out" 2>&1
     rc=$?
     set -e
 
@@ -374,6 +433,7 @@ test_review_rejects_no_git_changes_before_state_update() {
 
 test_invalid_state_rejected
 test_regular_pass_updates_state_to_done
+test_regular_passed_with_notes_updates_state_to_done
 test_regular_failed_updates_state_to_review_failed
 test_recheck_pass_keeps_done
 test_recheck_failed_updates_state_to_review_failed
@@ -381,6 +441,8 @@ test_regular_review_after_failed_recheck_uses_recheck_report
 test_review_prompt_includes_previous_defect_and_tracking_sections
 test_report_validation_rejects_placeholders
 test_report_validation_rejects_passed_with_pending_defects
+test_report_validation_rejects_passed_with_notes_with_pending_minor
+test_report_validation_rejects_optional_marker_on_defect
 test_report_validation_rejects_missing_targeted_verification_evidence
 test_report_validation_rejects_missing_previous_family_coverage
 test_regular_round_three_requires_root_cause_review_loop_record

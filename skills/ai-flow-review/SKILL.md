@@ -16,7 +16,7 @@ description: 调用审查引擎审查代码变更并生成报告，同时推进 
 运行：
 
 ```bash
-~/.claude/workflows/flow-status.sh
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
 ```
 
 根据 `.ai-flow/state/*.json` 选择要审查的 `slug`。
@@ -39,10 +39,10 @@ description: 调用审查引擎审查代码变更并生成报告，同时推进 
 
 ```bash
 # 使用 codex-review.sh（Codex 优先，OpenCode 降级）
-~/.claude/workflows/codex-review.sh {需求关键词} [模型名] [推理强度] [轮次]
+scripts/codex-review.sh {需求关键词} [模型名] [推理强度] [轮次]
 
 # 或直接使用 opencode-review.sh（OpenCode 专用）
-~/.claude/workflows/opencode-review.sh {需求关键词} [模型名] [推理强度] [轮次]
+scripts/opencode-review.sh {需求关键词} [模型名] [推理强度] [轮次]
 ```
 
 脚本会：
@@ -52,10 +52,11 @@ description: 调用审查引擎审查代码变更并生成报告，同时推进 
 - 降级时推理强度自动映射：`xhigh` → `max`，`high` → `high`，`medium`/`low` → `minimal`
 - 只从状态 JSON 决定审查模式和轮次
 - 上一轮失败后会同时提取 `## 4. 缺陷清单` 和 `## 6. 缺陷修复追踪` 作为历史参考
+- 使用同 skill 目录下共享的 `templates/review-template.md` 和 `prompts/review-generation.md`
 - 生成 `.ai-flow/reports/{日期}/{slug}-review*.md`
 - 校验报告元数据和结构
 - regular 第 3 轮及以后会检查是否存在晚于第 2 轮失败时间的 `[root-cause-review-loop]` 变更记录
-- 调用 `flow-state.sh record-review` 推进状态
+- 调用 `${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh record-review` 推进状态
 
 ### 4. 报告要求
 
@@ -73,9 +74,11 @@ description: 调用审查引擎审查代码变更并生成报告，同时推进 
 
 - 常规 review：
   - `passed` → `DONE`
+  - `passed_with_notes` → `DONE`
   - `failed` → `REVIEW_FAILED`
 - recheck：
   - `passed` → 保持 `DONE`
+  - `passed_with_notes` → 保持 `DONE`
   - `failed` → `REVIEW_FAILED`
 
 ### 6. 缺陷追踪规则
@@ -83,6 +86,7 @@ description: 调用审查引擎审查代码变更并生成报告，同时推进 
 - 如果 `last_review.result == failed`，下一轮优先读取失败报告作为修复追踪参考
 - recheck 失败修复后，下一次常规 review 必须读取失败的 recheck 报告
 - 第 1 轮 regular review 要尽量按缺陷族打全；第 2 轮 regular review 既验证修复，也要复扫上一轮受影响缺陷族与相邻回归面
+- `Critical` / `Important` 必须用 `[待修复]` 或 `[已修复]` 跟踪；`Minor` 未处理时必须标记为 `[可选]`，不阻塞 `DONE`
 - review 允许执行有边界的定向验证：`test-compile`、单个测试类/用例、单个 Mapper/集成用例、轻量 build/check；默认禁止无边界全量回归
 - 不得把旧报告首行或元数据手改成通过来推动状态
 

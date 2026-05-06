@@ -1,45 +1,68 @@
 #!/bin/bash
-# install.sh — install AI Flow skills, workflows, and templates.
+# install.sh — install AI Flow skills plus shared runtime scripts/resources for Claude, OneSpace, and AI_FLOW_HOME.
 
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 ONSPACE_DIR="${ONSPACE_DIR:-$HOME/.config/onespace/skills/local_state/models/claude}"
+AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 
-install_skill() {
-    local name="$1"
-    local source="$ROOT_DIR/skills/${name}.md"
-    local target_dir="$CLAUDE_HOME/skills/$name"
+install_skill_dir() {
+    local source_dir="$1"
+    local destination_root="$2"
+    local name
+    local target_dir
+
+    name="$(basename "$source_dir")"
+    target_dir="$destination_root/$name"
+    [ -f "$source_dir/SKILL.md" ] || return 0
+
+    rm -rf "$target_dir"
     mkdir -p "$target_dir"
-    cp "$source" "$target_dir/SKILL.md"
+    cp -R "$source_dir"/. "$target_dir"/
+    if [ -d "$target_dir/scripts" ]; then
+        find "$target_dir/scripts" -type f -name "*.sh" -exec chmod +x {} +
+    fi
 }
 
-mkdir -p "$CLAUDE_HOME/workflows" "$CLAUDE_HOME/templates"
+install_runtime_root() {
+    local source_root="$1"
+    local destination_root="$2"
+    local entry
+    local name
 
-install_skill "ai-flow-plan"
-install_skill "ai-flow-execute"
-install_skill "ai-flow-review"
-install_skill "ai-flow-status"
-install_skill "ai-flow-change"
+    [ -d "$source_root" ] || return 0
+    mkdir -p "$destination_root"
 
-cp "$ROOT_DIR"/workflows/*.sh "$CLAUDE_HOME/workflows/"
-chmod +x "$CLAUDE_HOME"/workflows/*.sh
-cp "$ROOT_DIR"/templates/*.md "$CLAUDE_HOME/templates/"
+    for entry in "$source_root"/*; do
+        [ -e "$entry" ] || continue
+        name="$(basename "$entry")"
+        rm -rf "$destination_root/$name"
+        mkdir -p "$destination_root/$name"
+        cp -R "$entry"/. "$destination_root/$name"/
+    done
+
+    if [ -d "$destination_root/scripts" ]; then
+        find "$destination_root/scripts" -type f -name "*.sh" -exec chmod +x {} +
+    fi
+}
+
+mkdir -p "$CLAUDE_HOME/skills"
+
+for skill_dir in "$ROOT_DIR"/skills/*; do
+    [ -d "$skill_dir" ] || continue
+    install_skill_dir "$skill_dir" "$CLAUDE_HOME/skills"
+done
 
 echo "Installed AI Flow to $CLAUDE_HOME"
 
-if [ -d "$ONSPACE_DIR" ]; then
-    mkdir -p "$ONSPACE_DIR/ai-flow-plan" "$ONSPACE_DIR/ai-flow-execute" "$ONSPACE_DIR/ai-flow-review" "$ONSPACE_DIR/ai-flow-status" "$ONSPACE_DIR/ai-flow-change"
-    cp "$ROOT_DIR/skills/ai-flow-plan.md" "$ONSPACE_DIR/ai-flow-plan/SKILL.md"
-    cp "$ROOT_DIR/skills/ai-flow-execute.md" "$ONSPACE_DIR/ai-flow-execute/SKILL.md"
-    cp "$ROOT_DIR/skills/ai-flow-review.md" "$ONSPACE_DIR/ai-flow-review/SKILL.md"
-    cp "$ROOT_DIR/skills/ai-flow-status.md" "$ONSPACE_DIR/ai-flow-status/SKILL.md"
-    cp "$ROOT_DIR/skills/ai-flow-change.md" "$ONSPACE_DIR/ai-flow-change/SKILL.md"
-    cp "$ROOT_DIR"/workflows/*.sh "$ONSPACE_DIR/"
-    chmod +x "$ONSPACE_DIR"/*.sh
-    cp "$ROOT_DIR"/templates/*.md "$ONSPACE_DIR/"
-    echo "Synced AI Flow to $ONSPACE_DIR"
-else
-    echo "OneSpace directory not found, skipped sync: $ONSPACE_DIR"
-fi
+mkdir -p "$ONSPACE_DIR"
+for skill_dir in "$ROOT_DIR"/skills/*; do
+    [ -d "$skill_dir" ] || continue
+    install_skill_dir "$skill_dir" "$ONSPACE_DIR"
+done
+echo "Synced AI Flow to $ONSPACE_DIR"
+
+install_runtime_root "$ROOT_DIR/runtime" "$AI_FLOW_HOME"
+echo "Installed AI Flow runtime to $AI_FLOW_HOME"

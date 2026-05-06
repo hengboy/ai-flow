@@ -4,23 +4,118 @@ set -euo pipefail
 # shellcheck source=tests/helpers.bash
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/helpers.bash"
 
-test_plan_generation_creates_planned_state() {
-    local temp_root project first_line status
+test_plan_generation_happy_path_waits_for_review_then_marks_planned() {
+    local temp_root project plan_file status
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
     setup_home_with_templates "$temp_root"
-    write_fake_codex_plan "$temp_root" "valid"
+    write_fake_plan_workflow_engines "$temp_root" "review_passed"
 
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-plan.sh" "新增用户权限管理模块" user-permission) > "$temp_root/plan.out" 2>&1
+    (cd "$project" && run_with_fake_plan_engines "$temp_root" "review_passed" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "新增用户权限管理模块" user-permission) > "$temp_root/plan.out" 2>&1
 
-    assert_file_exists "$project/.ai-flow/plans/$(date +%Y%m%d)/user-permission.md"
+    plan_file="$project/.ai-flow/plans/$(date +%Y%m%d)/user-permission.md"
+    assert_file_exists "$plan_file"
     assert_file_exists "$project/.ai-flow/state/user-permission.json"
-    first_line=$(head -1 "$project/.ai-flow/plans/$(date +%Y%m%d)/user-permission.md")
     status=$(state_field "$project" "user-permission" "current_status")
-    assert_equals "# 实施计划：fake" "$first_line"
     assert_equals "PLANNED" "$status"
-    assert_contains "$temp_root/plan.out" "状态文件"
+    assert_contains "$plan_file" "### 8.1 当前审核结论"
+    assert_contains "$plan_file" "审核状态：passed"
+    assert_contains "$plan_file" "是否允许进入 \`/ai-flow-execute\`：是"
+    assert_contains "$plan_file" "#### 第 1 轮"
+    assert_contains "$temp_root/plan.out" "已创建状态:"
+    assert_contains "$temp_root/plan.out" "AWAITING_PLAN_REVIEW"
+    assert_contains "$temp_root/plan.out" "状态已验证为 \\[PLANNED\\]"
+    assert_contains "$temp_root/plan.out" "AI-FLOW执行方案已经通过计划审核"
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_passed_with_notes_still_allows_execute() {
+    local temp_root project plan_file status
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    mkdir -p "$project"
+    setup_home_with_templates "$temp_root"
+    write_fake_plan_workflow_engines "$temp_root" "review_notes"
+
+    (cd "$project" && run_with_fake_plan_engines "$temp_root" "review_notes" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "新增用户权限管理模块" user-permission) > "$temp_root/plan.out" 2>&1
+
+    plan_file="$project/.ai-flow/plans/$(date +%Y%m%d)/user-permission.md"
+    status=$(state_field "$project" "user-permission" "current_status")
+    assert_equals "PLANNED" "$status"
+    assert_contains "$plan_file" "审核状态：passed_with_notes"
+    assert_contains "$plan_file" "\\[可选\\]\\[Minor\\]"
+    assert_contains "$temp_root/plan.out" "状态已验证为 \\[PLANNED\\]"
+    assert_contains "$temp_root/plan.out" "AI-FLOW执行方案已经通过计划审核"
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_failed_blocks_execute_and_keeps_failed_state() {
+    local temp_root project plan_file status
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    mkdir -p "$project"
+    setup_home_with_templates "$temp_root"
+    write_fake_plan_workflow_engines "$temp_root" "review_failed"
+
+    (cd "$project" && run_with_fake_plan_engines "$temp_root" "review_failed" env AI_FLOW_PLAN_MAX_REVIEW_ROUNDS=1 bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "新增用户权限管理模块" user-permission) > "$temp_root/plan.out" 2>&1
+
+    plan_file="$project/.ai-flow/plans/$(date +%Y%m%d)/user-permission.md"
+    status=$(state_field "$project" "user-permission" "current_status")
+    assert_equals "PLAN_REVIEW_FAILED" "$status"
+    assert_contains "$plan_file" "审核状态：failed"
+    assert_contains "$plan_file" "\\[待修订\\]\\[Important\\]"
+    assert_contains "$temp_root/plan.out" "状态已验证为 \\[PLAN_REVIEW_FAILED\\]"
+    assert_contains "$temp_root/plan.out" "禁止进入 /ai-flow-execute"
+    assert_not_contains "$temp_root/plan.out" "AI-FLOW执行方案已经通过计划审核"
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_failed_then_revised_and_re_reviewed() {
+    local temp_root project plan_file status
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    mkdir -p "$project"
+    setup_home_with_templates "$temp_root"
+    write_fake_plan_workflow_engines "$temp_root" "review_fail_then_pass"
+
+    (cd "$project" && run_with_fake_plan_engines "$temp_root" "review_fail_then_pass" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "新增用户权限管理模块" user-permission) > "$temp_root/plan.out" 2>&1
+
+    plan_file="$project/.ai-flow/plans/$(date +%Y%m%d)/user-permission.md"
+    status=$(state_field "$project" "user-permission" "current_status")
+    assert_equals "PLANNED" "$status"
+    assert_contains "$plan_file" "#### 第 1 轮"
+    assert_contains "$plan_file" "#### 第 2 轮"
+    assert_contains "$plan_file" "审核状态：passed"
+    assert_contains "$temp_root/plan.out" "按审核意见修订 plan"
+    assert_contains "$temp_root/plan.out" "执行第 2 轮计划审核"
+    python3 - "$project/.ai-flow/state/user-permission.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+events = [item["event"] for item in state["transitions"]]
+assert events == ["plan_created", "plan_review_failed", "plan_review_passed"], events
+PY
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_review_falls_back_to_opencode_when_codex_unavailable() {
+    local temp_root project plan_file status
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    mkdir -p "$project"
+    setup_home_with_templates "$temp_root"
+    write_fake_plan_workflow_engines "$temp_root" "review_fallback_pass"
+
+    (cd "$project" && run_with_fake_plan_engines "$temp_root" "review_fallback_pass" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "新增用户权限管理模块" user-permission) > "$temp_root/plan.out" 2>&1
+
+    plan_file="$project/.ai-flow/plans/$(date +%Y%m%d)/user-permission.md"
+    status=$(state_field "$project" "user-permission" "current_status")
+    assert_equals "PLANNED" "$status"
+    assert_contains "$plan_file" "审核引擎/模型：OpenCode / zhipuai-coding-plan/glm-5.1"
+    assert_contains "$temp_root/plan.out" "降级到 OpenCode"
     rm -rf "$temp_root"
 }
 
@@ -30,10 +125,11 @@ test_chinese_requirement_without_slug_does_not_collide() {
     project="$temp_root/project"
     mkdir -p "$project"
     setup_home_with_templates "$temp_root"
-    write_fake_codex_plan "$temp_root" "valid"
+    write_fake_plan_workflow_engines "$temp_root" "review_passed"
 
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-plan.sh" "新增用户权限管理模块") > "$temp_root/first.out" 2>&1
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-plan.sh" "优化数据查询接口性能") > "$temp_root/second.out" 2>&1
+    (cd "$project" && run_with_fake_plan_engines "$temp_root" "review_passed" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "新增用户权限管理模块") > "$temp_root/first.out" 2>&1
+    rm -f "$temp_root/fake-plan-codex-call-count" "$temp_root/fake-plan-opencode-call-count"
+    (cd "$project" && run_with_fake_plan_engines "$temp_root" "review_passed" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "优化数据查询接口性能") > "$temp_root/second.out" 2>&1
 
     state_count=$(find "$project/.ai-flow/state" -name "*.json" -type f | wc -l | tr -d ' ')
     assert_equals "2" "$state_count"
@@ -49,7 +145,7 @@ test_plan_generation_rejects_placeholder_output_and_no_state_created() {
     write_fake_codex_plan "$temp_root" "placeholder"
 
     set +e
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-plan.sh" "add plan validation" plan-validation) > "$temp_root/plan.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "add plan validation" plan-validation) > "$temp_root/plan.out" 2>&1
     rc=$?
     set -e
 
@@ -67,9 +163,9 @@ test_detects_shell_markdown_stack_without_git() {
     printf '#!/bin/bash\n' > "$project/tool.sh"
     printf '# Docs\n' > "$project/README.md"
     setup_home_with_templates "$temp_root"
-    write_fake_codex_plan "$temp_root" "valid"
+    write_fake_plan_workflow_engines "$temp_root" "review_passed"
 
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-plan.sh" "add shell guard" shell-guard) > "$temp_root/plan.out" 2>&1
+    (cd "$project" && run_with_fake_plan_engines "$temp_root" "review_passed" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "add shell guard" shell-guard) > "$temp_root/plan.out" 2>&1
 
     assert_contains "$temp_root/plan.out" "Shell/Bash"
     assert_contains "$temp_root/plan.out" "Markdown"
@@ -82,9 +178,9 @@ test_plan_prompt_forbids_custom_state_schema() {
     project="$temp_root/project"
     mkdir -p "$project"
     setup_home_with_templates "$temp_root"
-    write_fake_codex_plan "$temp_root" "valid"
+    write_fake_plan_workflow_engines "$temp_root" "review_passed"
 
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-plan.sh" "add shell guard" shell-guard) > "$temp_root/plan.out" 2>&1
+    (cd "$project" && run_with_fake_plan_engines "$temp_root" "review_passed" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "add shell guard" shell-guard) > "$temp_root/plan.out" 2>&1
 
     assert_contains "$temp_root/captured-plan-prompt.txt" "不得为 .ai-flow/state/shell-guard.json 设计任何 JSON 结构"
     assert_contains "$temp_root/captured-plan-prompt.txt" "不要写进 state JSON 设计"
@@ -102,7 +198,7 @@ test_plan_generation_rejects_custom_state_schema_output() {
     write_fake_codex_plan "$temp_root" "custom_state_schema"
 
     set +e
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-plan.sh" "bad state schema" bad-state-schema) > "$temp_root/plan.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "bad state schema" bad-state-schema) > "$temp_root/plan.out" 2>&1
     rc=$?
     set -e
 
@@ -121,7 +217,7 @@ test_plan_generation_rejects_missing_risk_family_section() {
     write_fake_codex_plan "$temp_root" "missing_risk_families"
 
     set +e
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-plan.sh" "missing risk family section" missing-risk-family) > "$temp_root/plan.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "missing risk family section" missing-risk-family) > "$temp_root/plan.out" 2>&1
     rc=$?
     set -e
 
@@ -140,7 +236,7 @@ test_plan_generation_rejects_missing_validation_matrix() {
     write_fake_codex_plan "$temp_root" "missing_validation_matrix"
 
     set +e
-    (cd "$project" && run_with_fake_codex "$temp_root" bash "$TEST_ROOT/workflows/codex-plan.sh" "missing validation matrix" missing-validation-matrix) > "$temp_root/plan.out" 2>&1
+    (cd "$project" && run_with_fake_codex "$temp_root" bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "missing validation matrix" missing-validation-matrix) > "$temp_root/plan.out" 2>&1
     rc=$?
     set -e
 
@@ -150,7 +246,11 @@ test_plan_generation_rejects_missing_validation_matrix() {
     rm -rf "$temp_root"
 }
 
-test_plan_generation_creates_planned_state
+test_plan_generation_happy_path_waits_for_review_then_marks_planned
+test_plan_generation_passed_with_notes_still_allows_execute
+test_plan_generation_failed_blocks_execute_and_keeps_failed_state
+test_plan_generation_failed_then_revised_and_re_reviewed
+test_plan_generation_review_falls_back_to_opencode_when_codex_unavailable
 test_chinese_requirement_without_slug_does_not_collide
 test_plan_generation_rejects_placeholder_output_and_no_state_created
 test_detects_shell_markdown_stack_without_git

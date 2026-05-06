@@ -63,7 +63,9 @@ else:
 print()
 
 status_labels = [
-    ("PLANNED", "⏳", "待编码"),
+    ("AWAITING_PLAN_REVIEW", "📝", "待计划审核"),
+    ("PLAN_REVIEW_FAILED", "📌", "待修订计划"),
+    ("PLANNED", "⏳", "计划已审核通过，待编码"),
     ("IMPLEMENTING", "🔨", "开发中"),
     ("AWAITING_REVIEW", "🔍", "待审查"),
     ("REVIEW_FAILED", "🔧", "待修复"),
@@ -81,7 +83,10 @@ for status, icon, label in status_labels:
     for state in matched:
         latest = state["latest_recheck_review_file"] or state["latest_regular_review_file"]
         detail = f"report: {rel(latest)}" if latest else "report: -"
-        print(f"  {icon} {state['slug']} [{status}] {label}  {detail}")
+        next_action = "ai-flow-plan" if status in {"AWAITING_PLAN_REVIEW", "PLAN_REVIEW_FAILED"} else (
+            "ai-flow-execute" if status in {"PLANNED", "IMPLEMENTING", "REVIEW_FAILED", "FIXING_REVIEW"} else "ai-flow-review"
+        )
+        print(f"  {icon} {state['slug']} [{status}] {label}  {detail}  next: {next_action}")
     print()
 if states:
     pass

@@ -73,12 +73,52 @@ if ! grep -q '^## 7\. 需求变更记录' "$PLAN_FILE"; then
     } >> "$PLAN_FILE"
 fi
 
-tmp_file=$(mktemp)
-awk '$0 != "| {YYYY-MM-DD HH:MM} | {执行过程中新增或调整的需求；无则保留空表} | {用户确认/文档同步/其他} |" { print }' "$PLAN_FILE" > "$tmp_file"
-mv "$tmp_file" "$PLAN_FILE"
-
 timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 escaped_change=$(printf '%s' "$CHANGE_TEXT" | tr '\r\n' '  ' | sed 's/[[:space:]][[:space:]]*/ /g;s/^[[:space:]]*//;s/[[:space:]]*$//;s/|/\\|/g')
-printf '| %s | %s | 用户确认 |\n' "$timestamp" "$escaped_change" >> "$PLAN_FILE"
+python3 - "$PLAN_FILE" "$timestamp" "$escaped_change" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+timestamp = sys.argv[2]
+change = sys.argv[3]
+new_row = f"| {timestamp} | {change} | 用户确认 |"
+placeholder = "| {YYYY-MM-DD HH:MM} | {执行过程中新增或调整的需求；无则保留空表} | {用户确认/文档同步/其他} |"
+
+lines = path.read_text(encoding="utf-8").splitlines()
+output = []
+in_section = False
+inserted = False
+
+for line in lines:
+    if line == placeholder:
+        continue
+    if line.startswith("## 7. 需求变更记录"):
+        in_section = True
+        output.append(line)
+        continue
+    if in_section and line.startswith("## "):
+        if not inserted:
+            output.append(new_row)
+            inserted = True
+        in_section = False
+    output.append(line)
+
+if in_section and not inserted:
+    output.append(new_row)
+    inserted = True
+
+if not inserted:
+    output.extend([
+        "",
+        "## 7. 需求变更记录",
+        "",
+        "| 时间 | 变更描述 | 确认方式 |",
+        "|------|----------|----------|",
+        new_row,
+    ])
+
+path.write_text("\n".join(output) + "\n", encoding="utf-8")
+PY
 
 echo ">>> 已记录需求变更: $PLAN_FILE"
