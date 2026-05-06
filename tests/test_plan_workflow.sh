@@ -9,6 +9,7 @@ test_plan_generation_happy_path_waits_for_review_then_marks_planned() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_plan_workflow_engines "$temp_root" "review_passed"
 
@@ -27,6 +28,10 @@ test_plan_generation_happy_path_waits_for_review_then_marks_planned() {
     assert_contains "$temp_root/plan.out" "AWAITING_PLAN_REVIEW"
     assert_contains "$temp_root/plan.out" "状态已验证为 \\[PLANNED\\]"
     assert_contains "$temp_root/plan.out" "AI-FLOW执行方案已经通过计划审核"
+    assert_contains "$temp_root/codex.args.1" "-C $project"
+    assert_contains "$temp_root/codex.args.1" "--skip-git-repo-check"
+    assert_contains "$temp_root/codex.args.2" "-C $project"
+    assert_contains "$temp_root/codex.args.2" "--skip-git-repo-check"
     rm -rf "$temp_root"
 }
 
@@ -35,6 +40,7 @@ test_plan_generation_passed_with_notes_still_allows_execute() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_plan_workflow_engines "$temp_root" "review_notes"
 
@@ -55,6 +61,7 @@ test_plan_generation_failed_blocks_execute_and_keeps_failed_state() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_plan_workflow_engines "$temp_root" "review_failed"
 
@@ -76,6 +83,7 @@ test_plan_generation_failed_then_revised_and_re_reviewed() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_plan_workflow_engines "$temp_root" "review_fail_then_pass"
 
@@ -106,6 +114,7 @@ test_plan_generation_review_falls_back_to_opencode_when_codex_unavailable() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_plan_workflow_engines "$temp_root" "review_fallback_pass"
 
@@ -116,6 +125,8 @@ test_plan_generation_review_falls_back_to_opencode_when_codex_unavailable() {
     assert_equals "PLANNED" "$status"
     assert_contains "$plan_file" "审核引擎/模型：OpenCode / zhipuai-coding-plan/glm-5.1"
     assert_contains "$temp_root/plan.out" "降级到 OpenCode"
+    assert_contains "$temp_root/opencode.args" "--dir $project"
+    assert_contains "$temp_root/opencode.args" "--variant max"
     rm -rf "$temp_root"
 }
 
@@ -124,6 +135,7 @@ test_chinese_requirement_without_slug_does_not_collide() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_plan_workflow_engines "$temp_root" "review_passed"
 
@@ -141,6 +153,7 @@ test_plan_generation_rejects_placeholder_output_and_no_state_created() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_codex_plan "$temp_root" "placeholder"
 
@@ -162,6 +175,7 @@ test_detects_shell_markdown_stack_without_git() {
     mkdir -p "$project"
     printf '#!/bin/bash\n' > "$project/tool.sh"
     printf '# Docs\n' > "$project/README.md"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_plan_workflow_engines "$temp_root" "review_passed"
 
@@ -177,6 +191,7 @@ test_plan_prompt_forbids_custom_state_schema() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_plan_workflow_engines "$temp_root" "review_passed"
 
@@ -194,6 +209,7 @@ test_plan_generation_rejects_custom_state_schema_output() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_codex_plan "$temp_root" "custom_state_schema"
 
@@ -213,6 +229,7 @@ test_plan_generation_rejects_missing_risk_family_section() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_codex_plan "$temp_root" "missing_risk_families"
 
@@ -232,6 +249,7 @@ test_plan_generation_rejects_missing_validation_matrix() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     mkdir -p "$project"
+    setup_minimal_project_root "$project"
     setup_home_with_templates "$temp_root"
     write_fake_codex_plan "$temp_root" "missing_validation_matrix"
 
@@ -243,6 +261,29 @@ test_plan_generation_rejects_missing_validation_matrix() {
     [ "$rc" -ne 0 ] || fail "Expected missing 4.4 section plan validation to fail"
     assert_contains "$temp_root/plan.out" "缺少强制小节: ### 4.4 定向验证矩阵"
     assert_file_not_exists "$project/.ai-flow/state/missing-validation-matrix.json"
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_rejects_non_project_root_with_multiple_module_candidates() {
+    local temp_root workspace rc
+    temp_root=$(make_temp_root)
+    workspace="$temp_root/workspace"
+    mkdir -p "$workspace/isp-case/src/main/java" "$workspace/isp-auth/src/main/java"
+    printf '<project />\n' > "$workspace/isp-case/pom.xml"
+    printf '<project />\n' > "$workspace/isp-auth/pom.xml"
+    setup_home_with_templates "$temp_root"
+
+    set +e
+    (cd "$workspace" && bash "$(installed_skill_script "$temp_root" "ai-flow-plan" "codex-plan.sh")" "workflow api integration test" workflow-api-integration-test) > "$temp_root/plan-root.out" 2>&1
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected non-project-root directory to be rejected"
+    assert_contains "$temp_root/plan-root.out" "当前目录不是可识别的项目根目录"
+    assert_contains "$temp_root/plan-root.out" "$workspace/isp-case"
+    assert_contains "$temp_root/plan-root.out" "$workspace/isp-auth"
+    assert_file_not_exists "$workspace/.ai-flow/plans/$(date +%Y%m%d)/workflow-api-integration-test.md"
+    assert_file_not_exists "$workspace/.ai-flow/state/workflow-api-integration-test.json"
     rm -rf "$temp_root"
 }
 
@@ -258,3 +299,4 @@ test_plan_prompt_forbids_custom_state_schema
 test_plan_generation_rejects_custom_state_schema_output
 test_plan_generation_rejects_missing_risk_family_section
 test_plan_generation_rejects_missing_validation_matrix
+test_plan_generation_rejects_non_project_root_with_multiple_module_candidates

@@ -1,11 +1,11 @@
 #!/bin/bash
 # flow-change.sh — 记录执行过程中的需求变更到指定 plan
-# 用法: flow-change.sh {需求关键词} "变更描述"
+# 用法: flow-change.sh {slug或唯一关键词} "变更描述"
 
 set -euo pipefail
 
 if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
-    echo "用法: flow-change.sh {需求关键词} \"变更描述\""
+    echo "用法: flow-change.sh {slug或唯一关键词} \"变更描述\""
     exit 1
 fi
 

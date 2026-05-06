@@ -167,14 +167,20 @@ bash install.sh
 
 1. 扫描 `skills/*/SKILL.md`，把每个 skill 目录完整复制到 `~/.claude/skills/<skill>/`
 2. 为复制后的 `scripts/*.sh` 统一补可执行权限
-3. 扫描 `runtime/`，把共享运行时安装到 `$AI_FLOW_HOME/`（默认 `~/.config/ai-flow`）
+3. 扫描 `runtime/`，把共享运行时安装到 `$AI_FLOW_HOME/`（默认 `~/.config/ai-flow`，仅包含公共状态脚本）
 4. 创建 OneSpace 目标目录（`$ONSPACE_DIR`，默认 `~/.config/onespace/skills/local_state/models/claude`），并把每个 skill 目录完整同步到 `$ONSPACE_DIR/<skill>/`
-5. 不再创建或更新 `~/.claude/workflows`、`~/.claude/templates`，也不再向 OneSpace 根目录写入脚本或模板
+5. 安装时会删除过时的 `~/.claude/workflows`、`~/.claude/templates` 以及 OneSpace 根目录旧入口，也不再向 OneSpace 根目录写入脚本或模板
 
 可通过环境变量自定义路径：
 - `CLAUDE_HOME`：Claude 配置目录，默认 `~/.claude`
 - `AI_FLOW_HOME`：AI Flow 公共运行时目录，默认 `~/.config/ai-flow`
 - `ONSPACE_DIR`：OneSpace 目录，默认 `~/.config/onespace/skills/local_state/models/claude`
+
+安装后路径分层：
+
+- 公共脚本安装到 `${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/`
+- skill 私有脚本、prompt、template 安装到 `${CLAUDE_HOME:-$HOME/.claude}/skills/<skill>/`
+- `codex-plan.sh`、`codex-review.sh`、`opencode-review.sh` 只安装在对应 skill 的 `scripts/` 目录，调用时应直接使用 `${CLAUDE_HOME:-$HOME/.claude}/skills/<skill>/scripts/...`
 
 ## Skill 运行时
 
@@ -207,7 +213,7 @@ JSON 状态机唯一写入口，内嵌 Python 实现。所有写操作加锁（`
 调用 Codex 分析需求并生成实施计划。
 
 ```bash
-codex-plan.sh "需求描述" [英文简称] [模型名]
+${CLAUDE_HOME:-$HOME/.claude}/skills/ai-flow-plan/scripts/codex-plan.sh "需求描述" [英文简称] [模型名]
 ```
 
 核心流程：
@@ -226,12 +232,19 @@ codex-plan.sh "需求描述" [英文简称] [模型名]
 6. **计划审核闭环**：继续在同一脚本内执行计划审核；默认用 Codex，只有审核阶段 Codex 不可用时才降级到 OpenCode。审核失败时按 `prompts/plan-revision.md` 修订 plan 并复审，默认最多自动复审 3 轮。
 7. **执行门禁**：只有计划审核结果为 `passed` 或 `passed_with_notes` 时，状态才推进到 `PLANNED`；否则保持 `PLAN_REVIEW_FAILED`，禁止进入 `/ai-flow-execute`。
 
+使用约束：
+
+- `ai-flow-plan` 必须只调用一次 `codex-plan.sh`，禁止手工拆分为 “先 `flow-state.sh create`、再 `codex exec` 审核” 的多步流程
+- `flow-state.sh create` / `record-plan-review` 仅作为 `codex-plan.sh` 的内部子步骤，不应由执行者单独调用来补流程
+- 如果 `codex-plan.sh` 失败，应直接修正运行目录、slug 或依赖问题后整体重跑，不要在父目录、子目录之间切换着补跑
+- 多模块仓库必须进入目标模块根目录执行，例如 `isp-case/`，不要在聚合父目录执行
+
 ### `skills/ai-flow-review/scripts/codex-review.sh`
 
 调用审查引擎生成代码审查报告。
 
 ```bash
-codex-review.sh {需求关键词} [模型名] [推理强度] [轮次]
+${CLAUDE_HOME:-$HOME/.claude}/skills/ai-flow-review/scripts/codex-review.sh {需求关键词} [模型名] [推理强度] [轮次]
 ```
 
 核心流程：
@@ -244,13 +257,13 @@ codex-review.sh {需求关键词} [模型名] [推理强度] [轮次]
 3. **Git 变更校验**：必须存在非 `.ai-flow/` 的未提交变更，否则拒绝审查。
 4. **审查引擎选择**：
    - 优先使用 Codex（可指定模型和推理强度）
-   - Codex 不可用时降级使用 OpenCode（`alibaba-cn/glm-5.1`，推理强度映射为 variant）
+   - Codex 不可用时降级使用 OpenCode（`zhipuai-coding-plan/glm-5.1`，推理强度映射为 variant）
    - 均不可用时报错退出
 5. **上一轮参考选择**：
    - `last_review.result == failed` 时优先使用失败报告
    - recheck 优先 `latest_recheck_review_file`，再回退 `latest_regular_review_file`
    - 常规 review 使用 `latest_regular_review_file`
-   - 只提取上一轮报告的 `## 6. 缺陷修复追踪` 部分，不注入整份旧报告
+   - 只提取上一轮报告的 `## 4. 缺陷清单` 与 `## 6. 缺陷修复追踪` 部分，不注入整份旧报告
 6. **报告生成**：从当前 skill 目录读取共享的 `templates/review-template.md` 和 `prompts/review-generation.md`，通过审查引擎生成结构化报告。
 7. **结构校验**：
    - 首行必须为 `# 审查报告：...`
@@ -303,6 +316,7 @@ flow-status.sh
 
 - 共享实现位于 `${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh`
 - 所有 skill 和文档都应直接调用这条公共路径，不再在 skill 目录内复制 `flow-status.sh`
+- `codex-plan.sh`、`codex-review.sh`、`opencode-review.sh` 不再安装到 `${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/`；应直接调用 `${CLAUDE_HOME:-$HOME/.claude}/skills/<skill>/scripts/` 下的实现
 
 ## 模板约束
 
@@ -429,7 +443,9 @@ for f in install.sh runtime/scripts/*.sh skills/*/scripts/*.sh tests/*.sh tests/
 - 这是全量替换，不再支持从 plan/review 文件头读取状态。
 - 不提供双轨状态源，不接受旧 header 作为运行时输入。
 - 安装后只保证 `~/.claude/skills/<skill>/...`、`$AI_FLOW_HOME/...` 和 `$ONSPACE_DIR/<skill>/...` 可用。
-- 共享运行时脚本只放在 `runtime/`，安装后只会出现在 `$AI_FLOW_HOME/scripts/`，skill 目录不再包含公共 `flow-state.sh` / `flow-status.sh` / `flow-change.sh`。
+- 共享运行时脚本只放在 `runtime/`，安装后只会出现在 `$AI_FLOW_HOME/scripts/`；其中仅 `flow-state.sh` / `flow-status.sh` / `flow-change.sh` 属于公共实现。
+- 非公共实现仍然位于 `~/.claude/skills/<skill>/scripts/`（或 `$ONSPACE_DIR/<skill>/scripts/`），skill 目录不再包含公共 `flow-state.sh` / `flow-status.sh` / `flow-change.sh`。
 - skill 私有 prompt/template 继续留在 `skills/<skill>/prompts`、`skills/<skill>/templates`，不进入公共 runtime。
-- 旧的 `~/.claude/workflows/*`、`~/.claude/templates/*` 和 OneSpace 根级脚本/模板路径不再提供兼容层。
+- 安装脚本会删除旧的 `~/.claude/workflows/*`、`~/.claude/templates/*` 和 OneSpace 根级旧脚本/模板；skill 和脚本均不允许再依赖这些旧路径。
+- OneSpace 根级脚本/模板路径不再提供兼容层。
 - 旧数据若要继续使用，应离线迁移或人工重建状态文件。

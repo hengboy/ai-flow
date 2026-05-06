@@ -115,6 +115,11 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh show {slug} --field
 
 ### 5. 记录变更审计
 
+位置参数约定：
+
+- `flow-change.sh` 第 1 个参数统一传 `slug`
+- 脚本也支持唯一关键词匹配，但示例和推荐用法都用 `slug`，避免误匹配到多个状态文件
+
 运行：
 
 ```bash

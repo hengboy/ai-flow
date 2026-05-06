@@ -39,11 +39,19 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
 
 ```bash
 # 使用 codex-review.sh（Codex 优先，OpenCode 降级）
-scripts/codex-review.sh {需求关键词} [模型名] [推理强度] [轮次]
+${CLAUDE_HOME:-$HOME/.claude}/skills/ai-flow-review/scripts/codex-review.sh {slug} [模型名] [推理强度] [轮次]
 
 # 或直接使用 opencode-review.sh（OpenCode 专用）
-scripts/opencode-review.sh {需求关键词} [模型名] [推理强度] [轮次]
+${CLAUDE_HOME:-$HOME/.claude}/skills/ai-flow-review/scripts/opencode-review.sh {slug} [模型名] [推理强度] [轮次]
 ```
+
+参数顺序固定：
+
+- 第 1 个位置参数统一传状态文件名里的 `slug`
+- 脚本也支持唯一关键词匹配，但示例和推荐用法都用 `slug`，避免误匹配
+- 第 2 个位置参数才是模型名
+- 第 3 个位置参数才是推理强度
+- 第 4 个位置参数才是轮次
 
 脚本会：
 

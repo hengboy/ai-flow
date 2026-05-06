@@ -32,8 +32,23 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
 运行：
 
 ```bash
-scripts/codex-plan.sh "需求描述" "英文简称"
+${CLAUDE_HOME:-$HOME/.claude}/skills/ai-flow-plan/scripts/codex-plan.sh "需求描述" "英文简称" [模型名]
 ```
+
+参数顺序固定：
+
+- 第 1 个参数是需求描述
+- 第 2 个参数是英文简称 `slug`（可选，但示例和推荐用法都显式传入）
+- 第 3 个参数才是模型名（可选）
+
+强制约束：
+
+- `ai-flow-plan` 只能通过这一个入口执行，禁止把流程拆成多条命令手工运行
+- 禁止手工调用 `${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh create`、`record-plan-review`
+- 禁止手工调用 `codex exec` 生成 draft plan、审核 plan 或修订 plan
+- 如果 `${CLAUDE_HOME:-$HOME/.claude}/skills/ai-flow-plan/scripts/codex-plan.sh` 失败，应该直接报告失败原因并停止；不要继续在别的目录重试其中某一步
+- 必须在目标项目根目录执行；如果当前目录只是多模块父目录，先进入目标模块根目录再运行
+- 完整流程内的 plan 生成、状态初始化、计划审核、失败修订和复审，都必须由 `${CLAUDE_HOME:-$HOME/.claude}/skills/ai-flow-plan/scripts/codex-plan.sh` 自己串联完成
 
 脚本职责：
 

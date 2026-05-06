@@ -34,6 +34,84 @@ PLAN_REVIEW_FALLBACK_ACTIVE=false
 PLAN_REVIEW_ENGINE=""
 PLAN_REVIEW_MODEL=""
 
+has_project_root_marker() {
+    local dir="$1"
+    local marker
+    for marker in \
+        .git \
+        pom.xml \
+        package.json \
+        pyproject.toml \
+        requirements.txt \
+        go.mod \
+        Cargo.toml \
+        Gemfile \
+        composer.json \
+        build.gradle \
+        build.gradle.kts \
+        settings.gradle \
+        settings.gradle.kts \
+        Makefile
+    do
+        if [ -e "$dir/$marker" ]; then
+            return 0
+        fi
+    done
+    if [ -d "$dir/src" ] || [ -d "$dir/src/main" ]; then
+        return 0
+    fi
+    return 1
+}
+
+discover_project_root_candidates() {
+    local base_dir="$1"
+    local depth candidate rel
+    local -a candidates=()
+
+    for depth in 1 2; do
+        while IFS= read -r candidate; do
+            [ -z "$candidate" ] && continue
+            if has_project_root_marker "$candidate"; then
+                rel="${candidate#"$base_dir"/}"
+                candidates+=("$rel")
+            fi
+        done < <(find "$base_dir" -mindepth "$depth" -maxdepth "$depth" -type d ! -path '*/.ai-flow*' 2>/dev/null | sort)
+    done
+
+    if [ "${#candidates[@]}" -eq 0 ]; then
+        return 0
+    fi
+
+    printf '%s\n' "${candidates[@]}" | awk '!seen[$0]++'
+}
+
+ensure_project_root_context() {
+    local candidate
+    local -a candidates=()
+
+    if has_project_root_marker "$PROJECT_DIR"; then
+        return 0
+    fi
+
+    while IFS= read -r candidate; do
+        [ -n "$candidate" ] && candidates+=("$candidate")
+    done < <(discover_project_root_candidates "$PROJECT_DIR")
+
+    echo "错误: 当前目录不是可识别的项目根目录: $PROJECT_DIR"
+    if [ "${#candidates[@]}" -eq 1 ]; then
+        echo "    检测到候选项目根目录: $PROJECT_DIR/${candidates[0]}"
+        echo "    请切换到该目录后重新运行 /ai-flow-plan。"
+    elif [ "${#candidates[@]}" -gt 1 ]; then
+        echo "    检测到多个候选项目根目录，请进入目标模块根目录后重新运行 /ai-flow-plan："
+        for candidate in "${candidates[@]}"; do
+            echo "      - $PROJECT_DIR/$candidate"
+        done
+    else
+        echo "    请在包含 .git、pom.xml、package.json、go.mod、src 等根标记的目录中运行。"
+    fi
+    exit 1
+}
+
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
 }
@@ -654,18 +732,29 @@ run_codex_prompt() {
     local prompt="$1"
     local output_file="$2"
     local reasoning="$3"
-    if [ -n "$reasoning" ]; then
-        printf '%s\n' "$prompt" | codex exec \
-            -m "$MODEL" \
-            -c "model_reasoning_effort=\"$reasoning\"" \
-            --sandbox workspace-write \
-            -o "$output_file"
-    else
-        printf '%s\n' "$prompt" | codex exec \
-            -m "$MODEL" \
-            --sandbox workspace-write \
-            -o "$output_file"
+    local skip_git_repo_check_arg=""
+    local -a codex_args
+
+    if [ -z "${CODEX_SKIP_GIT_REPO_CHECK_SUPPORTED:-}" ]; then
+        if codex exec --help 2>/dev/null | grep -q -- '--skip-git-repo-check'; then
+            CODEX_SKIP_GIT_REPO_CHECK_SUPPORTED=1
+        else
+            CODEX_SKIP_GIT_REPO_CHECK_SUPPORTED=0
+        fi
     fi
+    if [ "$CODEX_SKIP_GIT_REPO_CHECK_SUPPORTED" = "1" ]; then
+        skip_git_repo_check_arg="--skip-git-repo-check"
+    fi
+
+    codex_args=(exec -m "$MODEL" -C "$PROJECT_DIR" --sandbox workspace-write -o "$output_file")
+    if [ -n "$skip_git_repo_check_arg" ]; then
+        codex_args+=("$skip_git_repo_check_arg")
+    fi
+    if [ -n "$reasoning" ]; then
+        codex_args+=(-c "model_reasoning_effort=\"$reasoning\"")
+    fi
+
+    printf '%s\n' "$prompt" | codex "${codex_args[@]}"
 }
 
 run_opencode_prompt() {
@@ -677,6 +766,7 @@ run_opencode_prompt() {
         --variant "$variant" \
         --dangerously-skip-permissions \
         --format default \
+        --dir "$PROJECT_DIR" \
         "$prompt" > "$output_file"
 }
 
@@ -777,6 +867,8 @@ if ! echo "$SLUG" | grep -qE '^[a-z0-9][a-z0-9-]*$'; then
     echo "错误: 英文简称 '$SLUG' 包含非法字符，只允许小写字母、数字和连字符（-）"
     exit 1
 fi
+
+ensure_project_root_context
 
 if slug_exists "$SLUG" && [ "$SLUG_AUTO" = true ]; then
     BASE_SLUG="$SLUG"

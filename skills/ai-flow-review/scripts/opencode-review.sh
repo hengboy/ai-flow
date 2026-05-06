@@ -1,6 +1,6 @@
 #!/bin/bash
 # opencode-review.sh — 调用 OpenCode 审查代码变更并生成报告
-# 用法: opencode-review.sh {需求简称} [模型名] [推理强度] [轮次]
+# 用法: opencode-review.sh {slug或唯一关键词} [模型名] [推理强度] [轮次]
 
 set -euo pipefail
 
@@ -12,6 +12,7 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE="$SKILL_DIR/templates/review-template.md"
 PROMPT_TEMPLATE="$SKILL_DIR/prompts/review-generation.md"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
+CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
 
 display_path() {
@@ -25,6 +26,40 @@ display_path() {
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
+}
+
+trim_report_to_header() {
+    local file="$1"
+    python3 - "$file" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+marker = "# 审查报告："
+index = text.find(marker)
+if index > 0:
+    path.write_text(text[index:], encoding="utf-8")
+PY
+}
+
+render_template_content() {
+    local engine="$1"
+    local model_name="$2"
+    local reasoning="$3"
+    local tool_label="${engine} (${model_name} ${reasoning})"
+
+    sed \
+        -e "s/{需求名称}/$(escape_sed_replacement "$PLAN_TITLE")/g" \
+        -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
+        -e "s/{审查模式}/$(escape_sed_replacement "$REVIEW_MODE")/g" \
+        -e "s/{审查轮次}/$(escape_sed_replacement "$CURRENT_ROUND")/g" \
+        -e "s#{计划文件}#$(escape_sed_replacement "$PLAN_FILE")#g" \
+        -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
+        -e "s/{模型名}/$(escape_sed_replacement "$model_name")/g" \
+        -e "s/{推理强度}/$(escape_sed_replacement "$reasoning")/g" \
+        -e "s/{审查工具}/$(escape_sed_replacement "$tool_label")/g" \
+        "$TEMPLATE"
 }
 
 render_prompt_template() {
@@ -385,7 +420,7 @@ PY
 }
 
 if [ -z "${1:-}" ]; then
-    echo "用法: opencode-review.sh {需求关键词} [模型名] [推理强度] [轮次]"
+    echo "用法: opencode-review.sh {slug或唯一关键词} [模型名] [推理强度] [轮次]"
     echo ""
     echo "  默认模型: zhipuai-coding-plan/glm-5.1"
     echo "  默认推理: max"
@@ -544,16 +579,7 @@ for required_file in "$FLOW_STATE_SH" "$TEMPLATE" "$PROMPT_TEMPLATE"; do
         exit 1
     fi
 done
-TEMPLATE_CONTENT=$(sed \
-    -e "s/{需求名称}/$(escape_sed_replacement "$PLAN_TITLE")/g" \
-    -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
-    -e "s/{审查模式}/$(escape_sed_replacement "$REVIEW_MODE")/g" \
-    -e "s/{审查轮次}/$(escape_sed_replacement "$CURRENT_ROUND")/g" \
-    -e "s#{计划文件}#$(escape_sed_replacement "$PLAN_FILE")#g" \
-    -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
-    -e "s/{模型名}/$(escape_sed_replacement "$MODEL")/g" \
-    -e "s/{推理强度}/$(escape_sed_replacement "$REASONING")/g" \
-    "$TEMPLATE")
+TEMPLATE_CONTENT=$(render_template_content "OpenCode" "$MODEL" "$REASONING")
 
 case "$REVIEW_MODE:$CURRENT_ROUND" in
     regular:1)
@@ -605,15 +631,11 @@ opencode run \
     --variant "$REASONING" \
     --dangerously-skip-permissions \
     --format default \
+    --dir "$PROJECT_DIR" \
     "$REVIEW_PROMPT" > "$REPORT_FILE"
 
 # --- 截掉思考过程（opencode --format default 可能在报告前输出思考文字） ---
-if grep -q '^# 审查报告：' "$REPORT_FILE"; then
-    REPORT_START=$(grep -n '^# 审查报告：' "$REPORT_FILE" | head -1 | cut -d: -f1)
-    if [ "$REPORT_START" -gt 1 ]; then
-        sed -i '' "1,$((REPORT_START - 1))d" "$REPORT_FILE"
-    fi
-fi
+trim_report_to_header "$REPORT_FILE"
 
 echo ""
 echo ">>> 审查报告已生成: $REPORT_FILE"
@@ -821,7 +843,7 @@ echo "    状态已验证为 [$UPDATED_STATUS]"
 
 print_commit_instructions() {
     echo ">>> 状态已进入 [DONE]，现在允许提交已审查的未提交变更"
-    if [ -f "$HOME/.claude/skills/git-commit/SKILL.md" ] || [ -f "$HOME/.codex/skills/git-commit/SKILL.md" ]; then
+    if [ -f "$CLAUDE_HOME/skills/git-commit/SKILL.md" ]; then
         echo "    检测到 git-commit 技能：请使用 /git-commit 提交代码"
     else
         echo "    未检测到 git-commit 技能：请按项目提交规范提交；若项目无明确规范，使用 Gitmoji + Conventional Commits"

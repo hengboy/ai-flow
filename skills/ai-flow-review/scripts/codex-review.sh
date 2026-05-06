@@ -1,6 +1,6 @@
 #!/bin/bash
 # codex-review.sh — 调用 Codex 审查代码变更并生成报告
-# 用法: codex-review.sh {需求简称} [模型名] [推理强度] [轮次]
+# 用法: codex-review.sh {slug或唯一关键词} [模型名] [推理强度] [轮次]
 
 set -euo pipefail
 
@@ -12,7 +12,9 @@ SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE="$SKILL_DIR/templates/review-template.md"
 PROMPT_TEMPLATE="$SKILL_DIR/prompts/review-generation.md"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
+CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
+REVIEW_OPENCODE_MODEL="${AI_FLOW_REVIEW_OPENCODE_MODEL:-zhipuai-coding-plan/glm-5.1}"
 
 display_path() {
     local base="$1"
@@ -25,6 +27,90 @@ display_path() {
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
+}
+
+map_reasoning_to_opencode_variant() {
+    case "$1" in
+        xhigh) echo "max" ;;
+        high) echo "high" ;;
+        *) echo "minimal" ;;
+    esac
+}
+
+trim_report_to_header() {
+    local file="$1"
+    python3 - "$file" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+marker = "# 审查报告："
+index = text.find(marker)
+if index > 0:
+    path.write_text(text[index:], encoding="utf-8")
+PY
+}
+
+render_template_content() {
+    local engine="$1"
+    local model_name="$2"
+    local reasoning="$3"
+    local tool_label="${engine} (${model_name} ${reasoning})"
+
+    sed \
+        -e "s/{需求名称}/$(escape_sed_replacement "$PLAN_TITLE")/g" \
+        -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
+        -e "s/{审查模式}/$(escape_sed_replacement "$REVIEW_MODE")/g" \
+        -e "s/{审查轮次}/$(escape_sed_replacement "$CURRENT_ROUND")/g" \
+        -e "s#{计划文件}#$(escape_sed_replacement "$PLAN_FILE")#g" \
+        -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
+        -e "s/{模型名}/$(escape_sed_replacement "$model_name")/g" \
+        -e "s/{推理强度}/$(escape_sed_replacement "$reasoning")/g" \
+        -e "s/{审查工具}/$(escape_sed_replacement "$tool_label")/g" \
+        "$TEMPLATE"
+}
+
+run_codex_review_prompt() {
+    local prompt="$1"
+    if [ -z "${CODEX_SKIP_GIT_REPO_CHECK_SUPPORTED:-}" ]; then
+        if codex exec --help 2>/dev/null | grep -q -- '--skip-git-repo-check'; then
+            CODEX_SKIP_GIT_REPO_CHECK_SUPPORTED=1
+        else
+            CODEX_SKIP_GIT_REPO_CHECK_SUPPORTED=0
+        fi
+    fi
+
+    local -a codex_args
+    codex_args=(exec -m "$MODEL" -C "$PROJECT_DIR" -c "model_reasoning_effort=\"$REASONING\"" --sandbox workspace-write -o "$REPORT_FILE")
+    if [ "$CODEX_SKIP_GIT_REPO_CHECK_SUPPORTED" = "1" ]; then
+        codex_args+=(--skip-git-repo-check)
+    fi
+
+    printf '%s\n' "$prompt" | codex "${codex_args[@]}"
+}
+
+run_opencode_review_prompt() {
+    local prompt="$1"
+    local model_name="$2"
+    local reasoning="$3"
+    opencode run \
+        -m "$model_name" \
+        --variant "$reasoning" \
+        --dangerously-skip-permissions \
+        --format default \
+        --dir "$PROJECT_DIR" \
+        "$prompt" > "$REPORT_FILE"
+    trim_report_to_header "$REPORT_FILE"
+}
+
+is_codex_unavailable_error() {
+    local rc="$1"
+    local stderr_file="$2"
+    if [ "$rc" -eq 127 ]; then
+        return 0
+    fi
+    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable' "$stderr_file"
 }
 
 render_prompt_template() {
@@ -385,7 +471,7 @@ PY
 }
 
 if [ -z "${1:-}" ]; then
-    echo "用法: codex-review.sh {需求关键词} [模型名] [推理强度] [轮次]"
+    echo "用法: codex-review.sh {slug或唯一关键词} [模型名] [推理强度] [轮次]"
     echo ""
     echo "可用状态："
     if [ -d "$FLOW_DIR/state" ]; then
@@ -520,21 +606,29 @@ require_root_cause_review_loop_record
 # --- 检测审查引擎 ---
 if [[ "$MODEL" == zhipuai-coding-plan/* ]] || [[ "$MODEL" == glm* ]]; then
     echo "错误: OpenCode 模型 (${MODEL}) 请使用 opencode-review.sh"
-    echo "    用法: scripts/opencode-review.sh {需求关键词}"
+    echo "    用法: ${CLAUDE_HOME:-$HOME/.claude}/skills/ai-flow-review/scripts/opencode-review.sh {slug或唯一关键词}"
     exit 1
 fi
 
-if ! command -v codex >/dev/null 2>&1; then
-    echo "错误: codex 未安装，无法执行审查"
-    echo "    如需使用 OpenCode，请执行: scripts/opencode-review.sh {需求关键词}"
-    exit 1
+OPENCODE_REASONING=$(map_reasoning_to_opencode_variant "$REASONING")
+ACTIVE_ENGINE="Codex"
+ACTIVE_MODEL="$MODEL"
+ACTIVE_REASONING="$REASONING"
+if [ "${AI_FLOW_REVIEW_FORCE_OPENCODE:-0}" = "1" ] || ! command -v codex >/dev/null 2>&1; then
+    if ! command -v opencode >/dev/null 2>&1; then
+        echo "错误: Codex 不可用，且 opencode 未安装，无法执行审查"
+        exit 1
+    fi
+    ACTIVE_ENGINE="OpenCode"
+    ACTIVE_MODEL="$REVIEW_OPENCODE_MODEL"
+    ACTIVE_REASONING="$OPENCODE_REASONING"
 fi
 
 echo ">>> 匹配到状态: $SLUG [$PLAN_STATUS]"
 echo "    对比计划: $PLAN_FILE"
 echo "    审查模式: $REVIEW_MODE"
 echo "    审查轮次: $CURRENT_ROUND"
-echo "    审查引擎: codex ($MODEL)"
+echo "    审查引擎: $ACTIVE_ENGINE ($ACTIVE_MODEL $ACTIVE_REASONING)"
 echo "    输出文件: $REPORT_FILE"
 if [ -n "$PREV_REVIEW" ]; then
     echo "    上一轮报告: ${PREV_REVIEW}（用于缺陷正文与追踪）"
@@ -548,16 +642,7 @@ for required_file in "$FLOW_STATE_SH" "$TEMPLATE" "$PROMPT_TEMPLATE"; do
         exit 1
     fi
 done
-TEMPLATE_CONTENT=$(sed \
-    -e "s/{需求名称}/$(escape_sed_replacement "$PLAN_TITLE")/g" \
-    -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
-    -e "s/{审查模式}/$(escape_sed_replacement "$REVIEW_MODE")/g" \
-    -e "s/{审查轮次}/$(escape_sed_replacement "$CURRENT_ROUND")/g" \
-    -e "s#{计划文件}#$(escape_sed_replacement "$PLAN_FILE")#g" \
-    -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
-    -e "s/{模型名}/$(escape_sed_replacement "$MODEL")/g" \
-    -e "s/{推理强度}/$(escape_sed_replacement "$REASONING")/g" \
-    "$TEMPLATE")
+TEMPLATE_CONTENT=$(render_template_content "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
 
 case "$REVIEW_MODE:$CURRENT_ROUND" in
     regular:1)
@@ -603,9 +688,40 @@ fi
 
 REVIEW_PROMPT=$(render_prompt_template "$PROMPT_TEMPLATE")
 
-echo ">>> 调用 codex ($MODEL) 审查中..."
-CODEX_ARGS=(exec -m "$MODEL" -c "model_reasoning_effort=\"$REASONING\"" --sandbox workspace-write -o "$REPORT_FILE")
-printf '%s\n' "$REVIEW_PROMPT" | codex "${CODEX_ARGS[@]}"
+if [ "$ACTIVE_ENGINE" = "Codex" ]; then
+    echo ">>> 调用 codex ($MODEL) 审查中..."
+    stderr_file=$(mktemp)
+    set +e
+    run_codex_review_prompt "$REVIEW_PROMPT" 2>"$stderr_file"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+        if is_codex_unavailable_error "$rc" "$stderr_file"; then
+            if ! command -v opencode >/dev/null 2>&1; then
+                cat "$stderr_file" >&2
+                rm -f "$stderr_file"
+                echo "错误: Codex 不可用，且 opencode 未安装，无法执行审查"
+                exit 1
+            fi
+            echo ">>> Codex 不可用，降级到 OpenCode ($REVIEW_OPENCODE_MODEL)"
+            ACTIVE_ENGINE="OpenCode"
+            ACTIVE_MODEL="$REVIEW_OPENCODE_MODEL"
+            ACTIVE_REASONING="$OPENCODE_REASONING"
+            TEMPLATE_CONTENT=$(render_template_content "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
+            REVIEW_PROMPT=$(render_prompt_template "$PROMPT_TEMPLATE")
+            run_opencode_review_prompt "$REVIEW_PROMPT" "$ACTIVE_MODEL" "$ACTIVE_REASONING"
+        else
+            cat "$stderr_file" >&2
+            rm -f "$stderr_file"
+            echo "错误: Codex 执行审查失败，且不属于可降级的不可用场景"
+            exit 1
+        fi
+    fi
+    rm -f "$stderr_file"
+else
+    echo ">>> 调用 opencode ($ACTIVE_MODEL) 审查中..."
+    run_opencode_review_prompt "$REVIEW_PROMPT" "$ACTIVE_MODEL" "$ACTIVE_REASONING"
+fi
 
 echo ""
 echo ">>> 审查报告已生成: $REPORT_FILE"
@@ -814,7 +930,7 @@ echo "    状态已验证为 [$UPDATED_STATUS]"
 
 print_commit_instructions() {
     echo ">>> 状态已进入 [DONE]，现在允许提交已审查的未提交变更"
-    if [ -f "$HOME/.claude/skills/git-commit/SKILL.md" ] || [ -f "$HOME/.codex/skills/git-commit/SKILL.md" ]; then
+    if [ -f "$CLAUDE_HOME/skills/git-commit/SKILL.md" ]; then
         echo "    检测到 git-commit 技能：请使用 /git-commit 提交代码"
     else
         echo "    未检测到 git-commit 技能：请按项目提交规范提交；若项目无明确规范，使用 Gitmoji + Conventional Commits"

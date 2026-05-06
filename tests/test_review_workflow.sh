@@ -39,6 +39,30 @@ test_regular_pass_updates_state_to_done() {
     assert_equals "DONE" "$status"
     assert_file_exists "$project/.ai-flow/reports/20260503/demo-review.md"
     assert_contains "$temp_root/review.out" "状态已验证为 \\[DONE\\]"
+    assert_contains "$temp_root/codex.args" "-C $project"
+    assert_contains "$temp_root/codex.args" "--skip-git-repo-check"
+    rm -rf "$temp_root"
+}
+
+test_codex_review_falls_back_to_opencode_when_codex_unavailable() {
+    local temp_root project status
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    setup_home_with_templates "$temp_root"
+    create_state "$project" "demo" "AWAITING_REVIEW" "20260503"
+    write_fake_review_engines "$temp_root" "fallback_passed"
+    setup_git_repo_with_change "$project"
+
+    (cd "$project" && run_with_fake_review_engines "$temp_root" "fallback_passed" bash "$(installed_skill_script "$temp_root" "ai-flow-review" "codex-review.sh")" demo gpt-test xhigh) > "$temp_root/review.out" 2>&1
+
+    status=$(state_field "$project" "demo" "current_status")
+    assert_equals "DONE" "$status"
+    assert_file_exists "$project/.ai-flow/reports/20260503/demo-review.md"
+    assert_contains "$temp_root/review.out" "降级到 OpenCode"
+    assert_contains "$temp_root/opencode.args" "--dir $project"
+    assert_contains "$temp_root/opencode.args" "--variant max"
+    assert_contains "$project/.ai-flow/reports/20260503/demo-review.md" "审查工具：OpenCode (zhipuai-coding-plan/glm-5.1 max)"
     rm -rf "$temp_root"
 }
 
@@ -433,6 +457,7 @@ test_review_rejects_no_git_changes_before_state_update() {
 
 test_invalid_state_rejected
 test_regular_pass_updates_state_to_done
+test_codex_review_falls_back_to_opencode_when_codex_unavailable
 test_regular_passed_with_notes_updates_state_to_done
 test_regular_failed_updates_state_to_review_failed
 test_recheck_pass_keeps_done

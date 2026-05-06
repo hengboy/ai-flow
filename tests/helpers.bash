@@ -70,6 +70,11 @@ setup_project_dirs() {
         "$project_dir/src"
 }
 
+setup_minimal_project_root() {
+    local project_dir="$1"
+    mkdir -p "$project_dir/src"
+}
+
 setup_git_repo_clean() {
     local project_dir="$1"
     (
@@ -465,6 +470,13 @@ write_fake_codex_plan() {
     mkdir -p "$temp_root/bin"
     cat > "$temp_root/bin/codex" <<FAKE_CODEX
 #!/bin/bash
+if [ "\$1" = "exec" ] && [ "\$2" = "--help" ]; then
+    cat <<'HELP'
+Usage: codex exec [OPTIONS]
+      --skip-git-repo-check
+HELP
+    exit 0
+fi
 out=""
 printf "%s\n" "\$*" > "$temp_root/codex.args"
 while [ "\$#" -gt 0 ]; do
@@ -816,7 +828,10 @@ write_fake_codex_review() {
     cat > "$temp_root/bin/codex" <<FAKE_CODEX
 #!/bin/bash
 if [ "\$1" = "exec" ] && [ "\$2" = "--help" ]; then
-    echo "Usage: codex exec [OPTIONS]"
+    cat <<'HELP'
+Usage: codex exec [OPTIONS]
+      --skip-git-repo-check
+HELP
     exit 0
 fi
 out=""
@@ -1562,6 +1577,187 @@ run_with_fake_codex() {
     PATH="$temp_root/bin:$PATH" HOME="$temp_root/home" "$@"
 }
 
+write_fake_review_engines() {
+    local temp_root="$1"
+    local scenario="$2"
+    mkdir -p "$temp_root/bin"
+
+    cat > "$temp_root/bin/codex" <<'FAKE_CODEX'
+#!/bin/bash
+set -euo pipefail
+if [ "${1:-}" = "exec" ] && [ "${2:-}" = "--help" ]; then
+    cat <<'HELP'
+Usage: codex exec [OPTIONS]
+      --skip-git-repo-check
+HELP
+    exit 0
+fi
+temp_root="${FAKE_REVIEW_TEMP_ROOT:?}"
+scenario="${FAKE_REVIEW_SCENARIO:?}"
+printf '%s\n' "$*" > "$temp_root/codex.args"
+
+case "$scenario" in
+    fallback_passed)
+        echo "codex unavailable during review" >&2
+        exit 127
+        ;;
+    *)
+        echo "unexpected fake codex review scenario: $scenario" >&2
+        exit 1
+        ;;
+esac
+FAKE_CODEX
+    chmod +x "$temp_root/bin/codex"
+
+    cat > "$temp_root/bin/opencode" <<'FAKE_OPENCODE'
+#!/bin/bash
+set -euo pipefail
+temp_root="${FAKE_REVIEW_TEMP_ROOT:?}"
+scenario="${FAKE_REVIEW_SCENARIO:?}"
+printf '%s\n' "$*" > "$temp_root/opencode.args"
+prompt_file="$temp_root/captured-review-opencode-prompt.txt"
+printf '%s' "${*: -1}" > "$prompt_file"
+
+title=$(sed -n 's/^# 审查报告：//p' "$prompt_file" | tail -1)
+[ -z "$title" ] && title=demo
+slug=$(sed -n 's/^> 需求简称：//p' "$prompt_file" | tail -1)
+[ -z "$slug" ] && slug=demo
+mode=$(sed -n 's/^> 审查模式：//p' "$prompt_file" | tail -1)
+[ -z "$mode" ] && mode=regular
+round=$(sed -n 's/^> 审查轮次：//p' "$prompt_file" | tail -1)
+[ -z "$round" ] && round=1
+plan_file=$(sed -n 's/^> 对比计划：`//p' "$prompt_file" | tail -1 | sed 's/`$//')
+[ -z "$plan_file" ] && plan_file=.ai-flow/plans/20260503/demo.md
+
+case "$scenario" in
+    fallback_passed)
+        cat <<REPORT
+# 审查报告：$title
+
+> 审查日期：2026-05-03
+> 需求简称：$slug
+> 审查模式：$mode
+> 审查轮次：$round
+> 审查结果：passed
+> 对比计划：\`$plan_file\`
+> 审查工具：OpenCode (zhipuai-coding-plan/glm-5.1 max)
+> 规则标识：\`review\`、\`fix-review\`、\`verify-before-done\`
+
+## 1. 总体评价
+
+总体通过
+
+### 1.1 审查上下文
+
+| 项目 | 内容 |
+|------|------|
+| Plan 文件 | \`$plan_file\` |
+| 变更范围 | staged / unstaged / untracked |
+| 上一轮报告 | 无 |
+| 验证证据 | OpenCode fallback fixture |
+
+### 1.2 定向验证执行证据
+
+| 命令 | 结果 | 结论 |
+|------|------|------|
+| \`git diff -- src/review-target.txt\` | PASS | fallback 夹具已校验变更范围 |
+
+## 2. 计划覆盖度检查
+
+| 实施步骤 | 状态 | 备注 |
+|----------|------|------|
+| Step 1: 示例 | 已实现 | ok |
+
+**覆盖率**：100%
+
+## 2.1 计划外变更识别
+
+| 变更文件/模块 | 变更内容摘要 | 判定 | 备注 |
+|----------|----------|------|------|
+| 无 | 无 | 接受 | 无 |
+
+## 3. 代码质量审查
+
+### 3.1 架构与设计
+
+- 合理
+
+### 3.2 规范性
+
+- 合理
+
+### 3.3 安全性
+
+- 无明显问题
+
+### 3.4 性能
+
+- 无明显问题
+
+### 3.5 逻辑正确性
+
+| 检查项 | 审查结果 | 问题描述 |
+|--------|----------|----------|
+| 边界条件 | 通过 | 已检查 |
+| 空值处理 | 通过 | 已检查 |
+| 异常路径 | 通过 | 已检查 |
+| 数据一致性 | 通过 | 已检查 |
+| 类型转换 | 通过 | 已检查 |
+| 权限校验 | 通过 | 已检查 |
+| 输入校验 | 通过 | 已检查 |
+| 副作用 | 通过 | 已检查 |
+
+### 3.6 缺陷族覆盖度
+
+| 缺陷族 | 覆盖状态 | 依据 |
+|--------|----------|------|
+| 测试/证据 | 已覆盖 | fallback 审查已覆盖关键路径 |
+
+## 4. 缺陷清单
+
+### 4.1 严重缺陷
+
+| # | 严重级别 | 位置 | 描述 | 证据/影响 | 修复建议 | 修复状态 |
+|---|----------|------|------|-----------|----------|----------|
+
+### 4.2 建议改进
+
+| # | 严重级别 | 位置 | 描述 | 建议 | 修复状态 |
+|---|----------|------|------|------|----------|
+
+## 5. 审查结论
+
+- [x] **通过** — 所有步骤已实现，无严重缺陷
+- [ ] **通过（附建议）** — 所有阻塞缺陷已关闭，仍有 Minor 建议可选处理
+- [ ] **需要修复** — 存在以下问题需要处理
+
+## 6. 缺陷修复追踪
+
+| 缺陷编号 | 首次发现轮次 | 当前状态 | 修复说明 | 验证结果 |
+|----------|------------|----------|----------|----------|
+| DEF-1 | v1 | [已修复] | fixed | verified |
+REPORT
+        ;;
+    *)
+        echo "unexpected fake opencode review scenario: $scenario" >&2
+        exit 1
+        ;;
+esac
+FAKE_OPENCODE
+    chmod +x "$temp_root/bin/opencode"
+}
+
+run_with_fake_review_engines() {
+    local temp_root="$1"
+    local scenario="$2"
+    shift 2
+    PATH="$temp_root/bin:$PATH" \
+    HOME="$temp_root/home" \
+    FAKE_REVIEW_TEMP_ROOT="$temp_root" \
+    FAKE_REVIEW_SCENARIO="$scenario" \
+    "$@"
+}
+
 write_fake_plan_workflow_engines() {
     local temp_root="$1"
     local scenario="$2"
@@ -1569,6 +1765,13 @@ write_fake_plan_workflow_engines() {
     cat > "$temp_root/bin/codex" <<'FAKE_CODEX'
 #!/bin/bash
 set -euo pipefail
+if [ "${1:-}" = "exec" ] && [ "${2:-}" = "--help" ]; then
+    cat <<'HELP'
+Usage: codex exec [OPTIONS]
+      --skip-git-repo-check
+HELP
+    exit 0
+fi
 temp_root="${FAKE_PLAN_TEMP_ROOT:?}"
 scenario="${FAKE_PLAN_SCENARIO:?}"
 call_file="$temp_root/fake-plan-codex-call-count"
@@ -1576,6 +1779,7 @@ count=0
 [ -f "$call_file" ] && count=$(cat "$call_file")
 count=$((count + 1))
 printf '%s' "$count" > "$call_file"
+printf '%s\n' "$*" > "$temp_root/codex.args.$count"
 
 out=""
 while [ "$#" -gt 0 ]; do

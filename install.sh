@@ -8,6 +8,26 @@ CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 ONSPACE_DIR="${ONSPACE_DIR:-$HOME/.config/onespace/skills/local_state/models/claude}"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 
+remove_legacy_claude_layout() {
+    rm -rf "$CLAUDE_HOME/workflows" "$CLAUDE_HOME/templates"
+}
+
+remove_legacy_onespace_root_entries() {
+    local legacy_entry
+    for legacy_entry in \
+        "codex-plan.sh" \
+        "codex-review.sh" \
+        "opencode-review.sh" \
+        "flow-change.sh" \
+        "flow-state.sh" \
+        "flow-status.sh" \
+        "plan-template.md" \
+        "review-template.md"
+    do
+        rm -rf "$ONSPACE_DIR/$legacy_entry"
+    done
+}
+
 install_skill_dir() {
     local source_dir="$1"
     local destination_root="$2"
@@ -49,6 +69,7 @@ install_runtime_root() {
 }
 
 mkdir -p "$CLAUDE_HOME/skills"
+remove_legacy_claude_layout
 
 for skill_dir in "$ROOT_DIR"/skills/*; do
     [ -d "$skill_dir" ] || continue
@@ -58,6 +79,7 @@ done
 echo "Installed AI Flow to $CLAUDE_HOME"
 
 mkdir -p "$ONSPACE_DIR"
+remove_legacy_onespace_root_entries
 for skill_dir in "$ROOT_DIR"/skills/*; do
     [ -d "$skill_dir" ] || continue
     install_skill_dir "$skill_dir" "$ONSPACE_DIR"
