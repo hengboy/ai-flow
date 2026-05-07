@@ -15,17 +15,36 @@ if [ ! -d "$FLOW_DIR" ]; then
     exit 0
 fi
 
+VALID_LIST="$(mktemp)"
+INVALID_LIST="$(mktemp)"
+trap 'rm -f "$VALID_LIST" "$INVALID_LIST"' EXIT
+
 if [ -d "$STATE_DIR" ]; then
-    "$FLOW_STATE_SH" validate --all >/dev/null
+    shopt -s nullglob
+    for path in "$STATE_DIR"/*.json; do
+        slug="$(basename "$path" .json)"
+        error_file="$(mktemp)"
+        if "$FLOW_STATE_SH" validate "$slug" >/dev/null 2>"$error_file"; then
+            printf '%s\n' "$path" >>"$VALID_LIST"
+        else
+            error_text="$(tr '\n' ' ' <"$error_file" | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')"
+            printf '%s\t%s\n' "$path" "$error_text" >>"$INVALID_LIST"
+        fi
+        rm -f "$error_file"
+    done
+    shopt -u nullglob
 fi
 
-python3 - "$PROJECT_DIR" <<'PY'
+python3 - "$PROJECT_DIR" "$VALID_LIST" "$INVALID_LIST" "$FLOW_STATE_SH" <<'PY'
 import json
 import sys
 from collections import Counter
 from pathlib import Path
 
 project_dir = Path(sys.argv[1]).resolve()
+valid_list = Path(sys.argv[2])
+invalid_list = Path(sys.argv[3])
+flow_state_sh = Path(sys.argv[4])
 flow_dir = project_dir / ".ai-flow"
 state_dir = flow_dir / "state"
 
@@ -41,13 +60,35 @@ def rel(path_value):
     return path.as_posix()
 
 states = []
-if state_dir.exists():
-    for path in sorted(state_dir.glob("*.json")):
-        states.append(json.loads(path.read_text(encoding="utf-8")))
+if valid_list.exists():
+    for line in valid_list.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        states.append(json.loads(Path(line).read_text(encoding="utf-8")))
+
+invalid_states = []
+if invalid_list.exists():
+    for line in invalid_list.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        path_value, error = line.split("\t", 1)
+        invalid_states.append((Path(path_value), error))
 
 print("===============================")
 print(f"  AI Flow 状态: {project_dir.name}")
 print("===============================")
+print()
+
+print("--- 无效状态文件 ---")
+if not invalid_states:
+    print("  (无)")
+else:
+    for path, error in invalid_states:
+        slug = path.stem
+        print(
+            f"  ⚠ {slug} [{rel(path)}] {error}  "
+            f"fix: {flow_state_sh} normalize --slug {slug}"
+        )
 print()
 
 print("--- 状态文件 ---")
@@ -98,7 +139,8 @@ if states:
 
 counts = Counter(state["current_status"] for state in states)
 print("--- 统计 ---")
-print(f"  总数: {len(states)}")
+print(f"  总数: {len(states) + len(invalid_states)}")
+print(f"  INVALID: {len(invalid_states)}")
 for status, _, _ in status_labels:
     print(f"  {status}: {counts.get(status, 0)}")
 print("===============================")

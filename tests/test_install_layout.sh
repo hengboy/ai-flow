@@ -35,6 +35,8 @@ test_default_install_layout() {
     assert_file_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan" "prompts/plan-generation.md")"
     assert_file_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan" "templates/plan-template.md")"
     assert_file_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan" "lib/agent-common.sh")"
+    assert_contains "$agents_root/ai-flow-codex-plan-review/AGENT.md" "唯一合法执行路径"
+    assert_contains "$agents_root/ai-flow-codex-plan-coding-review/AGENT.md" "唯一合法执行路径"
     assert_file_not_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-review-executor.sh")"
     assert_file_not_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "coding-review-executor.sh")"
     assert_file_not_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan" "templates/review-template.md")"
@@ -43,6 +45,17 @@ test_default_install_layout() {
     assert_file_not_exists "$agents_root/ai-flow-codex-plan/meta.yaml"
     assert_file_not_exists "$temp_root/home/.claude/workflows"
     assert_file_not_exists "$temp_root/home/.claude/templates"
+    set +e
+    rg -n "ai-flow-plan-coding-fix" "$skills_root" "$runtime_root" "$agents_root" >"$temp_root/legacy-skill.out"
+    rc=$?
+    set -e
+    [ "$rc" -eq 1 ] || fail "Expected no legacy repair skill references in installed assets"
+    set +e
+    rg -n "coding_review_failed" "$skills_root" "$agents_root" >"$temp_root/legacy-event.out"
+    rc=$?
+    set -e
+    [ "$rc" -eq 1 ] || fail "Expected no legacy review event references in installed user-facing assets"
+    assert_contains "$runtime_root/scripts/flow-state.sh" "\"coding_review_failed\": \"review_failed\""
     assert_contains "$temp_root/install.out" "Installed AI Flow runtime"
     rm -rf "$temp_root"
 }

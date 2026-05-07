@@ -44,6 +44,12 @@ ALLOWED_TRANSITIONS = {
     ("recheck_passed", "DONE"): "DONE",
     ("recheck_failed", "DONE"): "REVIEW_FAILED",
 }
+LEGACY_EVENT_ALIASES = {
+    "coding_review_passed": "review_passed",
+    "coding_review_failed": "review_failed",
+    "coding_recheck_passed": "recheck_passed",
+    "coding_recheck_failed": "recheck_failed",
+}
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
@@ -150,6 +156,13 @@ def append_transition(state: dict, *, event: str, to_status: str, at: str, artif
     state["transitions"].append(transition)
 
 
+def review_result_from_transition(item: dict) -> str:
+    result = (item.get("artifacts") or {}).get("result")
+    if result in REVIEW_RESULTS:
+        return result
+    return "passed" if item["event"].endswith("passed") else "failed"
+
+
 def expected_latest_from_transitions(transitions: list, mode: str):
     events = {"regular": {"review_passed", "review_failed"}, "recheck": {"recheck_passed", "recheck_failed"}}[mode]
     for item in reversed(transitions):
@@ -174,16 +187,112 @@ def expected_last_review_from_transitions(transitions: list):
         if item["event"] in {"review_passed", "review_failed", "recheck_passed", "recheck_failed"}:
             artifacts = item["artifacts"]
             mode = "recheck" if item["event"].startswith("recheck_") else "regular"
-            # Use stored result to preserve passed_with_notes distinction
-            result = artifacts.get("result", "passed" if item["event"].endswith("passed") else "failed")
             return {
                 "mode": mode,
                 "round": artifacts.get("round"),
-                "result": result,
+                "result": review_result_from_transition(item),
                 "report_file": artifacts.get("report_file"),
                 "at": item["at"],
             }
     return None
+
+
+def expected_active_fix_from_transitions(transitions: list, current_status: str, last_review):
+    if current_status != "FIXING_REVIEW":
+        return None
+
+    latest_fix_started = None
+    for item in reversed(transitions):
+        if item["event"] == "fix_started":
+            latest_fix_started = item
+            break
+
+    if latest_fix_started is None:
+        raise FlowError("FIXING_REVIEW 状态必须存在 fix_started transition")
+    if not last_review:
+        raise FlowError("FIXING_REVIEW 状态必须能推导出 last_review")
+
+    report_file = latest_fix_started["artifacts"].get("report_file") or last_review.get("report_file")
+    if not report_file:
+        raise FlowError("FIXING_REVIEW 状态无法推导 active_fix.report_file")
+
+    return {
+        "mode": last_review["mode"],
+        "round": last_review["round"],
+        "report_file": report_file,
+        "at": latest_fix_started["at"],
+    }
+
+
+def synchronize_derived_fields(state: dict) -> dict:
+    transitions = state.get("transitions")
+    if not isinstance(transitions, list) or not transitions:
+        raise FlowError("transitions 不能为空")
+
+    first_transition = transitions[0]
+    last_transition = transitions[-1]
+    first_plan_file = (first_transition.get("artifacts") or {}).get("plan_file")
+    if (not state.get("plan_file")) and first_plan_file:
+        state["plan_file"] = first_plan_file
+
+    state["created_at"] = first_transition["at"]
+    state["updated_at"] = last_transition["at"]
+    state["current_status"] = last_transition["to"]
+    state["review_rounds"] = expected_rounds_from_transitions(transitions)
+    state["latest_regular_review_file"] = expected_latest_from_transitions(transitions, "regular")
+    state["latest_recheck_review_file"] = expected_latest_from_transitions(transitions, "recheck")
+    state["last_review"] = expected_last_review_from_transitions(transitions)
+    state["active_fix"] = expected_active_fix_from_transitions(
+        transitions, state["current_status"], state["last_review"]
+    )
+    return state
+
+
+def normalize_legacy_state(state: dict) -> list[str]:
+    transitions = state.get("transitions")
+    if not isinstance(transitions, list) or not transitions:
+        raise FlowError("transitions 不能为空，无法执行 normalize")
+
+    changes = []
+    review_events = {"review_passed", "review_failed", "recheck_passed", "recheck_failed"}
+    for index, item in enumerate(transitions):
+        if not isinstance(item, dict):
+            raise FlowError(f"transitions[{index}] 必须是对象，无法执行 normalize")
+
+        original_event = item.get("event")
+        normalized_event = LEGACY_EVENT_ALIASES.get(original_event, original_event)
+        if normalized_event != original_event:
+            item["event"] = normalized_event
+            changes.append(f"transitions[{index + 1}].event: {original_event} -> {normalized_event}")
+
+        if item.get("event") in review_events:
+            artifacts = item.setdefault("artifacts", {})
+            expected_mode = "recheck" if item["event"].startswith("recheck_") else "regular"
+            if artifacts.get("mode") != expected_mode:
+                previous_mode = artifacts.get("mode")
+                artifacts["mode"] = expected_mode
+                if previous_mode is None:
+                    changes.append(f"transitions[{index + 1}].artifacts.mode: <missing> -> {expected_mode}")
+                else:
+                    changes.append(
+                        f"transitions[{index + 1}].artifacts.mode: {previous_mode} -> {expected_mode}"
+                    )
+
+            if item["event"].endswith("failed") and artifacts.get("result") != "failed":
+                previous_result = artifacts.get("result")
+                artifacts["result"] = "failed"
+                if previous_result is None:
+                    changes.append(f"transitions[{index + 1}].artifacts.result: <missing> -> failed")
+                else:
+                    changes.append(
+                        f"transitions[{index + 1}].artifacts.result: {previous_result} -> failed"
+                    )
+            elif "result" not in artifacts:
+                artifacts["result"] = "passed"
+                changes.append(f"transitions[{index + 1}].artifacts.result: <missing> -> passed")
+
+    synchronize_derived_fields(state)
+    return changes
 
 
 def get_nested(state: dict, field: str):
@@ -328,6 +437,9 @@ def validate_state(state: dict, *, expected_slug: str = None) -> None:
         raise FlowError("latest_recheck_review_file 与 transition 不一致")
 
     active_fix = state["active_fix"]
+    expected_active_fix = expected_active_fix_from_transitions(
+        transitions, state["current_status"], expected_last_review
+    )
     if state["current_status"] == "FIXING_REVIEW":
         if not isinstance(active_fix, dict):
             raise FlowError("FIXING_REVIEW 状态下 active_fix 不能为空")
@@ -344,9 +456,11 @@ def validate_state(state: dict, *, expected_slug: str = None) -> None:
     else:
         if active_fix is not None:
             raise FlowError("只有 FIXING_REVIEW 状态允许 active_fix 非空")
+    if active_fix != expected_active_fix:
+        raise FlowError("active_fix 必须等于 fix_started transition 与 last_review 的派生结果")
 
 
-def with_lock(slug: str, mutator):
+def with_lock(slug: str, mutator, *, validate_current: bool = True):
     slug = ensure_slug(slug)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LOCKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -359,7 +473,7 @@ def with_lock(slug: str, mutator):
 
     try:
         current_state = load_state_by_slug(slug) if state_path_for_slug(slug).exists() else None
-        if current_state is not None:
+        if current_state is not None and validate_current:
             validate_state(current_state, expected_slug=slug)
         next_state = mutator(copy.deepcopy(current_state))
         validate_state(next_state, expected_slug=slug)
@@ -709,6 +823,34 @@ def cmd_repair(args):
     print(f"{args.slug}: {state['current_status']}")
 
 
+def cmd_normalize(args):
+    def mutator(state):
+        state = require_state(state, args.slug)
+        before_status = state.get("current_status")
+        changes = normalize_legacy_state(state)
+        note_parts = []
+        if changes:
+            note_parts.append("normalize: " + "; ".join(changes))
+        else:
+            note_parts.append("normalize: no structural changes")
+        if args.note:
+            note_parts.append(args.note)
+        append_transition(
+            state,
+            event="repair_metadata",
+            to_status=state["current_status"],
+            at=now_iso(),
+            artifacts={"normalized_changes": changes},
+            note=" | ".join(note_parts),
+        )
+        if before_status != state["current_status"]:
+            state["transitions"][-1]["event"] = "repair"
+        return state
+
+    state = with_lock(args.slug, mutator, validate_current=False)
+    print(f"{args.slug}: {state['current_status']}")
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="flow-state.sh")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -777,6 +919,11 @@ def build_parser():
     repair.add_argument("--clear-active-fix", action="store_true")
     repair.add_argument("--note")
     repair.set_defaults(func=cmd_repair)
+
+    normalize = subparsers.add_parser("normalize")
+    normalize.add_argument("--slug", required=True)
+    normalize.add_argument("--note")
+    normalize.set_defaults(func=cmd_normalize)
 
     return parser
 

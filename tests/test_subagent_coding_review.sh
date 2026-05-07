@@ -25,6 +25,11 @@ test_regular_passed_with_notes_to_done() {
     assert_protocol_field "$temp_root/review-notes.out" "REVIEW_RESULT" "passed_with_notes"
     assert_protocol_field "$temp_root/review-notes.out" "STATE" "DONE"
     assert_protocol_field "$temp_root/review-notes.out" "NEXT" "none"
+    assert_equals "review_passed" "$(state_field "$project" "demo" "transitions.4.event")"
+    assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "demo" "transitions.4.actor")"
+    assert_equals "passed_with_notes" "$(state_field "$project" "demo" "transitions.4.artifacts.result")"
+    assert_equals "1" "$(wc -l < "$temp_root/codex.review.calls" | tr -d ' ')"
+    assert_file_not_exists "$temp_root/opencode.review.calls"
     rm -rf "$temp_root"
 }
 
@@ -48,6 +53,8 @@ test_regular_failed_to_review_failed() {
     assert_equals "REVIEW_FAILED" "$(state_field "$project" "demo" "current_status")"
     assert_protocol_field "$temp_root/review-failed.out" "REVIEW_RESULT" "failed"
     assert_protocol_field "$temp_root/review-failed.out" "NEXT" "ai-flow-plan-coding"
+    assert_equals "review_failed" "$(state_field "$project" "demo" "transitions.4.event")"
+    assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "demo" "transitions.4.actor")"
     rm -rf "$temp_root"
 }
 
@@ -70,6 +77,8 @@ test_recheck_pass_keeps_done() {
 
     assert_equals "DONE" "$(state_field "$project" "demo" "current_status")"
     assert_protocol_field "$temp_root/recheck.out" "REVIEW_RESULT" "passed"
+    assert_equals "recheck_passed" "$(state_field "$project" "demo" "transitions.5.event")"
+    assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "demo" "transitions.5.actor")"
     rm -rf "$temp_root"
 }
 
@@ -173,6 +182,7 @@ test_root_cause_gate_and_fallback() {
     assert_protocol_field "$temp_root/root-cause-pass.out" "REVIEW_RESULT" "passed"
     assert_contains "$temp_root/root-cause-pass.out" "OpenCode"
     assert_equals "DONE" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "1" "$(wc -l < "$temp_root/codex.review.calls" | tr -d ' ')"
     assert_equals "1" "$(wc -l < "$temp_root/opencode.review.calls" | tr -d ' ')"
     rm -rf "$temp_root"
 }

@@ -240,18 +240,22 @@ bash install.sh
 - `show`
 - `validate`
 - `repair`
+- `normalize`
 
 特性：
 
 - 锁保护
 - 原子写入
 - 写前写后结构校验
-- `record-plan-review`、`record-review`、`repair` 均受测试覆盖
+- `repair` 保持严格模式，只接受当前已合法的状态文件
+- `normalize` 用于显式修复历史坏数据或非标准事件，再回到严格状态机
+- `record-plan-review`、`record-review`、`repair`、`normalize` 均受测试覆盖
 
 ### `flow-status.sh`
 
 - 只扫描 `.ai-flow/state/*.json`
 - 不受旧 plan / report 文本污染
+- 遇到坏 state 文件时继续展示其他合法任务，并给出 `normalize` 修复提示
 - 输出每个状态的下一步 skill 映射
 
 ### `flow-change.sh`
@@ -259,7 +263,7 @@ bash install.sh
 - 通过 `slug` 找到 plan
 - 向 `## 7. 需求变更记录` 追加审计记录
 - 支持 `[root-cause-review-loop]` 记录
-- 不直接承担状态推进，状态调整由 `flow-state.sh repair` 负责
+- 不直接承担状态推进，状态调整由 `flow-state.sh repair` / `normalize` 负责
 
 ## Subagent 执行面
 
@@ -280,6 +284,7 @@ bash install.sh
 - 只接受 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED`
 - 执行计划审核
 - 回写 plan 第 8 章审核记录
+- 只能通过 `flow-state.sh record-plan-review` 推进状态，禁止手工编辑 `.ai-flow/state/*.json`
 - 审核通过后统一推进到 `PLANNED`，审核失败时推进到 `PLAN_REVIEW_FAILED`
 
 ### Coding Review
@@ -290,6 +295,7 @@ bash install.sh
 - `DONE` 走 recheck
 - 无 `slug` 时走 adhoc review
 - 要求存在非 `.ai-flow/` 的 Git 未提交变更
+- 只能通过 `flow-state.sh record-review` 推进状态，禁止手工编辑 `.ai-flow/state/*.json`
 - `failed` 推进到 `REVIEW_FAILED`
 - `passed` / `passed_with_notes` 推进或保持 `DONE`
 - regular 第 3 轮仍要求已有 `[root-cause-review-loop]` 审计记录

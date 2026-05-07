@@ -1072,7 +1072,11 @@ fi
 RESULT="$DERIVED_RESULT"
 
 echo ">>> 更新状态文件..."
-"$FLOW_STATE_SH" record-review --slug "$SLUG" --mode "$REVIEW_MODE" --result "$RESULT" --report-file "$REPORT_FILE"
+AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" record-review \
+    --slug "$SLUG" \
+    --mode "$REVIEW_MODE" \
+    --result "$RESULT" \
+    --report-file "$REPORT_FILE"
 UPDATED_STATUS=$(state_field "$SLUG" "current_status")
 echo "    状态已验证为 [$UPDATED_STATUS]"
 PROTOCOL_STATE="$UPDATED_STATUS"

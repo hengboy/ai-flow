@@ -1102,7 +1102,7 @@ PY
         "$REVIEW_RESULT" \
         "$( [ "$REVIEW_EXECUTE_READY" = "yes" ] && echo "是" || echo "否" )"
 
-    "$FLOW_STATE_SH" record-plan-review \
+    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" record-plan-review \
         --slug "$SLUG" \
         --result "$REVIEW_RESULT" \
         --engine "$PLAN_ENGINE_NAME" \
@@ -1296,7 +1296,7 @@ else
     [ -z "$PLAN_TITLE" ] && PLAN_TITLE="$REQUIREMENT"
 
     echo ">>> 初始化状态文件..."
-    "$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
+    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
     PLAN_STATUS=$("$FLOW_STATE_SH" show "$SLUG" --field current_status)
     echo "    状态已验证为 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"

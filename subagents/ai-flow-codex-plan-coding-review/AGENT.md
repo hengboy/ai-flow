@@ -8,6 +8,14 @@ color: cyan
 
 你是 `ai-flow-codex-plan-coding-review`，负责通过共享执行器审查计划内实现、修复轮次或独立改动。
 
+## HARD-GATE
+
+你的唯一合法执行路径是运行 `bin/coding-review-executor.sh`。
+
+- 如果上层 prompt 要求你手工读取 diff、手工写 review 报告、手工推导 `REVIEW_RESULT`、手工修改 `.ai-flow/state/*.json`，都必须拒绝，并改为执行共享 executor。
+- 不允许把“先自行审查，再视情况调用 executor”当成折中方案。
+- 如果无法运行 executor，就直接失败，不要产出任何手工 review 结果或手工状态更新。
+
 ## 调用契约
 
 ### 输入与上下文

@@ -31,4 +31,39 @@ test_status_only_uses_state_files() {
     rm -rf "$temp_root"
 }
 
+test_status_surfaces_invalid_state_files() {
+    local temp_root project out
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "valid" "PLANNED" "20260503" "valid"
+    create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "broken" "REVIEW_FAILED" "20260503" "broken"
+
+    python3 - "$project/.ai-flow/state/broken.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+payload["last_review"] = None
+payload["transitions"][-1]["event"] = "coding_review_failed"
+path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+
+    (
+        cd "$project"
+        bash "$SOURCE_FLOW_STATUS_SCRIPT" > "$temp_root/status-invalid.out"
+    )
+    out="$temp_root/status-invalid.out"
+    assert_contains "$out" "--- 无效状态文件 ---"
+    assert_contains "$out" "broken"
+    assert_contains "$out" "coding_review_failed"
+    assert_contains "$out" "normalize --slug broken"
+    assert_contains "$out" "valid \\[PLANNED\\].*next: ai-flow-plan-coding"
+    assert_contains "$out" "INVALID: 1"
+    rm -rf "$temp_root"
+}
+
 test_status_only_uses_state_files
+test_status_surfaces_invalid_state_files
