@@ -83,9 +83,14 @@ for status, icon, label in status_labels:
     for state in matched:
         latest = state["latest_recheck_review_file"] or state["latest_regular_review_file"]
         detail = f"report: {rel(latest)}" if latest else "report: -"
-        next_action = "ai-flow-plan" if status in {"AWAITING_PLAN_REVIEW", "PLAN_REVIEW_FAILED"} else (
-            "ai-flow-execute" if status in {"PLANNED", "IMPLEMENTING", "REVIEW_FAILED", "FIXING_REVIEW"} else "ai-flow-review"
-        )
+        if status == "AWAITING_PLAN_REVIEW":
+            next_action = "ai-flow-plan-review"
+        elif status == "PLAN_REVIEW_FAILED":
+            next_action = "ai-flow-plan"
+        elif status in {"PLANNED", "IMPLEMENTING", "REVIEW_FAILED", "FIXING_REVIEW"}:
+            next_action = "ai-flow-plan-coding"
+        else:
+            next_action = "ai-flow-plan-coding-review"
         print(f"  {icon} {state['slug']} [{status}] {label}  {detail}  next: {next_action}")
     print()
 if states:

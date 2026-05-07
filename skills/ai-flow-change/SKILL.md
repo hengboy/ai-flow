@@ -82,7 +82,7 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh show {slug} --field
 
 #### 4.3 更新实施步骤（## 3.）— 核心操作
 
-**新增需求**：在现有步骤之后追加新的 Step，编号递增。新步骤格式与 plan-template.md 一致，必须包含目标、文件边界、`本轮 review 预期关注面`、执行动作（`- [ ]` 复选框）、验证命令、预期结果、本步自检、验收条件、`本步关闭条件` 和阻塞条件。
+**新增需求**：在现有步骤之后追加新的 Step，编号递增。新步骤必须保持当前 plan 模板结构，至少包含目标、文件边界、`本轮 review 预期关注面`、执行动作（`- [ ]` 复选框）、验证命令、预期结果、本步自检、验收条件、`本步关闭条件` 和阻塞条件。
 
 **修改已有需求**：在对应 Step 标题追加标记 `*(需求变更修订)*`，更新执行动作：
 - 已完成的动作保持 `- [x]`
@@ -144,15 +144,17 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-change.sh {slug} "[root-caus
 
 ### 7. 后续指引
 
-- 如果状态为 `IMPLEMENTING`：提示使用 `/ai-flow-execute` 继续执行
-- 如果状态为 `PLANNED`：提示使用 `/ai-flow-execute` 开始执行
+- 如果状态为 `IMPLEMENTING`：提示使用 `/ai-flow-plan-coding` 继续执行
+- 如果状态为 `PLANNED`：提示使用 `/ai-flow-plan-coding` 开始执行
 
 ## 约束
 
+- 只能通过 `flow-state.sh` 调用 `repair`（状态转换）和 `show`（状态查询）子命令，禁止调用 `create`、`record-plan-review`、`record-review`、`start-execute` 等其他子命令
+- 禁止直接编辑 `.ai-flow/state/*.json` 文件
 - 计划文件是执行和审查的唯一依据；变更必须写入计划各章节，不能仅记录在 `## 7` 审计表
 - 不得修改 `.ai-flow/state/{slug}.json` 中的固定 schema 字段（repair 状态转换除外）
 - 不得修改已有的审查报告
-- 新增步骤必须遵循 `plan-template.md` 的格式（目标、文件边界、`本轮 review 预期关注面`、执行动作、验证命令、预期结果、本步自检、验收条件、`本步关闭条件`、阻塞条件）
+- 新增步骤必须遵循当前 plan 模板的格式（目标、文件边界、`本轮 review 预期关注面`、执行动作、验证命令、预期结果、本步自检、验收条件、`本步关闭条件`、阻塞条件）
 - 新增或修改的动作必须用 `- [ ]` 未勾选状态，确保 execute 能识别为待执行
 - repair 只在需要从非执行状态转到 `IMPLEMENTING` 时使用；`PLANNED` 和 `IMPLEMENTING` 状态不需要 repair
 - root-cause-review-loop 不只是审计备注；必须把根因对应的缺陷族和定向验证矩阵同步补进 plan 正文

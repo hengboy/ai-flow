@@ -1,18 +1,29 @@
 #!/bin/bash
-# install.sh — install AI Flow skills plus shared runtime scripts/resources for Claude, OneSpace, and AI_FLOW_HOME.
+# install.sh — install AI Flow skills, runtime, and subagents.
 
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SUBAGENT_SHARED_LIB_DIR="$ROOT_DIR/subagents/shared/lib"
+SUBAGENT_SHARED_PLAN_DIR="$ROOT_DIR/subagents/shared/plan"
+SUBAGENT_SHARED_PLAN_REVIEW_DIR="$ROOT_DIR/subagents/shared/plan-review"
+SUBAGENT_SHARED_CODING_REVIEW_DIR="$ROOT_DIR/subagents/shared/coding-review"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
-ONSPACE_DIR="${ONSPACE_DIR:-$HOME/.config/onespace/skills/local_state/models/claude}"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
+CLAUDE_SKILLS_DIR="$CLAUDE_HOME/skills"
+CLAUDE_AGENTS_DIR="${CLAUDE_AGENTS_DIR:-$CLAUDE_HOME/agents}"
+OPENCODE_AGENTS_DIR="${OPENCODE_AGENTS_DIR:-$HOME/.config/opencode/agents}"
+ONSPACE_SKILLS_DIR="${ONSPACE_SKILLS_DIR:-${ONSPACE_DIR:-$HOME/.config/onespace/skills/local_state/models/claude}}"
+ONSPACE_SUBAGENTS_CLAUDE_DIR="${ONSPACE_SUBAGENTS_CLAUDE_DIR:-$HOME/.config/onespace/subagents/local_state/models/claude}"
+ONSPACE_SUBAGENTS_OPENCODE_DIR="${ONSPACE_SUBAGENTS_OPENCODE_DIR:-$HOME/.config/onespace/subagents/local_state/models/opencode}"
+LEGACY_SKILLS=(ai-flow-execute ai-flow-review)
 
 remove_legacy_claude_layout() {
     rm -rf "$CLAUDE_HOME/workflows" "$CLAUDE_HOME/templates"
 }
 
-remove_legacy_onespace_root_entries() {
+remove_legacy_root_entries() {
+    local root="$1"
     local legacy_entry
     for legacy_entry in \
         "codex-plan.sh" \
@@ -24,11 +35,19 @@ remove_legacy_onespace_root_entries() {
         "plan-template.md" \
         "review-template.md"
     do
-        rm -rf "$ONSPACE_DIR/$legacy_entry"
+        rm -rf "$root/$legacy_entry"
     done
 }
 
-install_skill_dir() {
+remove_legacy_skill_names() {
+    local destination_root="$1"
+    local legacy_skill
+    for legacy_skill in "${LEGACY_SKILLS[@]}"; do
+        rm -rf "$destination_root/$legacy_skill"
+    done
+}
+
+copy_tree() {
     local source_dir="$1"
     local destination_root="$2"
     local name
@@ -36,7 +55,6 @@ install_skill_dir() {
 
     name="$(basename "$source_dir")"
     target_dir="$destination_root/$name"
-    [ -f "$source_dir/SKILL.md" ] || return 0
 
     rm -rf "$target_dir"
     mkdir -p "$target_dir"
@@ -44,6 +62,58 @@ install_skill_dir() {
     if [ -d "$target_dir/scripts" ]; then
         find "$target_dir/scripts" -type f -name "*.sh" -exec chmod +x {} +
     fi
+    if [ -d "$target_dir/bin" ]; then
+        find "$target_dir/bin" -type f -name "*.sh" -exec chmod +x {} +
+    fi
+}
+
+overlay_tree_contents() {
+    local source_dir="$1"
+    local target_dir="$2"
+
+    [ -d "$source_dir" ] || return 0
+    mkdir -p "$target_dir"
+    cp -R "$source_dir"/. "$target_dir"/
+    if [ -d "$target_dir/scripts" ]; then
+        find "$target_dir/scripts" -type f -name "*.sh" -exec chmod +x {} +
+    fi
+    if [ -d "$target_dir/bin" ]; then
+        find "$target_dir/bin" -type f -name "*.sh" -exec chmod +x {} +
+    fi
+}
+
+install_skill_dir() {
+    local source_dir="$1"
+    local destination_root="$2"
+    [ -f "$source_dir/SKILL.md" ] || return 0
+    copy_tree "$source_dir" "$destination_root"
+}
+
+install_subagent_dir() {
+    local source_dir="$1"
+    local destination_root="$2"
+    local target_dir
+    local agent_name
+    [ -f "$source_dir/AGENT.md" ] || return 0
+    copy_tree "$source_dir" "$destination_root"
+    target_dir="$destination_root/$(basename "$source_dir")"
+    agent_name="$(basename "$source_dir")"
+    if [ -d "$SUBAGENT_SHARED_LIB_DIR" ]; then
+        mkdir -p "$target_dir/lib"
+        cp -R "$SUBAGENT_SHARED_LIB_DIR"/. "$target_dir/lib"/
+    fi
+    case "$agent_name" in
+        ai-flow-*-plan-review)
+            overlay_tree_contents "$SUBAGENT_SHARED_PLAN_DIR" "$target_dir"
+            overlay_tree_contents "$SUBAGENT_SHARED_PLAN_REVIEW_DIR" "$target_dir"
+            ;;
+        ai-flow-*-plan-coding-review)
+            overlay_tree_contents "$SUBAGENT_SHARED_CODING_REVIEW_DIR" "$target_dir"
+            ;;
+        ai-flow-*-plan)
+            overlay_tree_contents "$SUBAGENT_SHARED_PLAN_DIR" "$target_dir"
+            ;;
+    esac
 }
 
 install_runtime_root() {
@@ -68,23 +138,36 @@ install_runtime_root() {
     fi
 }
 
-mkdir -p "$CLAUDE_HOME/skills"
+mkdir -p "$CLAUDE_SKILLS_DIR" "$CLAUDE_AGENTS_DIR" "$OPENCODE_AGENTS_DIR"
 remove_legacy_claude_layout
+remove_legacy_skill_names "$CLAUDE_SKILLS_DIR"
 
 for skill_dir in "$ROOT_DIR"/skills/*; do
     [ -d "$skill_dir" ] || continue
-    install_skill_dir "$skill_dir" "$CLAUDE_HOME/skills"
+    install_skill_dir "$skill_dir" "$CLAUDE_SKILLS_DIR"
 done
 
 echo "Installed AI Flow to $CLAUDE_HOME"
 
-mkdir -p "$ONSPACE_DIR"
-remove_legacy_onespace_root_entries
+mkdir -p "$ONSPACE_SKILLS_DIR" "$ONSPACE_SUBAGENTS_CLAUDE_DIR" "$ONSPACE_SUBAGENTS_OPENCODE_DIR"
+remove_legacy_root_entries "$ONSPACE_SKILLS_DIR"
+remove_legacy_skill_names "$ONSPACE_SKILLS_DIR"
 for skill_dir in "$ROOT_DIR"/skills/*; do
     [ -d "$skill_dir" ] || continue
-    install_skill_dir "$skill_dir" "$ONSPACE_DIR"
+    install_skill_dir "$skill_dir" "$ONSPACE_SKILLS_DIR"
 done
-echo "Synced AI Flow to $ONSPACE_DIR"
+echo "Synced AI Flow skills to $ONSPACE_SKILLS_DIR"
 
 install_runtime_root "$ROOT_DIR/runtime" "$AI_FLOW_HOME"
 echo "Installed AI Flow runtime to $AI_FLOW_HOME"
+
+for agent_dir in "$ROOT_DIR"/subagents/*; do
+    [ -d "$agent_dir" ] || continue
+    install_subagent_dir "$agent_dir" "$CLAUDE_AGENTS_DIR"
+    install_subagent_dir "$agent_dir" "$OPENCODE_AGENTS_DIR"
+    install_subagent_dir "$agent_dir" "$ONSPACE_SUBAGENTS_CLAUDE_DIR"
+    install_subagent_dir "$agent_dir" "$ONSPACE_SUBAGENTS_OPENCODE_DIR"
+done
+
+echo "Installed AI Flow subagents to $CLAUDE_AGENTS_DIR and $OPENCODE_AGENTS_DIR"
+echo "Synced AI Flow subagents to $ONSPACE_SUBAGENTS_CLAUDE_DIR and $ONSPACE_SUBAGENTS_OPENCODE_DIR"

@@ -1,0 +1,85 @@
+#!/bin/bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/testkit.bash"
+
+test_default_install_layout() {
+    local temp_root skills_root runtime_root agents_root
+    temp_root=$(make_temp_root)
+    skills_root="$temp_root/home/.claude/skills"
+    runtime_root="$temp_root/home/.config/ai-flow"
+    agents_root="$temp_root/home/.claude/agents"
+
+    mkdir -p "$temp_root/home/.claude/workflows" "$temp_root/home/.claude/templates"
+    printf 'legacy\n' > "$temp_root/home/.claude/workflows/codex-plan.sh"
+    printf 'legacy\n' > "$temp_root/home/.claude/templates/plan-template.md"
+
+    install_ai_flow "$temp_root"
+
+    assert_file_exists "$skills_root/ai-flow-plan/SKILL.md"
+    assert_file_not_exists "$skills_root/ai-flow-plan/scripts"
+    assert_file_not_exists "$skills_root/ai-flow-plan/prompts"
+    assert_file_not_exists "$skills_root/ai-flow-plan/templates"
+    assert_file_exists "$skills_root/ai-flow-plan-review/SKILL.md"
+    assert_file_not_exists "$skills_root/ai-flow-plan-review/scripts"
+    assert_file_exists "$skills_root/ai-flow-plan-coding-review/SKILL.md"
+    assert_file_not_exists "$skills_root/ai-flow-plan-coding-review/scripts"
+    assert_file_exists "$runtime_root/scripts/flow-state.sh"
+    assert_file_exists "$runtime_root/scripts/flow-status.sh"
+    assert_file_exists "$runtime_root/scripts/flow-change.sh"
+    assert_file_not_exists "$runtime_root/scripts/flow-plan.sh"
+    assert_file_exists "$agents_root/ai-flow-codex-plan/AGENT.md"
+    assert_file_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+    assert_file_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
+    assert_file_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
+    assert_file_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan" "prompts/plan-generation.md")"
+    assert_file_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan" "templates/plan-template.md")"
+    assert_file_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan" "lib/agent-common.sh")"
+    assert_file_not_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-review-executor.sh")"
+    assert_file_not_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "coding-review-executor.sh")"
+    assert_file_not_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan" "templates/review-template.md")"
+    assert_file_not_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan-coding-review" "prompts/plan-generation.md")"
+    assert_file_not_exists "$agents_root/index.yaml"
+    assert_file_not_exists "$agents_root/ai-flow-codex-plan/meta.yaml"
+    assert_file_not_exists "$temp_root/home/.claude/workflows"
+    assert_file_not_exists "$temp_root/home/.claude/templates"
+    assert_contains "$temp_root/install.out" "Installed AI Flow runtime"
+    rm -rf "$temp_root"
+}
+
+test_custom_roots_install() {
+    local temp_root runtime_root onespace_skills claude_agents opencode_agents onespace_claude onespace_opencode
+    temp_root=$(make_temp_root)
+    runtime_root="$temp_root/runtime-home"
+    onespace_skills="$temp_root/onespace-skills"
+    claude_agents="$temp_root/claude-agents"
+    opencode_agents="$temp_root/opencode-agents"
+    onespace_claude="$temp_root/onespace-claude"
+    onespace_opencode="$temp_root/onespace-opencode"
+
+    HOME="$temp_root/home" \
+        AI_FLOW_HOME="$runtime_root" \
+        ONSPACE_SKILLS_DIR="$onespace_skills" \
+        CLAUDE_AGENTS_DIR="$claude_agents" \
+        OPENCODE_AGENTS_DIR="$opencode_agents" \
+        ONSPACE_SUBAGENTS_CLAUDE_DIR="$onespace_claude" \
+        ONSPACE_SUBAGENTS_OPENCODE_DIR="$onespace_opencode" \
+        bash "$TEST_ROOT/install.sh" >"$temp_root/install-custom.out"
+
+    assert_file_exists "$onespace_skills/ai-flow-plan/SKILL.md"
+    assert_file_exists "$runtime_root/scripts/flow-state.sh"
+    assert_file_exists "$claude_agents/ai-flow-codex-plan/AGENT.md"
+    assert_file_exists "$claude_agents/ai-flow-codex-plan/bin/plan-executor.sh"
+    assert_file_exists "$opencode_agents/ai-flow-opencode-plan-review/bin/plan-review-executor.sh"
+    assert_file_exists "$onespace_claude/ai-flow-codex-plan-coding-review/templates/review-template.md"
+    assert_file_exists "$onespace_opencode/ai-flow-opencode-plan/lib/agent-common.sh"
+    assert_file_not_exists "$claude_agents/ai-flow-codex-plan/bin/plan-review-executor.sh"
+    assert_file_not_exists "$claude_agents/ai-flow-codex-plan/bin/coding-review-executor.sh"
+    assert_file_not_exists "$opencode_agents/ai-flow-opencode-plan-review/templates/review-template.md"
+    assert_file_not_exists "$claude_agents/index.yaml"
+    assert_file_not_exists "$opencode_agents/ai-flow-opencode-plan-review/meta.yaml"
+    rm -rf "$temp_root"
+}
+
+test_default_install_layout
+test_custom_roots_install

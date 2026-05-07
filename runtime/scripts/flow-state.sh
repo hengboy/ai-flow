@@ -416,16 +416,20 @@ def cmd_create(args):
 
 
 def cmd_record_plan_review(args):
-    result = args.result
-    engine = args.engine.strip()
-    model = args.model.strip()
+    slug = resolve_record_plan_review_value(args.slug, args.legacy_slug, "slug")
+    result = resolve_record_plan_review_value(args.result, args.legacy_result, "result")
+    engine = resolve_record_plan_review_value(args.engine, args.legacy_engine, "engine").strip()
+    model = resolve_record_plan_review_value(args.model, args.legacy_model, "model").strip()
+    positional_note = " ".join(args.legacy_note).strip()
+    note = resolve_record_plan_review_note(args.note, positional_note)
+    ensure_slug(slug)
     if not engine:
         raise FlowError("engine 不能为空")
     if not model:
         raise FlowError("model 不能为空")
 
     def mutator(state):
-        state = require_state(state, args.slug)
+        state = require_state(state, slug)
         current_status = state["current_status"]
         if current_status not in {"AWAITING_PLAN_REVIEW", "PLAN_REVIEW_FAILED"}:
             raise FlowError(
@@ -450,11 +454,32 @@ def cmd_record_plan_review(args):
                 "engine": engine,
                 "model": model,
             },
+            note=note,
         )
         return state
 
-    state = with_lock(args.slug, mutator)
-    print(f"{args.slug}: {state['current_status']}")
+    state = with_lock(slug, mutator)
+    print(f"{slug}: {state['current_status']}")
+
+
+def resolve_record_plan_review_value(flag_value, positional_value, field_name: str) -> str:
+    if flag_value is not None and positional_value is not None and flag_value != positional_value:
+        raise FlowError(f"record-plan-review 的 {field_name} 同时通过命名参数和位置参数提供，且值不一致")
+    value = flag_value if flag_value is not None else positional_value
+    if value is None:
+        raise FlowError(
+            "record-plan-review 需要提供 slug、result、engine、model；"
+            "推荐使用 --slug/--result/--engine/--model，"
+            "也兼容旧的位置参数顺序 slug result engine model"
+        )
+    return value
+
+
+def resolve_record_plan_review_note(flag_note, positional_note: str) -> str:
+    flag_note = (flag_note or "").strip()
+    if flag_note and positional_note and flag_note != positional_note:
+        raise FlowError("record-plan-review 的 note 同时通过 --note 和位置参数提供，且值不一致")
+    return flag_note or positional_note
 
 
 def require_state(state, slug: str) -> dict:
@@ -695,10 +720,16 @@ def build_parser():
     create.set_defaults(func=cmd_create)
 
     record_plan_review = subparsers.add_parser("record-plan-review")
-    record_plan_review.add_argument("--slug", required=True)
-    record_plan_review.add_argument("--result", required=True, choices=sorted(PLAN_REVIEW_RESULTS))
-    record_plan_review.add_argument("--engine", required=True)
-    record_plan_review.add_argument("--model", required=True)
+    record_plan_review.add_argument("--slug")
+    record_plan_review.add_argument("--result", choices=sorted(PLAN_REVIEW_RESULTS))
+    record_plan_review.add_argument("--engine")
+    record_plan_review.add_argument("--model")
+    record_plan_review.add_argument("--note")
+    record_plan_review.add_argument("legacy_slug", nargs="?")
+    record_plan_review.add_argument("legacy_result", nargs="?", choices=sorted(PLAN_REVIEW_RESULTS))
+    record_plan_review.add_argument("legacy_engine", nargs="?")
+    record_plan_review.add_argument("legacy_model", nargs="?")
+    record_plan_review.add_argument("legacy_note", nargs="*")
     record_plan_review.set_defaults(func=cmd_record_plan_review)
 
     start_execute = subparsers.add_parser("start-execute")

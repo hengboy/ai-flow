@@ -1,38 +1,88 @@
 #!/bin/bash
-# codex-plan.sh — 调用 Codex 生成 draft plan，并在同一入口内完成计划审核
-# 用法: codex-plan.sh "需求描述" [英文简称] [模型名]
+# plan-executor.sh — 生成或修订 draft plan；内部也承载 plan review 实现
 
 set -euo pipefail
 
-if [ -z "${1:-}" ]; then
-    echo "用法: codex-plan.sh \"需求描述\" [英文简称] [模型名]"
-    echo "示例: codex-plan.sh \"新增用户权限管理模块\" user-permission"
-    exit 1
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$AGENT_DIR/lib/agent-common.sh"
+exec 3>&1 1>&2
+
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
-
-REQUIREMENT="$1"
-SLUG="${2:-}"
-MODEL="${3:-gpt-5.4}"
-PLAN_REVIEW_REASONING="${AI_FLOW_PLAN_REVIEW_REASONING:-xhigh}"
-PLAN_REVIEW_MAX_ROUNDS="${AI_FLOW_PLAN_MAX_REVIEW_ROUNDS:-3}"
-PLAN_REVIEW_OPENCODE_MODEL="${AI_FLOW_PLAN_OPENCODE_MODEL:-zhipuai-coding-plan/glm-5.1}"
 PROJECT_DIR="$(pwd)"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"
 DATE_DIR="$(date +%Y%m%d)"
 PLANS_DIR="$FLOW_DIR/plans/$DATE_DIR"
-TEMPLATE="$SKILL_DIR/templates/plan-template.md"
-PLAN_PROMPT_TEMPLATE="$SKILL_DIR/prompts/plan-generation.md"
-PLAN_REVIEW_PROMPT_TEMPLATE="$SKILL_DIR/prompts/plan-review.md"
-PLAN_REVISION_PROMPT_TEMPLATE="$SKILL_DIR/prompts/plan-revision.md"
-PLAN_REVIEW_FALLBACK_ACTIVE=false
-PLAN_REVIEW_ENGINE=""
-PLAN_REVIEW_MODEL=""
+TEMPLATE="$AGENT_DIR/templates/plan-template.md"
+PLAN_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-generation.md"
+PLAN_REVIEW_PROMPT_TEMPLATE="${AI_FLOW_PLAN_REVIEW_PROMPT_TEMPLATE:-$AGENT_DIR/prompts/plan-review.md}"
+PLAN_REVISION_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-revision.md"
+PLAN_OPENCODE_MODEL="${AI_FLOW_PLAN_OPENCODE_MODEL:-zhipuai-coding-plan/glm-5.1}"
+PLAN_REASONING="${AI_FLOW_PLAN_REASONING:-high}"
+PLAN_REVIEW_REASONING="${AI_FLOW_PLAN_REVIEW_REASONING:-xhigh}"
+PLAN_ENGINE_FALLBACK_ACTIVE=false
+PLAN_ENGINE_NAME=""
+PLAN_ENGINE_MODEL=""
+INTERNAL_PLAN_REVIEW=0
+REQUIREMENT=""
+SLUG=""
+MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
+MATCH_KEYWORD=""
+PROTOCOL_ARTIFACT="none"
+PROTOCOL_STATE="none"
+PROTOCOL_NEXT="none"
+PROTOCOL_REVIEW_RESULT="failed"
+PROTOCOL_SUMMARY=""
+PROTOCOL_EMITTED=0
+
+emit_current_protocol() {
+    PROTOCOL_EMITTED=1
+    emit_protocol "success" "$PROTOCOL_ARTIFACT" "$PROTOCOL_STATE" "$PROTOCOL_NEXT" "$PROTOCOL_SUMMARY" "${1:-}"
+}
+
+fail_protocol() {
+    local summary="$1"
+    PROTOCOL_EMITTED=1
+    emit_protocol "failed" "$PROTOCOL_ARTIFACT" "$PROTOCOL_STATE" "$PROTOCOL_NEXT" "$summary" "${2:-}"
+    exit 1
+}
+
+trap 'rc=$?; if [ "$rc" -ne 0 ] && [ "$PROTOCOL_EMITTED" -eq 0 ]; then emit_protocol "failed" "$PROTOCOL_ARTIFACT" "$PROTOCOL_STATE" "$PROTOCOL_NEXT" "${PROTOCOL_SUMMARY:-执行失败}" "${PROTOCOL_REVIEW_RESULT:-}"; fi' EXIT
+
+if [ "${1:-}" = "--internal-plan-review" ]; then
+    INTERNAL_PLAN_REVIEW=1
+    MATCH_KEYWORD="${2:-}"
+    MODEL="${3:-$(default_model_for_engine "$AGENT_ENGINE")}"
+    if [ -z "$MATCH_KEYWORD" ]; then
+        fail_protocol "用法: plan-review-executor.sh {slug或唯一关键词} [模型名]" "failed"
+    fi
+else
+    if [ -z "${1:-}" ]; then
+        fail_protocol "用法: plan-executor.sh \"需求描述\" [英文简称] [模型名]" ""
+    fi
+    REQUIREMENT="$1"
+    SLUG="${2:-}"
+    MODEL="${3:-$(default_model_for_engine "$AGENT_ENGINE")}"
+fi
+
+require_file() {
+    local path="$1"
+    local label="$2"
+    if [ -f "$path" ]; then
+        return 0
+    fi
+    fail_protocol "缺少${label}: $path" "${PROTOCOL_REVIEW_RESULT:-}"
+}
+
+validate_installed_resources() {
+    require_file "$FLOW_STATE_SH" "AI Flow runtime 脚本 flow-state.sh"
+    require_file "$TEMPLATE" "plan 模板"
+    require_file "$PLAN_PROMPT_TEMPLATE" "plan 生成 prompt"
+    require_file "$PLAN_REVIEW_PROMPT_TEMPLATE" "plan 审核 prompt"
+    require_file "$PLAN_REVISION_PROMPT_TEMPLATE" "plan 修订 prompt"
+}
 
 has_project_root_marker() {
     local dir="$1"
@@ -97,20 +147,19 @@ ensure_project_root_context() {
         [ -n "$candidate" ] && candidates+=("$candidate")
     done < <(discover_project_root_candidates "$PROJECT_DIR")
 
-    echo "错误: 当前目录不是可识别的项目根目录: $PROJECT_DIR"
+    local message
+    message="当前目录不是可识别的项目根目录: $PROJECT_DIR"
     if [ "${#candidates[@]}" -eq 1 ]; then
-        echo "    检测到候选项目根目录: $PROJECT_DIR/${candidates[0]}"
-        echo "    请切换到该目录后重新运行 /ai-flow-plan。"
+        message="$message；检测到候选项目根目录: $PROJECT_DIR/${candidates[0]}"
     elif [ "${#candidates[@]}" -gt 1 ]; then
-        echo "    检测到多个候选项目根目录，请进入目标模块根目录后重新运行 /ai-flow-plan："
-        for candidate in "${candidates[@]}"; do
-            echo "      - $PROJECT_DIR/$candidate"
-        done
+        message="$message；检测到多个候选项目根目录，请进入目标模块根目录后重新运行 /ai-flow-plan"
     else
-        echo "    请在包含 .git、pom.xml、package.json、go.mod、src 等根标记的目录中运行。"
+        message="$message；请在包含 .git、pom.xml、package.json、go.mod、src 等根标记的目录中运行"
     fi
-    exit 1
+    fail_protocol "$message" "${PROTOCOL_REVIEW_RESULT:-}"
 }
+
+validate_installed_resources
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
@@ -513,7 +562,7 @@ PY
             errors="${errors}原始需求（原文）字段必须与输入需求原文完全一致\n"
         fi
         if [ "$phase" = "reviewed" ]; then
-            if ! grep -Fq '是否允许进入 `/ai-flow-execute`' "$plan_file"; then
+            if ! grep -Fq '是否允许进入 `/ai-flow-plan-coding`' "$plan_file"; then
                 errors="${errors}计划审核记录缺少 execute 门禁结论\n"
             fi
         fi
@@ -523,7 +572,8 @@ PY
         echo "⚠ 计划结构校验失败："
         echo -e "$errors"
         echo "    计划文件已保留但标记为无效: $plan_file"
-        exit 1
+        PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$plan_file")"
+        fail_protocol "计划结构校验失败: $(normalize_one_line "$errors")" "${PROTOCOL_REVIEW_RESULT:-}"
     fi
 }
 
@@ -556,7 +606,7 @@ items = subsection("8.2 偏差与建议", ["8.3 审核历史"])
 history = subsection("8.3 审核历史", [])
 
 status_match = re.search(r"^- 审核状态：(.+)$", current, re.M)
-execute_match = re.search(r"^- 是否允许进入 `/ai-flow-execute`：(.+)$", current, re.M)
+execute_match = re.search(r"^- 是否允许进入 `/ai-flow-plan-coding`：(.+)$", current, re.M)
 if not status_match or not execute_match:
     raise SystemExit("8.1 当前审核结论缺少审核状态或 execute 结论")
 
@@ -695,7 +745,7 @@ history_parts.append(
     f"#### 第 {round_no} 轮\n"
     f"- 结果：{result}\n"
     f"- 与原始需求一致性：{alignment}\n"
-    f"- 是否允许进入 `/ai-flow-execute`：{execute_ready}\n"
+    f"- 是否允许进入 `/ai-flow-plan-coding`：{execute_ready}\n"
     f"- 审核引擎/模型：{engine} / {model}\n"
     f"- 结论摘要：{summary}\n"
     f"- 条目：\n"
@@ -709,7 +759,7 @@ review_section = (
     "### 8.1 当前审核结论\n\n"
     f"- 审核状态：{result}\n"
     f"- 与原始需求一致性：{alignment}\n"
-    "- 是否允许进入 `/ai-flow-execute`："
+    "- 是否允许进入 `/ai-flow-plan-coding`："
     f"{execute_ready}\n"
     f"- 当前审核轮次：{round_no}\n"
     f"- 审核引擎/模型：{engine} / {model}\n"
@@ -762,7 +812,7 @@ run_opencode_prompt() {
     local output_file="$2"
     local variant="$3"
     opencode run \
-        -m "$PLAN_REVIEW_OPENCODE_MODEL" \
+        -m "$PLAN_OPENCODE_MODEL" \
         --variant "$variant" \
         --dangerously-skip-permissions \
         --format default \
@@ -787,12 +837,12 @@ run_review_phase_prompt() {
     variant=$(map_reasoning_to_opencode_variant "$PLAN_REVIEW_REASONING")
 
     if [ "${AI_FLOW_PLAN_REVIEW_FORCE_OPENCODE:-0}" = "1" ]; then
-        PLAN_REVIEW_FALLBACK_ACTIVE=true
+        PLAN_ENGINE_FALLBACK_ACTIVE=true
     fi
 
-    if [ "$PLAN_REVIEW_FALLBACK_ACTIVE" = false ]; then
+    if [ "$PLAN_ENGINE_FALLBACK_ACTIVE" = false ]; then
         if ! command -v codex >/dev/null 2>&1; then
-            PLAN_REVIEW_FALLBACK_ACTIVE=true
+            PLAN_ENGINE_FALLBACK_ACTIVE=true
         else
             local stderr_file rc
             stderr_file=$(mktemp)
@@ -801,33 +851,32 @@ run_review_phase_prompt() {
             rc=$?
             set -e
             if [ "$rc" -eq 0 ]; then
-                PLAN_REVIEW_ENGINE="Codex"
-                PLAN_REVIEW_MODEL="$MODEL"
+                PLAN_ENGINE_NAME="Codex"
+                PLAN_ENGINE_MODEL="$MODEL"
                 trim_generated_file_to_marker "$output_file" "$marker"
                 rm -f "$stderr_file"
                 return 0
             fi
             if is_codex_unavailable_error "$rc" "$stderr_file"; then
-                echo ">>> 计划审核阶段 Codex 不可用，降级到 OpenCode ($PLAN_REVIEW_OPENCODE_MODEL)"
-                PLAN_REVIEW_FALLBACK_ACTIVE=true
+                echo ">>> 计划审核阶段 Codex 不可用，降级到 OpenCode ($PLAN_OPENCODE_MODEL)"
+                PLAN_ENGINE_FALLBACK_ACTIVE=true
             else
                 cat "$stderr_file" >&2
                 rm -f "$stderr_file"
                 echo "错误: Codex 执行计划审核阶段失败，且不属于可降级的不可用场景"
-                exit 1
+                fail_protocol "Codex 执行计划审核阶段失败，且不属于可降级的不可用场景" "failed"
             fi
             rm -f "$stderr_file"
         fi
     fi
 
     if ! command -v opencode >/dev/null 2>&1; then
-        echo "错误: 计划审核阶段需要降级到 OpenCode，但 opencode 不可用"
-        exit 1
+        fail_protocol "计划审核阶段需要降级到 OpenCode，但 opencode 不可用" "failed"
     fi
     run_opencode_prompt "$prompt" "$output_file" "$variant"
     trim_generated_file_to_marker "$output_file" "$marker"
-    PLAN_REVIEW_ENGINE="OpenCode"
-    PLAN_REVIEW_MODEL="$PLAN_REVIEW_OPENCODE_MODEL"
+    PLAN_ENGINE_NAME="OpenCode"
+    PLAN_ENGINE_MODEL="$PLAN_OPENCODE_MODEL"
 }
 
 revise_plan_from_failed_review() {
@@ -842,8 +891,8 @@ revise_plan_from_failed_review() {
     revision_prompt=$(render_prompt_template "$PLAN_REVISION_PROMPT_TEMPLATE")
     revision_output=$(mktemp)
 
-    echo ">>> 第 ${round} 轮计划审核未通过，按审核意见修订 plan..."
-    run_review_phase_prompt "$revision_prompt" "$revision_output" "# 实施计划："
+    echo ">>> 基于现有 draft plan 与审核意见修订 plan..."
+    run_plan_authoring_prompt "$revision_prompt" "$revision_output" "# 实施计划："
     mv "$revision_output" "$PLAN_FILE"
     restore_plan_review_record_section "$PLAN_FILE" "$review_section_backup"
     rm -f "$review_section_backup"
@@ -852,8 +901,239 @@ revise_plan_from_failed_review() {
     validate_plan_structure "$PLAN_FILE" "draft"
 }
 
+run_plan_authoring_prompt() {
+    local prompt="$1"
+    local output_file="$2"
+    local marker="$3"
+    local variant
+    variant=$(map_reasoning_to_opencode_variant "$PLAN_REASONING")
+
+    if [ "${AI_FLOW_PLAN_FORCE_OPENCODE:-0}" = "1" ]; then
+        PLAN_ENGINE_FALLBACK_ACTIVE=true
+    fi
+
+    if [ "$PLAN_ENGINE_FALLBACK_ACTIVE" = false ]; then
+        if ! command -v codex >/dev/null 2>&1; then
+            PLAN_ENGINE_FALLBACK_ACTIVE=true
+        else
+            local stderr_file rc
+            stderr_file=$(mktemp)
+            set +e
+            run_codex_prompt "$prompt" "$output_file" "$PLAN_REASONING" 2>"$stderr_file"
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then
+                PLAN_ENGINE_NAME="Codex"
+                PLAN_ENGINE_MODEL="$MODEL"
+                trim_generated_file_to_marker "$output_file" "$marker"
+                rm -f "$stderr_file"
+                return 0
+            fi
+            if is_codex_unavailable_error "$rc" "$stderr_file"; then
+                echo ">>> Plan 阶段 Codex 不可用，降级到 OpenCode ($PLAN_OPENCODE_MODEL)"
+                PLAN_ENGINE_FALLBACK_ACTIVE=true
+            else
+                cat "$stderr_file" >&2
+                rm -f "$stderr_file"
+                echo "错误: Codex 执行 plan 生成/修订失败，且不属于可降级的不可用场景"
+                fail_protocol "Codex 执行 plan 生成/修订失败，且不属于可降级的不可用场景"
+            fi
+            rm -f "$stderr_file"
+        fi
+    fi
+
+    if ! command -v opencode >/dev/null 2>&1; then
+        fail_protocol "Plan 阶段需要降级到 OpenCode，但 opencode 不可用"
+    fi
+    run_opencode_prompt "$prompt" "$output_file" "$variant"
+    trim_generated_file_to_marker "$output_file" "$marker"
+    PLAN_ENGINE_NAME="OpenCode"
+    PLAN_ENGINE_MODEL="$PLAN_OPENCODE_MODEL"
+}
+
+state_json_value() {
+    local state_file="$1"
+    local field="$2"
+    python3 - "$state_file" "$field" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+value = state
+for part in sys.argv[2].split("."):
+    if value is None:
+        sys.exit(1)
+    if isinstance(value, dict):
+        value = value.get(part)
+    else:
+        sys.exit(1)
+if value is None:
+    sys.exit(1)
+print(value)
+PY
+}
+
+state_json_value_optional() {
+    state_json_value "$1" "$2" 2>/dev/null || true
+}
+
+find_state_file_by_keyword() {
+    local keyword="$1"
+    local -a matched=()
+    while IFS= read -r -d '' file; do
+        matched+=("$file")
+    done < <(find "$STATE_DIR" -name "*${keyword}*.json" -type f -print0 2>/dev/null)
+
+    if [ "${#matched[@]}" -eq 0 ]; then
+        fail_protocol "找不到包含关键词 '$keyword' 的状态文件" "failed"
+    fi
+    if [ "${#matched[@]}" -gt 1 ]; then
+        fail_protocol "关键词 '$keyword' 匹配到多个状态文件，请使用精确 slug" "failed"
+    fi
+    printf '%s\n' "${matched[0]}"
+}
+
+extract_requirement_from_plan() {
+    local plan_file="$1"
+    python3 - "$plan_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(
+    r"(?ms)\*\*原始需求（原文）\*\*：\n(.*?)(?=\n\*\*[^*]+\*\*：|\n## |\Z)",
+    text,
+)
+if not match:
+    raise SystemExit("plan 缺少 **原始需求（原文）** 字段")
+print(match.group(1).strip())
+PY
+}
+
+extract_plan_review_items() {
+    local plan_file="$1"
+    python3 - "$plan_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"(?ms)^### 8\.2 偏差与建议\n\n(.*?)(?=^### 8\.3 |\Z)", text)
+if not match:
+    print("- 待审核")
+    raise SystemExit(0)
+items = match.group(1).strip()
+print(items or "- 待审核")
+PY
+}
+
+ensure_project_root_context
+mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports/$DATE_DIR" "$STATE_DIR"
+
+if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
+    STATE_FILE=$(find_state_file_by_keyword "$MATCH_KEYWORD")
+    SLUG=$(basename "$STATE_FILE" .json)
+    PLAN_STATUS=$(state_json_value "$STATE_FILE" "current_status")
+    PLAN_FILE=$(state_json_value "$STATE_FILE" "plan_file")
+    PLAN_TITLE=$(state_json_value "$STATE_FILE" "title")
+
+    case "$PLAN_STATUS" in
+        AWAITING_PLAN_REVIEW|PLAN_REVIEW_FAILED)
+            ;;
+        *)
+            PROTOCOL_STATE="$PLAN_STATUS"
+            fail_protocol "当前状态为 [$PLAN_STATUS]，计划审核只允许 [AWAITING_PLAN_REVIEW] 或 [PLAN_REVIEW_FAILED]" "failed"
+            ;;
+    esac
+
+    [ -f "$PLAN_FILE" ] || {
+        PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
+        fail_protocol "关联计划文件不存在: $PLAN_FILE" "failed"
+    }
+    REQUIREMENT=$(extract_requirement_from_plan "$PLAN_FILE")
+    TEMPLATE_CONTENT=$(sed \
+        -e "s/{需求名称}/$(escape_sed_replacement "$PLAN_TITLE")/g" \
+        -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
+        -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
+        -e "s#{需求文档/口头描述/Jira 等}#需求描述#g" \
+        -e "s/{原始需求原文}/$(escape_sed_replacement "$REQUIREMENT")/g" \
+        "$TEMPLATE")
+    PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
+    PLAN_REVIEW_ITEMS_FOR_PROMPT=""
+    REVIEW_PROMPT=$(render_prompt_template "$PLAN_REVIEW_PROMPT_TEMPLATE")
+    REVIEW_ROUND=$(python3 - "$STATE_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+rounds = sum(1 for item in state["transitions"] if item["event"] in {"plan_review_passed", "plan_review_failed"})
+print(rounds + 1)
+PY
+)
+
+    local_review_output=$(mktemp)
+    local_review_items=$(mktemp)
+    echo ">>> 执行第 ${REVIEW_ROUND} 轮计划审核..."
+    echo "    目标需求: $SLUG [$PLAN_STATUS]"
+    run_review_phase_prompt "$REVIEW_PROMPT" "$local_review_output" "RESULT:"
+
+    review_meta_output=$(parse_plan_review_response "$local_review_output" "$local_review_items")
+    REVIEW_RESULT=$(printf '%s\n' "$review_meta_output" | sed -n '1p')
+    REVIEW_ALIGNMENT=$(printf '%s\n' "$review_meta_output" | sed -n '2p')
+    REVIEW_EXECUTE_READY=$(printf '%s\n' "$review_meta_output" | sed -n '3p')
+    REVIEW_SUMMARY=$(printf '%s\n' "$review_meta_output" | sed -n '4p')
+
+    write_plan_review_record \
+        "$PLAN_FILE" \
+        "$REVIEW_ROUND" \
+        "$REVIEW_RESULT" \
+        "$REVIEW_ALIGNMENT" \
+        "$REVIEW_EXECUTE_READY" \
+        "$REVIEW_SUMMARY" \
+        "$PLAN_ENGINE_NAME" \
+        "$PLAN_ENGINE_MODEL" \
+        "$local_review_items"
+    validate_plan_structure "$PLAN_FILE" "reviewed"
+    validate_plan_review_record \
+        "$PLAN_FILE" \
+        "$REVIEW_RESULT" \
+        "$( [ "$REVIEW_EXECUTE_READY" = "yes" ] && echo "是" || echo "否" )"
+
+    "$FLOW_STATE_SH" record-plan-review \
+        --slug "$SLUG" \
+        --result "$REVIEW_RESULT" \
+        --engine "$PLAN_ENGINE_NAME" \
+        --model "$PLAN_ENGINE_MODEL" >/dev/null
+    CURRENT_STATUS=$("$FLOW_STATE_SH" show "$SLUG" --field current_status)
+    PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
+    PROTOCOL_STATE="$CURRENT_STATUS"
+    PROTOCOL_REVIEW_RESULT="$REVIEW_RESULT"
+
+    echo "    状态已验证为 [$CURRENT_STATUS]"
+    rm -f "$local_review_output" "$local_review_items"
+
+    if [ "$REVIEW_RESULT" = "passed" ] || [ "$REVIEW_RESULT" = "passed_with_notes" ]; then
+        PROTOCOL_NEXT="ai-flow-plan-coding"
+        PROTOCOL_SUMMARY="计划审核已通过，状态进入 [$CURRENT_STATUS]。"
+    else
+        PROTOCOL_NEXT="ai-flow-plan"
+        PROTOCOL_SUMMARY="计划审核未通过，状态进入 [$CURRENT_STATUS]，请先修订 draft plan。"
+    fi
+    if [ "$PLAN_ENGINE_NAME" = "OpenCode" ] && [ "$AGENT_ENGINE" = "codex" ]; then
+        PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 OpenCode。"
+    fi
+    emit_current_protocol "$REVIEW_RESULT"
+    exit 0
+fi
+
+SLUG_EXPLICIT=false
 SLUG_AUTO=false
-if [ -z "$SLUG" ]; then
+if [ -n "$SLUG" ]; then
+    SLUG_EXPLICIT=true
+else
     SLUG_AUTO=true
     ENG_WORDS=$(echo "$REQUIREMENT" | grep -oE '[A-Za-z]+' | head -3 | tr '\n' '-' | sed 's/-$//' || true)
     if [ -n "$ENG_WORDS" ]; then
@@ -864,30 +1144,43 @@ if [ -z "$SLUG" ]; then
 fi
 
 if ! echo "$SLUG" | grep -qE '^[a-z0-9][a-z0-9-]*$'; then
-    echo "错误: 英文简称 '$SLUG' 包含非法字符，只允许小写字母、数字和连字符（-）"
-    exit 1
+    fail_protocol "英文简称 '$SLUG' 包含非法字符，只允许小写字母、数字和连字符（-）"
 fi
 
-ensure_project_root_context
+EXISTING_STATE_FILE="$STATE_DIR/$SLUG.json"
+if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
+    PLAN_STATUS=$(state_json_value "$EXISTING_STATE_FILE" "current_status")
+    PLAN_FILE=$(state_json_value "$EXISTING_STATE_FILE" "plan_file")
+    case "$PLAN_STATUS" in
+        AWAITING_PLAN_REVIEW|PLAN_REVIEW_FAILED)
+            ;;
+        *)
+            PROTOCOL_STATE="$PLAN_STATUS"
+            fail_protocol "slug [$SLUG] 当前状态为 [$PLAN_STATUS]，只有 [AWAITING_PLAN_REVIEW] 或 [PLAN_REVIEW_FAILED] 可以修订 draft plan"
+            ;;
+    esac
+    [ -f "$PLAN_FILE" ] || {
+        PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
+        fail_protocol "关联计划文件不存在: $PLAN_FILE"
+    }
 
-if slug_exists "$SLUG" && [ "$SLUG_AUTO" = true ]; then
-    BASE_SLUG="$SLUG"
-    SUFFIX=2
-    while slug_exists "$SLUG"; do
-        SLUG="${BASE_SLUG}-${SUFFIX}"
-        SUFFIX=$((SUFFIX + 1))
-    done
+    FRAMEWORKS=""
+else
+    if slug_exists "$SLUG" && [ "$SLUG_AUTO" = true ]; then
+        BASE_SLUG="$SLUG"
+        SUFFIX=2
+        while slug_exists "$SLUG"; do
+            SLUG="${BASE_SLUG}-${SUFFIX}"
+            SUFFIX=$((SUFFIX + 1))
+        done
+    fi
+
+    if slug_exists "$SLUG"; then
+        fail_protocol "同名计划或状态已存在: $SLUG；如需重新生成，请先清理对应的 .ai-flow/state/${SLUG}.json 和计划文件，或更换简称"
+    fi
+    PLAN_FILE="$PLANS_DIR/$SLUG.md"
 fi
-
-if slug_exists "$SLUG"; then
-    echo "⚠ 警告: 同名计划或状态已存在: $SLUG"
-    echo "    如需重新生成，请先清理对应的 .ai-flow/state/${SLUG}.json 和计划文件，或更换简称"
-    exit 1
-fi
-
-PLAN_FILE="$PLANS_DIR/$SLUG.md"
-
-mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports/$DATE_DIR" "$STATE_DIR"
+PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
 
 FRAMEWORKS=""
 if [ -f "$PROJECT_DIR/package.json" ]; then
@@ -954,18 +1247,6 @@ fi
 DETECT_STACK="${FRAMEWORKS%, }"
 [ -z "$DETECT_STACK" ] && DETECT_STACK="未检测到明确技术栈"
 
-for required_file in \
-    "$FLOW_STATE_SH" \
-    "$TEMPLATE" \
-    "$PLAN_PROMPT_TEMPLATE" \
-    "$PLAN_REVIEW_PROMPT_TEMPLATE" \
-    "$PLAN_REVISION_PROMPT_TEMPLATE"; do
-    if [ ! -f "$required_file" ]; then
-        echo "错误: 缺少运行时资源: $required_file"
-        exit 1
-    fi
-done
-
 TEMPLATE_CONTENT=$(sed \
     -e "s/{需求名称}/$(escape_sed_replacement "$REQUIREMENT")/g" \
     -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
@@ -974,99 +1255,45 @@ TEMPLATE_CONTENT=$(sed \
     -e "s/{原始需求原文}/$(escape_sed_replacement "$REQUIREMENT")/g" \
     "$TEMPLATE")
 
-echo ">>> 将需求描述发送给 Codex 生成 draft plan (模型: $MODEL)..."
-echo "    输出文件: $PLAN_FILE"
-echo "    检测到技术栈: $DETECT_STACK"
-echo ""
-
-PLAN_PROMPT=$(render_prompt_template "$PLAN_PROMPT_TEMPLATE")
-run_codex_prompt "$PLAN_PROMPT" "$PLAN_FILE" ""
-ensure_requirement_literal "$PLAN_FILE"
-
-echo ""
-echo ">>> 校验 draft plan 结构..."
-validate_plan_structure "$PLAN_FILE" "draft"
-echo "    结构校验通过"
-
-PLAN_TITLE=$(sed -n '1s/^# 实施计划：//p' "$PLAN_FILE")
-[ -z "$PLAN_TITLE" ] && PLAN_TITLE="$REQUIREMENT"
-
-echo ">>> 初始化状态文件..."
-"$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
-
-REVIEW_ROUND=1
-FINAL_RESULT=""
-while [ "$REVIEW_ROUND" -le "$PLAN_REVIEW_MAX_ROUNDS" ]; do
-    local_review_output=$(mktemp)
+if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
     local_review_items=$(mktemp)
+    printf '%s\n' "$(extract_plan_review_items "$PLAN_FILE")" > "$local_review_items"
     PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
-    PLAN_REVIEW_ITEMS_FOR_PROMPT=""
-    REVIEW_PROMPT=$(render_prompt_template "$PLAN_REVIEW_PROMPT_TEMPLATE")
-
-    echo ""
-    echo ">>> 执行第 ${REVIEW_ROUND} 轮计划审核..."
-    run_review_phase_prompt "$REVIEW_PROMPT" "$local_review_output" "RESULT:"
-
-    review_meta_output=$(parse_plan_review_response "$local_review_output" "$local_review_items")
-    REVIEW_RESULT=$(printf '%s\n' "$review_meta_output" | sed -n '1p')
-    REVIEW_ALIGNMENT=$(printf '%s\n' "$review_meta_output" | sed -n '2p')
-    REVIEW_EXECUTE_READY=$(printf '%s\n' "$review_meta_output" | sed -n '3p')
-    REVIEW_SUMMARY=$(printf '%s\n' "$review_meta_output" | sed -n '4p')
-
-    write_plan_review_record \
-        "$PLAN_FILE" \
-        "$REVIEW_ROUND" \
-        "$REVIEW_RESULT" \
-        "$REVIEW_ALIGNMENT" \
-        "$REVIEW_EXECUTE_READY" \
-        "$REVIEW_SUMMARY" \
-        "$PLAN_REVIEW_ENGINE" \
-        "$PLAN_REVIEW_MODEL" \
-        "$local_review_items"
-    validate_plan_structure "$PLAN_FILE" "reviewed"
-    validate_plan_review_record \
-        "$PLAN_FILE" \
-        "$REVIEW_RESULT" \
-        "$( [ "$REVIEW_EXECUTE_READY" = "yes" ] && echo "是" || echo "否" )"
-
-    echo ">>> 写回计划审核结论..."
-    "$FLOW_STATE_SH" record-plan-review \
-        --slug "$SLUG" \
-        --result "$REVIEW_RESULT" \
-        --engine "$PLAN_REVIEW_ENGINE" \
-        --model "$PLAN_REVIEW_MODEL" >/dev/null
-    CURRENT_STATUS=$("$FLOW_STATE_SH" show "$SLUG" --field current_status)
-    echo "    状态已验证为 [$CURRENT_STATUS]"
-
-    rm -f "$local_review_output"
-
-    if [ "$REVIEW_RESULT" = "passed" ] || [ "$REVIEW_RESULT" = "passed_with_notes" ]; then
-        FINAL_RESULT="$REVIEW_RESULT"
-        rm -f "$local_review_items"
-        break
-    fi
-
-    if [ "$REVIEW_ROUND" -ge "$PLAN_REVIEW_MAX_ROUNDS" ]; then
-        FINAL_RESULT="$REVIEW_RESULT"
-        rm -f "$local_review_items"
-        break
-    fi
-
-    revise_plan_from_failed_review "$REVIEW_ROUND" "$local_review_items"
+    PLAN_REVIEW_ITEMS_FOR_PROMPT=$(cat "$local_review_items")
+    echo ">>> 修订现有 draft plan: $SLUG [$PLAN_STATUS]"
+    echo "    计划文件: $PLAN_FILE"
+    revise_plan_from_failed_review "1" "$local_review_items"
     rm -f "$local_review_items"
-    REVIEW_ROUND=$((REVIEW_ROUND + 1))
-done
-
-echo ""
-echo ">>> 计划文件: $PLAN_FILE"
-echo ""
-cat "$PLAN_FILE"
-echo ""
-echo "整理并输出这份方案的核心决策内容"
-render_core_decisions "$PLAN_FILE"
-
-if [ "$FINAL_RESULT" = "passed" ] || [ "$FINAL_RESULT" = "passed_with_notes" ]; then
-    echo "AI-FLOW执行方案已经通过计划审核，建议在新的会话窗口调用/ai-flow-execute 技能开始执行"
+    echo "    状态保持 [$PLAN_STATUS]"
+    PROTOCOL_STATE="$PLAN_STATUS"
+    PROTOCOL_NEXT="ai-flow-plan-review"
+    PROTOCOL_SUMMARY="draft plan 修订完成，状态保持 [$PLAN_STATUS]。"
 else
-    echo "AI-FLOW执行方案当前状态为 PLAN_REVIEW_FAILED，禁止进入 /ai-flow-execute；请重新运行 ai-flow-plan 继续修订"
+    echo ">>> 生成 draft plan..."
+    echo "    输出文件: $PLAN_FILE"
+    echo "    检测到技术栈: $DETECT_STACK"
+    echo ""
+    PLAN_PROMPT=$(render_prompt_template "$PLAN_PROMPT_TEMPLATE")
+    run_plan_authoring_prompt "$PLAN_PROMPT" "$PLAN_FILE" "# 实施计划："
+    ensure_requirement_literal "$PLAN_FILE"
+    echo ""
+    echo ">>> 校验 draft plan 结构..."
+    validate_plan_structure "$PLAN_FILE" "draft"
+    echo "    结构校验通过"
+
+    PLAN_TITLE=$(sed -n '1s/^# 实施计划：//p' "$PLAN_FILE")
+    [ -z "$PLAN_TITLE" ] && PLAN_TITLE="$REQUIREMENT"
+
+    echo ">>> 初始化状态文件..."
+    "$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
+    PLAN_STATUS=$("$FLOW_STATE_SH" show "$SLUG" --field current_status)
+    echo "    状态已验证为 [$PLAN_STATUS]"
+    PROTOCOL_STATE="$PLAN_STATUS"
+    PROTOCOL_NEXT="ai-flow-plan-review"
+    PROTOCOL_SUMMARY="draft plan 生成完成，状态进入 [$PLAN_STATUS]。"
 fi
+
+if [ "$PLAN_ENGINE_NAME" = "OpenCode" ] && [ "$AGENT_ENGINE" = "codex" ]; then
+    PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 OpenCode。"
+fi
+emit_current_protocol

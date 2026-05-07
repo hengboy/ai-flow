@@ -34,9 +34,10 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
 
 ### 3. 选择后续动作
 
-- 选中 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED`：进入 `/ai-flow-plan`
-- 选中 `PLANNED` / `IMPLEMENTING` / `REVIEW_FAILED` / `FIXING_REVIEW`：进入 `/ai-flow-execute`
-- 选中 `AWAITING_REVIEW` / `DONE`：进入 `/ai-flow-review`
+- 选中 `AWAITING_PLAN_REVIEW`：进入 `/ai-flow-plan-review`
+- 选中 `PLAN_REVIEW_FAILED`：进入 `/ai-flow-plan`
+- 选中 `PLANNED` / `IMPLEMENTING` / `REVIEW_FAILED` / `FIXING_REVIEW`：进入 `/ai-flow-plan-coding`
+- 选中 `AWAITING_REVIEW` / `DONE`：进入 `/ai-flow-plan-coding-review`
 
 ## 注意事项
 

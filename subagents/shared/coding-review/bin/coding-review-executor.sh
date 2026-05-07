@@ -1,29 +1,59 @@
 #!/bin/bash
-# codex-review.sh — 调用 Codex 审查代码变更并生成报告
-# 用法: codex-review.sh {slug或唯一关键词} [模型名] [推理强度] [轮次]
+# coding-review-executor.sh — 审查计划内编码或独立改动，并输出固定摘要协议
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$AGENT_DIR/lib/agent-common.sh"
+exec 3>&1 1>&2
 
 PROJECT_DIR="$(pwd)"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 REPORTS_DIR="$FLOW_DIR/reports"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TEMPLATE="$SKILL_DIR/templates/review-template.md"
-PROMPT_TEMPLATE="$SKILL_DIR/prompts/review-generation.md"
+TEMPLATE="$AGENT_DIR/templates/review-template.md"
+PROMPT_TEMPLATE="$AGENT_DIR/prompts/review-generation.md"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
 REVIEW_OPENCODE_MODEL="${AI_FLOW_REVIEW_OPENCODE_MODEL:-zhipuai-coding-plan/glm-5.1}"
+PROTOCOL_ARTIFACT="none"
+PROTOCOL_STATE="none"
+PROTOCOL_NEXT="none"
+PROTOCOL_REVIEW_RESULT="failed"
+PROTOCOL_SUMMARY=""
+PROTOCOL_EMITTED=0
 
-display_path() {
-    local base="$1"
-    local path="$2"
-    case "$path" in
-        "$base"/*) echo "${path#"$base"/}" ;;
-        *) echo "$path" ;;
-    esac
+emit_current_protocol() {
+    PROTOCOL_EMITTED=1
+    emit_protocol "success" "$PROTOCOL_ARTIFACT" "$PROTOCOL_STATE" "$PROTOCOL_NEXT" "$PROTOCOL_SUMMARY" "$PROTOCOL_REVIEW_RESULT"
 }
+
+fail_protocol() {
+    local summary="$1"
+    PROTOCOL_EMITTED=1
+    emit_protocol "failed" "$PROTOCOL_ARTIFACT" "$PROTOCOL_STATE" "$PROTOCOL_NEXT" "$summary" "${2:-$PROTOCOL_REVIEW_RESULT}"
+    exit 1
+}
+
+trap 'rc=$?; if [ "$rc" -ne 0 ] && [ "$PROTOCOL_EMITTED" -eq 0 ]; then emit_protocol "failed" "$PROTOCOL_ARTIFACT" "$PROTOCOL_STATE" "$PROTOCOL_NEXT" "${PROTOCOL_SUMMARY:-执行失败}" "${PROTOCOL_REVIEW_RESULT:-failed}"; fi' EXIT
+
+require_file() {
+    local path="$1"
+    local label="$2"
+    if [ -f "$path" ]; then
+        return 0
+    fi
+    fail_protocol "缺少${label}: $path"
+}
+
+validate_installed_resources() {
+    require_file "$FLOW_STATE_SH" "AI Flow runtime 脚本 flow-state.sh"
+    require_file "$TEMPLATE" "review 模板"
+    require_file "$PROMPT_TEMPLATE" "review prompt"
+}
+
+validate_installed_resources
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
@@ -69,6 +99,93 @@ render_template_content() {
         -e "s/{推理强度}/$(escape_sed_replacement "$reasoning")/g" \
         -e "s/{审查工具}/$(escape_sed_replacement "$tool_label")/g" \
         "$TEMPLATE"
+}
+
+render_adhoc_template() {
+    local engine="$1"
+    local model_name="$2"
+    local reasoning="$3"
+    local tool_label="${engine} (${model_name} ${reasoning})"
+
+    sed \
+        -e "s/{需求名称}/独立改动/g" \
+        -e "s/{需求简称}/adhoc/g" \
+        -e "s/{审查模式}/adhoc/g" \
+        -e "s/{审查轮次}/1/g" \
+        -e "s/{审查结果}/passed/g" \
+        -e "s#{计划文件}#无绑定计划（独立模式）#g" \
+        -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
+        -e "s/{模型名}/${model_name}/g" \
+        -e "s/{推理强度}/${reasoning}/g" \
+        -e "s/{审查工具}/$(escape_sed_replacement "$tool_label")/g" \
+        "$TEMPLATE"
+}
+
+render_adhoc_prompt() {
+    local template_content="$1"
+    AI_FLOW_REVIEW_SCOPE_GUIDANCE="这是 adhoc review：没有绑定 slug 和实施计划，只基于当前 Git 未提交改动审查正确性、回归风险、验证证据和范围控制。" \
+    AI_FLOW_HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入“4. 缺陷清单”，并同步更新“6. 缺陷修复追踪”。\n6. 对于独立模式，没有上一轮状态上下文；仅基于当前工作区给出结论。' \
+    AI_FLOW_PLAN_CONTENT="独立模式：无绑定 slug，无状态文件，无计划文档。本轮仅审查当前 Git 未提交改动，并在 2.1 中记录真正需要确认或回退的计划外变更。" \
+    AI_FLOW_HISTORY_CONTEXT="" \
+    AI_FLOW_TEMPLATE_CONTENT="$template_content" \
+    AI_FLOW_SLUG="adhoc" \
+    AI_FLOW_REVIEW_MODE="adhoc" \
+    AI_FLOW_CURRENT_ROUND="1" \
+    AI_FLOW_PLAN_TITLE="独立改动" \
+    python3 - "$PROMPT_TEMPLATE" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+replacements = {
+    "__AI_FLOW_REVIEW_SCOPE_GUIDANCE__": os.environ["AI_FLOW_REVIEW_SCOPE_GUIDANCE"],
+    "__AI_FLOW_HISTORY_RULES__": os.environ["AI_FLOW_HISTORY_RULES"],
+    "__AI_FLOW_PLAN_CONTENT__": os.environ["AI_FLOW_PLAN_CONTENT"],
+    "__AI_FLOW_HISTORY_CONTEXT__": os.environ["AI_FLOW_HISTORY_CONTEXT"],
+    "__AI_FLOW_TEMPLATE_CONTENT__": os.environ["AI_FLOW_TEMPLATE_CONTENT"],
+    "__AI_FLOW_SLUG__": os.environ["AI_FLOW_SLUG"],
+    "__AI_FLOW_REVIEW_MODE__": os.environ["AI_FLOW_REVIEW_MODE"],
+    "__AI_FLOW_CURRENT_ROUND__": os.environ["AI_FLOW_CURRENT_ROUND"],
+    "__AI_FLOW_PLAN_TITLE__": os.environ["AI_FLOW_PLAN_TITLE"],
+}
+for needle, value in replacements.items():
+    text = text.replace(needle, value)
+sys.stdout.write(text)
+PY
+}
+
+looks_like_model_or_reasoning() {
+    case "${1:-}" in
+        gpt-*|o*|glm*|zhipuai-coding-plan/*|high|xhigh|medium|low|minimal|max)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+derive_result() {
+    local report_file="$1"
+    local critical minor todo
+    critical=$(grep -cE '^\| (DEF-[0-9]+|SUG-[0-9]+) \| (Critical|Important) ' "$report_file" || true)
+    minor=$(grep -cE '^\| (DEF-[0-9]+|SUG-[0-9]+) \| Minor ' "$report_file" || true)
+    todo=$(grep -c '\[待修复\]' "$report_file" || true)
+    if [ "$critical" -gt 0 ] || [ "$todo" -gt 0 ]; then
+        echo "failed"
+    elif [ "$minor" -gt 0 ]; then
+        echo "passed_with_notes"
+    else
+        echo "passed"
+    fi
+}
+
+default_reasoning_for_engine() {
+    case "$1" in
+        opencode) echo "${AI_FLOW_OPENCODE_DEFAULT_REASONING:-max}" ;;
+        *) echo "${AI_FLOW_CODEX_DEFAULT_REASONING:-xhigh}" ;;
+    esac
 }
 
 run_codex_review_prompt() {
@@ -181,8 +298,7 @@ state_field_optional() {
 
 ensure_reviewable_git_changes() {
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        echo "错误: 当前目录不是 Git 仓库，无法确认审查范围"
-        exit 1
+        fail_protocol "当前目录不是 Git 仓库，无法确认审查范围"
     fi
 
     local relevant_changes
@@ -196,8 +312,7 @@ ensure_reviewable_git_changes() {
         }
     ')
     if [ -z "$relevant_changes" ]; then
-        echo "错误: 没有可审查的 Git 变更（已忽略 .ai-flow/ 元数据）"
-        exit 1
+        fail_protocol "没有可审查的 Git 变更（已忽略 .ai-flow/ 元数据）"
     fi
 }
 
@@ -352,7 +467,8 @@ require_root_cause_review_loop_record() {
         return 0
     fi
 
-    python3 - "$STATE_FILE" "$PLAN_FILE" <<'PY'
+    local gate_error=""
+    if ! gate_error=$(python3 - "$STATE_FILE" "$PLAN_FILE" 2>&1 <<'PY'
 import json
 import re
 import sys
@@ -414,6 +530,9 @@ sys.stderr.write(
 )
 sys.exit(1)
 PY
+    ); then
+        fail_protocol "$(normalize_one_line "$gate_error")"
+    fi
 }
 
 validate_previous_family_coverage() {
@@ -470,64 +589,104 @@ if missing:
 PY
 }
 
-if [ -z "${1:-}" ]; then
-    echo "用法: codex-review.sh {slug或唯一关键词} [模型名] [推理强度] [轮次]"
-    echo ""
-    echo "可用状态："
-    if [ -d "$FLOW_DIR/state" ]; then
-        find "$FLOW_DIR/state" -name "*.json" -type f | sort | while read -r f; do
-            slug=$(basename "$f" .json)
-            status=$(python3 - "$f" <<'PY'
-import json, sys
-from pathlib import Path
-state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-print(state["current_status"])
-PY
-)
-            plan_file=$(python3 - "$f" <<'PY'
-import json, sys
-from pathlib import Path
-state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-print(state["plan_file"])
-PY
-)
-            printf "  %s [%s] (%s)\n" "$slug" "$status" "$plan_file"
-        done
-    else
-        echo "  (无)"
-    fi
-    exit 1
-fi
-
-MODEL="${2:-gpt-5.4}"
-REASONING="${3:-xhigh}"
+REQUEST_KEY="${1:-}"
+MODEL="${2:-$(default_model_for_engine "$AGENT_ENGINE")}"
+REASONING="${3:-$(default_reasoning_for_engine "$AGENT_ENGINE")}"
 ROUND_OVERRIDE="${4:-}"
+DATE_DIR="$(date +%Y%m%d)"
+STATE_FILE=""
+ADHOC_MODE=0
 
-MATCHED_STATES=()
-while IFS= read -r -d '' f; do
-    MATCHED_STATES+=("$f")
-done < <(find "$FLOW_DIR/state" -name "*${1}*.json" -type f -print0 2>/dev/null)
+if [ -n "$REQUEST_KEY" ]; then
+    MATCHED_STATES=()
+    while IFS= read -r -d '' f; do
+        MATCHED_STATES+=("$f")
+    done < <(find "$FLOW_DIR/state" -name "*${REQUEST_KEY}*.json" -type f -print0 2>/dev/null)
 
-if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
-    echo "错误: 找不到包含关键词 '$1' 的状态文件"
-    exit 1
-elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
-    echo "匹配到多个状态，请选择："
-    for i in "${!MATCHED_STATES[@]}"; do
-        slug=$(basename "${MATCHED_STATES[$i]}" .json)
-        status=$(state_field "$slug" "current_status")
-        plan_file=$(state_field "$slug" "plan_file")
-        echo "  $((i + 1)). $slug [$status] ($(display_path "$PROJECT_DIR" "$plan_file"))"
-    done
-    read -rp "请选择编号 [1-${#MATCHED_STATES[@]}]: " choice
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#MATCHED_STATES[@]}" ]; then
-        STATE_FILE="${MATCHED_STATES[$((choice - 1))]}"
+    if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
+        if looks_like_model_or_reasoning "$REQUEST_KEY"; then
+            ADHOC_MODE=1
+            MODEL="$REQUEST_KEY"
+            REASONING="${2:-$(default_reasoning_for_engine "$AGENT_ENGINE")}"
+        else
+            fail_protocol "找不到匹配 slug/关键词 '$REQUEST_KEY' 的状态文件"
+        fi
+    elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
+        fail_protocol "关键词 '$REQUEST_KEY' 匹配到多个状态文件，请使用精确 slug"
     else
-        echo "错误: 无效编号"
-        exit 1
+        STATE_FILE="${MATCHED_STATES[0]}"
     fi
 else
-    STATE_FILE="${MATCHED_STATES[0]}"
+    ADHOC_MODE=1
+    MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
+    REASONING="$(default_reasoning_for_engine "$AGENT_ENGINE")"
+fi
+
+if [ "$ADHOC_MODE" -eq 1 ]; then
+    ensure_reviewable_git_changes
+    mkdir -p "$REPORTS_DIR/adhoc/$DATE_DIR"
+    REPORT_FILE="$REPORTS_DIR/adhoc/$DATE_DIR/adhoc-review-$(date +%H%M%S).md"
+    PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$REPORT_FILE")"
+    OPENCODE_REASONING=$(map_reasoning_to_opencode_variant "$REASONING")
+    ACTIVE_ENGINE="Codex"
+    ACTIVE_MODEL="$MODEL"
+    ACTIVE_REASONING="$REASONING"
+    if [ "$AGENT_ENGINE" = "opencode" ] || [ "${AI_FLOW_REVIEW_FORCE_OPENCODE:-0}" = "1" ] || ! command -v codex >/dev/null 2>&1; then
+        ACTIVE_ENGINE="OpenCode"
+        ACTIVE_MODEL="${MODEL:-$REVIEW_OPENCODE_MODEL}"
+        ACTIVE_REASONING="${REASONING:-$(default_reasoning_for_engine opencode)}"
+    fi
+    if [ "$ACTIVE_ENGINE" = "OpenCode" ] && ! command -v opencode >/dev/null 2>&1; then
+        fail_protocol "OpenCode 不可用，无法执行 adhoc 审查"
+    fi
+
+    TEMPLATE_CONTENT=$(render_adhoc_template "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
+    REVIEW_PROMPT=$(render_adhoc_prompt "$TEMPLATE_CONTENT")
+
+    if [ "$ACTIVE_ENGINE" = "Codex" ]; then
+        stderr_file=$(mktemp)
+        set +e
+        run_codex_review_prompt "$REVIEW_PROMPT" 2>"$stderr_file"
+        rc=$?
+        set -e
+        if [ "$rc" -ne 0 ]; then
+            if is_codex_unavailable_error "$rc" "$stderr_file"; then
+                if ! command -v opencode >/dev/null 2>&1; then
+                    cat "$stderr_file" >&2
+                    rm -f "$stderr_file"
+                    fail_protocol "Codex 不可用，且 opencode 未安装，无法执行 adhoc 审查"
+                fi
+                ACTIVE_ENGINE="OpenCode"
+                ACTIVE_MODEL="$REVIEW_OPENCODE_MODEL"
+                ACTIVE_REASONING="$OPENCODE_REASONING"
+                TEMPLATE_CONTENT=$(render_adhoc_template "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
+                REVIEW_PROMPT=$(render_adhoc_prompt "$TEMPLATE_CONTENT")
+                run_opencode_review_prompt "$REVIEW_PROMPT" "$ACTIVE_MODEL" "$ACTIVE_REASONING"
+            else
+                cat "$stderr_file" >&2
+                rm -f "$stderr_file"
+                fail_protocol "Codex 执行 adhoc 审查失败，且不属于可降级场景"
+            fi
+        fi
+        rm -f "$stderr_file"
+    else
+        run_opencode_review_prompt "$REVIEW_PROMPT" "$ACTIVE_MODEL" "$ACTIVE_REASONING"
+    fi
+
+    if ! head -1 "$REPORT_FILE" | grep -qE '^# 审查报告：'; then
+        fail_protocol "adhoc 审查报告首行非法: $REPORT_FILE"
+    fi
+
+    RESULT="$(derive_result "$REPORT_FILE")"
+    PROTOCOL_REVIEW_RESULT="$RESULT"
+    PROTOCOL_STATE="none"
+    PROTOCOL_NEXT="none"
+    PROTOCOL_SUMMARY="adhoc 审查完成，结果为 [$RESULT]。"
+    if [ "$ACTIVE_ENGINE" = "OpenCode" ] && [ "$AGENT_ENGINE" = "codex" ]; then
+        PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 OpenCode。"
+    fi
+    emit_current_protocol
+    exit 0
 fi
 
 SLUG=$(basename "$STATE_FILE" .json)
@@ -553,20 +712,17 @@ case "$PLAN_STATUS" in
         BASE_NAME="${SLUG}-review-recheck"
         ;;
     *)
-        echo "错误: 当前状态为 [$PLAN_STATUS]，不能执行审查"
-        echo "    常规审查只允许 [AWAITING_REVIEW]；再审查只允许 [DONE]"
-        exit 1
+        PROTOCOL_STATE="$PLAN_STATUS"
+        fail_protocol "当前状态为 [$PLAN_STATUS]，常规审查只允许 [AWAITING_REVIEW]；再审查只允许 [DONE]"
         ;;
 esac
 
 if [ -n "$ROUND_OVERRIDE" ]; then
     if ! [[ "$ROUND_OVERRIDE" =~ ^[0-9]+$ ]] || [ "$ROUND_OVERRIDE" -le 0 ]; then
-        echo "错误: 轮次必须是正整数: $ROUND_OVERRIDE"
-        exit 1
+        fail_protocol "轮次必须是正整数: $ROUND_OVERRIDE"
     fi
     if [ "$ROUND_OVERRIDE" -ne "$CURRENT_ROUND" ]; then
-        echo "错误: 轮次以状态文件中的 review_rounds 为准，当前应为第 $CURRENT_ROUND 轮，不能写入第 $ROUND_OVERRIDE 轮"
-        exit 1
+        fail_protocol "轮次以状态文件中的 review_rounds 为准，当前应为第 $CURRENT_ROUND 轮，不能写入第 $ROUND_OVERRIDE 轮"
     fi
 fi
 
@@ -580,11 +736,10 @@ import os, sys
 print(os.path.normpath(sys.argv[1]))
 PY
 )
+PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$REPORT_FILE")"
 
 if [ -e "$REPORT_FILE" ]; then
-    echo "错误: 报告文件已存在，拒绝覆盖: $REPORT_FILE"
-    echo "    请删除旧报告或修正状态文件轮次后重试"
-    exit 1
+    fail_protocol "报告文件已存在，拒绝覆盖: $REPORT_FILE"
 fi
 
 PREV_REVIEW=""
@@ -603,21 +758,17 @@ mkdir -p "$(dirname "$REPORT_FILE")"
 ensure_reviewable_git_changes
 require_root_cause_review_loop_record
 
-# --- 检测审查引擎 ---
-if [[ "$MODEL" == zhipuai-coding-plan/* ]] || [[ "$MODEL" == glm* ]]; then
-    echo "错误: OpenCode 模型 (${MODEL}) 请使用 opencode-review.sh"
-    echo "    用法: ${CLAUDE_HOME:-$HOME/.claude}/skills/ai-flow-review/scripts/opencode-review.sh {slug或唯一关键词}"
-    exit 1
-fi
-
 OPENCODE_REASONING=$(map_reasoning_to_opencode_variant "$REASONING")
 ACTIVE_ENGINE="Codex"
 ACTIVE_MODEL="$MODEL"
 ACTIVE_REASONING="$REASONING"
-if [ "${AI_FLOW_REVIEW_FORCE_OPENCODE:-0}" = "1" ] || ! command -v codex >/dev/null 2>&1; then
+if [ "$AGENT_ENGINE" = "opencode" ]; then
+    ACTIVE_ENGINE="OpenCode"
+    ACTIVE_MODEL="${MODEL:-$REVIEW_OPENCODE_MODEL}"
+    ACTIVE_REASONING="${REASONING:-$(default_reasoning_for_engine opencode)}"
+elif [ "${AI_FLOW_REVIEW_FORCE_OPENCODE:-0}" = "1" ] || ! command -v codex >/dev/null 2>&1; then
     if ! command -v opencode >/dev/null 2>&1; then
-        echo "错误: Codex 不可用，且 opencode 未安装，无法执行审查"
-        exit 1
+        fail_protocol "Codex 不可用，且 opencode 未安装，无法执行审查"
     fi
     ACTIVE_ENGINE="OpenCode"
     ACTIVE_MODEL="$REVIEW_OPENCODE_MODEL"
@@ -638,8 +789,7 @@ echo ""
 PLAN_CONTENT=$(cat "$PLAN_FILE")
 for required_file in "$FLOW_STATE_SH" "$TEMPLATE" "$PROMPT_TEMPLATE"; do
     if [ ! -f "$required_file" ]; then
-        echo "错误: 缺少运行时资源: $required_file"
-        exit 1
+        fail_protocol "缺少运行时资源: $required_file"
     fi
 done
 TEMPLATE_CONTENT=$(render_template_content "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
@@ -700,8 +850,7 @@ if [ "$ACTIVE_ENGINE" = "Codex" ]; then
             if ! command -v opencode >/dev/null 2>&1; then
                 cat "$stderr_file" >&2
                 rm -f "$stderr_file"
-                echo "错误: Codex 不可用，且 opencode 未安装，无法执行审查"
-                exit 1
+                fail_protocol "Codex 不可用，且 opencode 未安装，无法执行审查"
             fi
             echo ">>> Codex 不可用，降级到 OpenCode ($REVIEW_OPENCODE_MODEL)"
             ACTIVE_ENGINE="OpenCode"
@@ -713,8 +862,7 @@ if [ "$ACTIVE_ENGINE" = "Codex" ]; then
         else
             cat "$stderr_file" >&2
             rm -f "$stderr_file"
-            echo "错误: Codex 执行审查失败，且不属于可降级的不可用场景"
-            exit 1
+            fail_protocol "Codex 执行审查失败，且不属于可降级的不可用场景"
         fi
     fi
     rm -f "$stderr_file"
@@ -892,7 +1040,7 @@ if [ -n "$ERRORS" ]; then
     echo "⚠ 审查报告结构校验失败："
     echo -e "$ERRORS"
     echo "    报告文件已保留但标记为无效: $REPORT_FILE"
-    exit 1
+    fail_protocol "审查报告结构校验失败: $(normalize_one_line "$ERRORS")"
 fi
 echo "    结构校验通过"
 
@@ -927,6 +1075,8 @@ echo ">>> 更新状态文件..."
 "$FLOW_STATE_SH" record-review --slug "$SLUG" --mode "$REVIEW_MODE" --result "$RESULT" --report-file "$REPORT_FILE"
 UPDATED_STATUS=$(state_field "$SLUG" "current_status")
 echo "    状态已验证为 [$UPDATED_STATUS]"
+PROTOCOL_STATE="$UPDATED_STATUS"
+PROTOCOL_REVIEW_RESULT="$RESULT"
 
 print_commit_instructions() {
     echo ">>> 状态已进入 [DONE]，现在允许提交已审查的未提交变更"
@@ -941,18 +1091,28 @@ case "$UPDATED_STATUS" in
     DONE)
         if [ "$REVIEW_MODE" = "recheck" ]; then
             echo ">>> 再审查通过，状态保持 [DONE]"
+            PROTOCOL_SUMMARY="recheck 审查通过，状态保持 [DONE]。"
         elif [ "$RESULT" = "passed_with_notes" ]; then
             echo ">>> 常规审查通过（存在 Minor 建议），状态已更新为 [DONE]"
+            PROTOCOL_SUMMARY="常规审查通过（附 Minor 建议），状态进入 [DONE]。"
         else
             echo ">>> 常规审查通过，状态已更新为 [DONE]"
+            PROTOCOL_SUMMARY="常规审查通过，状态进入 [DONE]。"
         fi
+        PROTOCOL_NEXT="none"
         print_commit_instructions
         ;;
     REVIEW_FAILED)
         echo ">>> 审查发现问题，状态已更新为 [REVIEW_FAILED]"
+        PROTOCOL_SUMMARY="审查未通过，状态进入 [REVIEW_FAILED]。"
+        PROTOCOL_NEXT="ai-flow-plan-coding"
         ;;
     *)
-        echo "错误: record-review 后出现意外状态 [$UPDATED_STATUS]"
-        exit 1
+        fail_protocol "record-review 后出现意外状态 [$UPDATED_STATUS]"
         ;;
 esac
+
+if [ "$ACTIVE_ENGINE" = "OpenCode" ] && [ "$AGENT_ENGINE" = "codex" ]; then
+    PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 OpenCode。"
+fi
+emit_current_protocol
