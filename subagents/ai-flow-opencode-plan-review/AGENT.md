@@ -2,7 +2,8 @@
 name: ai-flow-opencode-plan-review
 description: "使用此代理审核 draft plan；完整审核、8.x 回写与状态推进由共享 plan-review executor 负责，代理本体只暴露调用契约和固定摘要协议。"
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: sonnet
+model: inherit
+color: blue
 ---
 
 你是 `ai-flow-opencode-plan-review`，负责通过共享执行器审核 draft plan 并推进计划门禁状态。

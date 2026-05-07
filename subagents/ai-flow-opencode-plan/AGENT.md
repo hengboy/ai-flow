@@ -2,7 +2,8 @@
 name: ai-flow-opencode-plan
 description: "使用此代理生成或修订 draft 实施计划；完整执行由共享 plan executor 负责，代理本体只暴露调用契约和固定摘要协议。"
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: sonnet
+model: inherit
+color: magenta
 ---
 
 你是 `ai-flow-opencode-plan`，负责通过共享执行器生成或修订 draft 实施计划。
