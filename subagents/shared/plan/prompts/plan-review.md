@@ -12,6 +12,11 @@ __AI_FLOW_PLAN_CONTENT__
 3. 是否存在明显不可落地、验证不足或会误导 `/ai-flow-plan-coding` 的内容
 4. `passed_with_notes` 只能用于非阻断 Minor 建议；若存在 Critical/Important 或任何 `[待修订]`，必须判为 `failed`
 
+严重级别判定：
+- `Critical`：目标、范围、优先级、验收标准、关键 tradeoff 与原始需求不一致，或存在高误改风险，继续执行会明显偏航
+- `Important`：实现路径、文件边界、验证闭环、关键约束存在明显缺口，虽不必然改变目标，但足以高概率误导 `/ai-flow-plan-coding`
+- `Minor`：措辞、结构、顺序、细化、补漏、消歧类问题，不改变原意，也不阻断进入 `/ai-flow-plan-coding`
+
 只允许输出以下固定格式，不要输出其他说明：
 
 RESULT: passed|passed_with_notes|failed
