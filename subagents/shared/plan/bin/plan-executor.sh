@@ -1112,6 +1112,17 @@ PY
     PROTOCOL_STATE="$CURRENT_STATUS"
     PROTOCOL_REVIEW_RESULT="$REVIEW_RESULT"
 
+    if [ "$REVIEW_RESULT" = "passed" ] || [ "$REVIEW_RESULT" = "passed_with_notes" ]; then
+        EXPECTED_STATUS="PLANNED"
+    else
+        EXPECTED_STATUS="PLAN_REVIEW_FAILED"
+    fi
+    if [ "$CURRENT_STATUS" != "$EXPECTED_STATUS" ]; then
+        fail_protocol \
+            "计划审核状态异常：期望 [$EXPECTED_STATUS]，实际 [$CURRENT_STATUS]。计划审核通过后必须进入 [PLANNED]；失败时必须进入 [PLAN_REVIEW_FAILED]。" \
+            "$REVIEW_RESULT"
+    fi
+
     echo "    状态已验证为 [$CURRENT_STATUS]"
     rm -f "$local_review_output" "$local_review_items"
 

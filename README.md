@@ -53,12 +53,18 @@
 |------|------|
 | `AWAITING_PLAN_REVIEW` | draft plan 已生成，等待计划审核 |
 | `PLAN_REVIEW_FAILED` | 最近一次计划审核失败，待修订 plan |
-| `PLANNED` | plan 已审核通过，允许进入 plan-coding |
+| `PLANNED` | plan 已审核通过，允许进入 plan-coding；无论第几轮最终通过都统一回到该状态 |
 | `IMPLEMENTING` | 首轮开发进行中 |
 | `AWAITING_REVIEW` | 开发或修复已完成，等待常规 review |
 | `REVIEW_FAILED` | 最近一次 review / recheck 失败，尚未开始修复 |
 | `FIXING_REVIEW` | 正在修复最近一次失败的 review |
 | `DONE` | 审查已通过，或仅带 Minor 建议通过 |
+
+补充约束：
+
+- 状态机中不存在 `AWAITING_PLAN_CODING`
+- plan 多轮审核后只要最终结果是 `passed` / `passed_with_notes`，状态都必须进入 `PLANNED`
+- 真正开始编码时，再由 `ai-flow-plan-coding` 调用 `start-execute` 把 `PLANNED` 推进到 `IMPLEMENTING`
 
 ### 允许迁移
 
@@ -274,7 +280,7 @@ bash install.sh
 - 只接受 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED`
 - 执行计划审核
 - 回写 plan 第 8 章审核记录
-- 推进状态到 `PLANNED` 或 `PLAN_REVIEW_FAILED`
+- 审核通过后统一推进到 `PLANNED`，审核失败时推进到 `PLAN_REVIEW_FAILED`
 
 ### Coding Review
 
@@ -295,7 +301,7 @@ bash install.sh
 | Skill | 下一步 |
 |-------|--------|
 | `ai-flow-plan` | 成功后进入 `ai-flow-plan-review` |
-| `ai-flow-plan-review` | `passed` / `passed_with_notes` 进入 `ai-flow-plan-coding`；`failed` 返回 `ai-flow-plan` |
+| `ai-flow-plan-review` | `passed` / `passed_with_notes` 进入 `ai-flow-plan-coding`，且状态统一落到 `PLANNED`；`failed` 返回 `ai-flow-plan` |
 | `ai-flow-plan-coding` | `PLANNED` / `IMPLEMENTING` / `REVIEW_FAILED` / `FIXING_REVIEW` 执行编码或修复 |
 | `ai-flow-plan-coding-review` | 绑定 `slug` 时推进流程内 review；不绑定 `slug` 时输出 adhoc 报告 |
 | `ai-flow-change` | 更新 plan 正文并追加变更审计 |
@@ -337,7 +343,8 @@ bash tests/run.sh
   - fallback 与缺失 runtime 错误
   - 固定摘要协议字段
 - `tests/test_subagent_plan_review.sh`
-  - `PLANNED` / `PLAN_REVIEW_FAILED` 状态推进
+  - 首轮审核失败/通过
+  - `PLAN_REVIEW_FAILED` 复审通过后统一回到 `PLANNED`
   - 第 8 章审核记录回写
   - `REVIEW_RESULT` / `STATE` / `NEXT` 协议一致性
 - `tests/test_subagent_coding_review.sh`
