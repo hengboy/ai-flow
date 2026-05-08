@@ -16,8 +16,6 @@ OPENCODE_AGENTS_DIR="${OPENCODE_AGENTS_DIR:-$HOME/.config/opencode/agents}"
 ONSPACE_SKILLS_DIR="${ONSPACE_SKILLS_DIR:-${ONSPACE_DIR:-$HOME/.config/onespace/skills/local_state/models/claude}}"
 ONSPACE_SUBAGENTS_CLAUDE_DIR="${ONSPACE_SUBAGENTS_CLAUDE_DIR:-$HOME/.config/onespace/subagents/local_state/models/claude}"
 ONSPACE_SUBAGENTS_OPENCODE_DIR="${ONSPACE_SUBAGENTS_OPENCODE_DIR:-$HOME/.config/onespace/subagents/local_state/models/opencode}"
-LEGACY_SKILLS=(ai-flow-execute ai-flow-review)
-
 remove_legacy_claude_layout() {
     rm -rf "$CLAUDE_HOME/workflows" "$CLAUDE_HOME/templates"
 }
@@ -36,14 +34,6 @@ remove_legacy_root_entries() {
         "review-template.md"
     do
         rm -rf "$root/$legacy_entry"
-    done
-}
-
-remove_legacy_skill_names() {
-    local destination_root="$1"
-    local legacy_skill
-    for legacy_skill in "${LEGACY_SKILLS[@]}"; do
-        rm -rf "$destination_root/$legacy_skill"
     done
 }
 
@@ -147,9 +137,47 @@ install_runtime_root() {
     fi
 }
 
-mkdir -p "$CLAUDE_SKILLS_DIR" "$CLAUDE_AGENTS_DIR" "$OPENCODE_AGENTS_DIR"
+# --- Phase 1: Remove all previously installed AI Flow files ---
+
 remove_legacy_claude_layout
-remove_legacy_skill_names "$CLAUDE_SKILLS_DIR"
+
+# Remove all AI Flow skills from all target roots
+for skill_dir in "$CLAUDE_SKILLS_DIR"/ai-flow-*; do
+    [ -e "$skill_dir" ] || continue
+    rm -rf "$skill_dir"
+done
+for skill_dir in "$ONSPACE_SKILLS_DIR"/ai-flow-*; do
+    [ -e "$skill_dir" ] || continue
+    rm -rf "$skill_dir"
+done
+
+# Remove all AI Flow subagents from all target roots
+for agent_dir in "$CLAUDE_AGENTS_DIR"/ai-flow-*; do
+    [ -e "$agent_dir" ] || continue
+    rm -rf "$agent_dir"
+done
+for agent_dir in "$OPENCODE_AGENTS_DIR"/ai-flow-*; do
+    [ -e "$agent_dir" ] || continue
+    rm -rf "$agent_dir"
+done
+for agent_dir in "$ONSPACE_SUBAGENTS_CLAUDE_DIR"/ai-flow-*; do
+    [ -e "$agent_dir" ] || continue
+    rm -rf "$agent_dir"
+done
+for agent_dir in "$ONSPACE_SUBAGENTS_OPENCODE_DIR"/ai-flow-*; do
+    [ -e "$agent_dir" ] || continue
+    rm -rf "$agent_dir"
+done
+
+# Remove legacy root entries
+remove_legacy_root_entries "$ONSPACE_SKILLS_DIR"
+
+# Remove old runtime
+rm -rf "$AI_FLOW_HOME"
+
+# --- Phase 2: Reinstall from scratch ---
+
+mkdir -p "$CLAUDE_SKILLS_DIR" "$CLAUDE_AGENTS_DIR" "$OPENCODE_AGENTS_DIR"
 
 for skill_dir in "$ROOT_DIR"/skills/*; do
     [ -d "$skill_dir" ] || continue
@@ -160,7 +188,6 @@ echo "Installed AI Flow to $CLAUDE_HOME"
 
 mkdir -p "$ONSPACE_SKILLS_DIR" "$ONSPACE_SUBAGENTS_CLAUDE_DIR" "$ONSPACE_SUBAGENTS_OPENCODE_DIR"
 remove_legacy_root_entries "$ONSPACE_SKILLS_DIR"
-remove_legacy_skill_names "$ONSPACE_SKILLS_DIR"
 for skill_dir in "$ROOT_DIR"/skills/*; do
     [ -d "$skill_dir" ] || continue
     install_skill_dir "$skill_dir" "$ONSPACE_SKILLS_DIR"
