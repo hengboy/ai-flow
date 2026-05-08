@@ -79,9 +79,9 @@ require_file() {
 
 default_model_for_engine() {
     case "$1" in
-        codex) echo "${AI_FLOW_CODEX_DEFAULT_MODEL:-gpt-5.5}" ;;
+        codex) echo "${AI_FLOW_CODEX_DEFAULT_MODEL:-gpt-5.4}" ;;
         opencode) echo "${AI_FLOW_OPENCODE_DEFAULT_MODEL:-zhipuai-coding-plan/glm-5.1}" ;;
-        *) echo "${AI_FLOW_DEFAULT_MODEL:-gpt-5.5}" ;;
+        *) echo "${AI_FLOW_DEFAULT_MODEL:-gpt-5.4}" ;;
     esac
 }
 
@@ -127,4 +127,13 @@ if [ -n "${AGENT_DIR:-}" ] && [ -f "$AGENT_DIR/AGENT.md" ]; then
     [ -n "$AGENT_ENGINE" ] || AGENT_ENGINE="$(derive_engine_from_name "$AGENT_NAME")"
     [ -n "$FLOW_ROLE" ] || FLOW_ROLE="$(derive_flow_role_from_name "$AGENT_NAME")"
     [ -n "$FALLBACK_AGENT" ] || FALLBACK_AGENT="$(derive_fallback_agent_from_name "$AGENT_NAME")"
+fi
+
+# Source workspace helpers when available (kept separate for overlay safety).
+if [ -f "$SCRIPT_DIR/workspace-common.sh" ]; then
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/workspace-common.sh"
+elif [ -n "${AGENT_DIR:-}" ] && [ -f "$AGENT_DIR/lib/workspace-common.sh" ]; then
+    # shellcheck source=/dev/null
+    source "$AGENT_DIR/lib/workspace-common.sh"
 fi
