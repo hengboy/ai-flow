@@ -15,6 +15,8 @@ FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"
 DATE_DIR="$(date +%Y%m%d)"
 PLANS_DIR="$FLOW_DIR/plans/$DATE_DIR"
+WORKSPACE_ROOT=""
+IS_WORKSPACE_MODE=0
 TEMPLATE="$AGENT_DIR/templates/plan-template.md"
 PLAN_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-generation.md"
 PLAN_REVIEW_PROMPT_TEMPLATE="${AI_FLOW_PLAN_REVIEW_PROMPT_TEMPLATE:-$AGENT_DIR/prompts/plan-review.md}"
@@ -136,11 +138,34 @@ discover_project_root_candidates() {
     printf '%s\n' "${candidates[@]}" | awk '!seen[$0]++'
 }
 
+has_workspace_manifest() {
+    local dir="$1"
+    [ -f "$dir/.ai-flow/workspace.json" ]
+}
+
+detect_workspace_context() {
+    # Returns "workspace:<path>" if workspace.json exists, empty otherwise
+    local dir="$1"
+    if [ -f "$dir/.ai-flow/workspace.json" ]; then
+        printf 'workspace:%s' "$dir"
+        return 0
+    fi
+    return 1
+}
+
 ensure_project_root_context() {
     local candidate
     local -a candidates=()
 
     if has_project_root_marker "$PROJECT_DIR"; then
+        return 0
+    fi
+
+    # Workspace manifest is also a valid root (even without traditional project markers)
+    if has_workspace_manifest "$PROJECT_DIR"; then
+        # Export workspace context for downstream use
+        WORKSPACE_ROOT="$PROJECT_DIR"
+        IS_WORKSPACE_MODE=1
         return 0
     fi
 
@@ -1319,7 +1344,11 @@ else
     [ -z "$PLAN_TITLE" ] && PLAN_TITLE="$REQUIREMENT"
 
     echo ">>> 初始化状态文件..."
-    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
+        AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE" --scope-mode workspace --workspace-file .ai-flow/workspace.json
+    else
+        AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
+    fi
     PLAN_STATUS=$("$FLOW_STATE_SH" show "$SLUG" --field current_status)
     echo "    状态已验证为 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"

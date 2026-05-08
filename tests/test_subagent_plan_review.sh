@@ -145,9 +145,9 @@ test_plan_review_ignores_explicit_model_override() {
     )
 
     assert_protocol_field "$temp_root/review-model.out" "RESULT" "success"
-    assert_contains "$temp_root/codex.plan.argv" "-m gpt-5.5"
+    assert_contains "$temp_root/codex.plan.argv" "-m gpt-5.4"
     assert_not_contains "$temp_root/codex.plan.argv" "-m qwen3.6-plus"
-    assert_equals "gpt-5.5" "$(state_field "$project" "demo" "transitions.1.artifacts.model")"
+    assert_equals "gpt-5.4" "$(state_field "$project" "demo" "transitions.1.artifacts.model")"
     rm -rf "$temp_root"
 }
 

@@ -229,7 +229,7 @@ test_coding_review_ignores_model_override_but_keeps_reasoning() {
     )
 
     assert_protocol_field "$temp_root/review-model.out" "RESULT" "success"
-    assert_contains "$temp_root/codex.review.argv" "-m gpt-5.5"
+    assert_contains "$temp_root/codex.review.argv" "-m gpt-5.4"
     assert_not_contains "$temp_root/codex.review.argv" "-m qwen3.6-plus"
     assert_contains "$temp_root/codex.review.argv" "model_reasoning_effort=\"high\""
     rm -rf "$temp_root"

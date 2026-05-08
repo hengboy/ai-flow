@@ -87,7 +87,7 @@ test_plan_generation_ignores_explicit_model_override() {
     )
 
     assert_protocol_field "$temp_root/plan-model.out" "RESULT" "success"
-    assert_contains "$temp_root/codex.plan.argv" "-m gpt-5.5"
+    assert_contains "$temp_root/codex.plan.argv" "-m gpt-5.4"
     assert_not_contains "$temp_root/codex.plan.argv" "-m qwen3.6-plus"
     rm -rf "$temp_root"
 }
