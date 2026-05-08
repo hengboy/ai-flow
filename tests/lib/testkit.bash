@@ -1250,3 +1250,86 @@ run_with_fake_coding_review_agents() {
         FAKE_REVIEW_TEMP_ROOT="$temp_root" \
         "$@"
 }
+
+# ─── Workspace fixture helpers ───
+
+setup_workspace_root() {
+    local workspace_root="$1"
+    local workspace_name="${2:-workspace-test}"
+    mkdir -p "$workspace_root/.ai-flow/state/.locks" \
+             "$workspace_root/.ai-flow/plans" \
+             "$workspace_root/.ai-flow/reports"
+
+    cat > "$workspace_root/.ai-flow/workspace.json" <<WS
+{
+  "schema_version": 1,
+  "name": "$workspace_name",
+  "repos": [
+    { "id": "repo-alpha", "path": "repo-alpha" },
+    { "id": "repo-beta", "path": "repo-beta" }
+  ]
+}
+WS
+}
+
+setup_workspace_git_repos() {
+    local workspace_root="$1"
+    local repo
+    for repo in repo-alpha repo-beta; do
+        mkdir -p "$workspace_root/$repo/src"
+        printf '{ "name": "%s" }\n' "$repo" > "$workspace_root/$repo/package.json"
+        (
+            cd "$workspace_root/$repo" || exit 1
+            git init -q
+            git config user.email test@example.com
+            git config user.name Test
+            git add .
+            git commit -q -m "init $repo"
+        )
+    done
+}
+
+setup_workspace_repo_change() {
+    local workspace_root="$1"
+    local repo="${2:-repo-alpha}"
+    local change_file="${3:-src/workspace-changed.txt}"
+    printf 'changed in workspace\n' > "$workspace_root/$repo/$change_file"
+}
+
+create_workspace_state_fixture() {
+    local flow_state_script="$1"
+    local workspace_root="$2"
+    local slug="$3"
+    local target_status="$4"
+    local date_dir="${5:-20260503}"
+    local title="${6:-$slug}"
+    local plan_file=".ai-flow/plans/$date_dir/$slug.md"
+    create_plan_file "$workspace_root" "$slug" "$date_dir" "$title"
+
+    (
+        cd "$workspace_root" || exit 1
+        bash "$flow_state_script" create --slug "$slug" --title "$title" --plan-file "$plan_file" \
+            --scope-mode workspace --workspace-file .ai-flow/workspace.json >/dev/null
+        case "$target_status" in
+            AWAITING_PLAN_REVIEW) ;;
+            PLANNED)
+                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                ;;
+            AWAITING_REVIEW)
+                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" start-execute "$slug" >/dev/null
+                bash "$flow_state_script" finish-implementation "$slug" >/dev/null
+                ;;
+            DONE)
+                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" start-execute "$slug" >/dev/null
+                bash "$flow_state_script" finish-implementation "$slug" >/dev/null
+                write_review_report_fixture ".ai-flow/reports/$date_dir/${slug}-review.md" "$slug" "$plan_file" "regular" "1" "passed" "$title"
+                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result passed --report-file ".ai-flow/reports/$date_dir/${slug}-review.md" >/dev/null
+                ;;
+            *)
+                fail "Unknown target status for workspace fixture: $target_status"
+                ;;
+        esac
+    )
+}
