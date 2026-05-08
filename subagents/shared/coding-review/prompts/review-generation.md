@@ -8,6 +8,7 @@
    - 只有明确无关、有害、破坏计划目标或引入风险的额外变动，才判定为“回退”
    - 合理补充判定为“接受”；新增功能或业务语义不确定时判定为“需确认”
 4. __AI_FLOW_REVIEW_SCOPE_GUIDANCE__
+__AI_FLOW_WORKSPACE_CONTEXT__
 __AI_FLOW_HISTORY_RULES__
 7. 允许执行**有边界的定向验证**，优先使用 plan 的“4.4 定向验证矩阵”：
    - 允许：`test-compile`、单个测试类/测试用例、单个 Mapper/集成用例、轻量 build/check
@@ -34,6 +35,7 @@ __AI_FLOW_TEMPLATE_CONTENT__
 - **不要放过**：如果不确定是否有问题，标记为“需要人工验证”，不要跳过或静默通过
 
 输出要求：
+0. 如果当前为 workspace 模式（见上方 `__AI_FLOW_WORKSPACE_CONTEXT__`），必须在审查上下文中列出所有有变更的仓库；文件路径需包含仓库标识前缀；每个有变更的仓库至少写一条 per-repo 验证命令。
 1. 填充模板中的所有占位符，**1.1 审查上下文**、**1.2 定向验证执行证据**、**3.5 逻辑正确性**、**3.6 缺陷族覆盖度** 必须填写，不能省略
 2. 顶部元数据中的 `需求简称` 必须是 __AI_FLOW_SLUG__，`审查模式` 必须是 __AI_FLOW_REVIEW_MODE__，`审查轮次` 必须是 __AI_FLOW_CURRENT_ROUND__，`审查结果` 只能填写 `passed`、`passed_with_notes` 或 `failed`
 3. 如果仍有 Critical/Important 或任何 `[待修复]` 项，`审查结果` 必须为 `failed`

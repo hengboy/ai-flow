@@ -12,6 +12,12 @@ __AI_FLOW_PLAN_CONTENT__
 3. 是否存在明显不可落地、验证不足或会误导 `/ai-flow-plan-coding` 的内容
 4. `passed_with_notes` 只能用于非阻断 Minor 建议；若存在 Critical/Important 或任何 `[待修订]`，必须判为 `failed`
 
+Workspace 模式额外检查（若 plan 顶部 `执行范围` 为 workspace）：
+- 每个"涉及模块"和"文件边界总览"表格的 `仓库` 列必须填写，且 repo id 必须存在于 `.ai-flow/workspace.json` 的 repos 声明中
+- 文件路径必须相对于 workspace 根目录
+- 所有 Git 自检验证命令必须使用 `git -C <repo_path>` 前缀
+- 计划应体现跨仓库依赖和步骤顺序
+
 严重级别判定：
 - `Critical`：目标、范围、优先级、验收标准、关键 tradeoff 与原始需求不一致，或存在高误改风险，继续执行会明显偏航
 - `Important`：实现路径、文件边界、验证闭环、关键约束存在明显缺口，虽不必然改变目标，但足以高概率误导 `/ai-flow-plan-coding`

@@ -190,11 +190,19 @@ validate_installed_resources
 render_plan_template_content() {
     local requirement_name="$1"
     local requirement_text="$2"
+    local exec_scope_label="single_repo"
+    local workspace_list="无（单仓模式；若为 workspace 模式，请写 .ai-flow/workspace.json）"
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
+        exec_scope_label="workspace"
+        workspace_list=".ai-flow/workspace.json"
+    fi
     AI_FLOW_TEMPLATE_REQUIREMENT_NAME="$requirement_name" \
     AI_FLOW_TEMPLATE_SLUG="$SLUG" \
     AI_FLOW_TEMPLATE_DATE="$(date +%Y-%m-%d)" \
     AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL="需求描述" \
     AI_FLOW_TEMPLATE_REQUIREMENT_TEXT="$requirement_text" \
+    AI_FLOW_TEMPLATE_EXEC_SCOPE="$exec_scope_label" \
+    AI_FLOW_TEMPLATE_WORKSPACE_LIST="$workspace_list" \
     python3 - "$TEMPLATE" <<'PY'
 import os
 import sys
@@ -207,6 +215,8 @@ replacements = {
     "{YYYY-MM-DD}": os.environ["AI_FLOW_TEMPLATE_DATE"],
     "{需求文档/口头描述/Jira 等}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL"],
     "{原始需求原文}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_TEXT"],
+    "执行范围：single_repo": f"执行范围：{os.environ['AI_FLOW_TEMPLATE_EXEC_SCOPE']}",
+    "工作区清单：无（单仓模式；若为 workspace 模式，请写 `.ai-flow/workspace.json`）": f"工作区清单：{os.environ['AI_FLOW_TEMPLATE_WORKSPACE_LIST']}",
 }
 for needle, value in replacements.items():
     text = text.replace(needle, value)
@@ -216,12 +226,28 @@ PY
 
 render_prompt_template() {
     local prompt_template="$1"
+    local workspace_ctx=""
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
+        local ws_name
+        ws_name=$(python3 -c "import json; d=json.load(open('$WORKSPACE_ROOT/.ai-flow/workspace.json')); print(d.get('name',''))" 2>/dev/null || true)
+        workspace_ctx="当前为 workspace 模式（工作区：${ws_name:-unknown}），文件路径必须相对于 workspace 根目录。"
+        while IFS=$'\t' read -r repo_id repo_path; do
+            workspace_ctx="${workspace_ctx} 仓库：${repo_id} (路径: ${repo_path})。"
+        done < <(python3 -c "
+import json
+data = json.load(open('$WORKSPACE_ROOT/.ai-flow/workspace.json'))
+for r in data.get('repos', []):
+    print(f\"{r['id']}\t{r['path']}\")
+")
+        workspace_ctx="${workspace_ctx} Git 验证命令必须使用 git -C <repo_path>。"
+    fi
     AI_FLOW_TEMPLATE_CONTENT="${TEMPLATE_CONTENT:-}" \
     AI_FLOW_DETECT_STACK="${DETECT_STACK:-}" \
     AI_FLOW_REQUIREMENT="$REQUIREMENT" \
     AI_FLOW_SLUG="$SLUG" \
     AI_FLOW_PLAN_CONTENT="${PLAN_CONTENT_FOR_PROMPT:-}" \
     AI_FLOW_REVIEW_ITEMS="${PLAN_REVIEW_ITEMS_FOR_PROMPT:-}" \
+    AI_FLOW_WORKSPACE_CONTEXT="$workspace_ctx" \
     python3 - "$prompt_template" <<'PY'
 import os
 import sys
@@ -235,6 +261,7 @@ replacements = {
     "__AI_FLOW_SLUG__": os.environ["AI_FLOW_SLUG"],
     "__AI_FLOW_PLAN_CONTENT__": os.environ.get("AI_FLOW_PLAN_CONTENT", ""),
     "__AI_FLOW_REVIEW_ITEMS__": os.environ.get("AI_FLOW_REVIEW_ITEMS", ""),
+    "__AI_FLOW_WORKSPACE_CONTEXT__": os.environ.get("AI_FLOW_WORKSPACE_CONTEXT", ""),
 }
 for needle, value in replacements.items():
     text = text.replace(needle, value)
@@ -568,6 +595,7 @@ validate_plan_structure() {
             "{YYYY-MM-DD HH:MM}"
             "{执行过程中新增或调整的需求；无则保留空表}"
             "{用户确认/文档同步/其他}"
+            '{repo_id，单仓模式写 -}'
         )
         local -a disallowed_state_schema_fields=(
             '`requirement_key`:'

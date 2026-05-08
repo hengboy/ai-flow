@@ -9,6 +9,12 @@ description: 处理需求变更，更新实施计划各章节（步骤/文件边
 
 **Announce at start:** "正在使用 ai-flow-change 技能，处理需求变更并更新实施计划。"
 
+## 运行目录
+
+- 单仓模式：在目标 Git 仓库根目录运行。
+- 多仓模式（workspace）：在包含 `.ai-flow/workspace.json` 的 workspace 根目录运行。
+- 必须在创建 flow 时使用的同一目录下运行变更命令。
+
 ## 流程
 
 ### 1. 选择目标

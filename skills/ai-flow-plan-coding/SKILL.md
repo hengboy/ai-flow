@@ -40,11 +40,12 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
 - 批判性检查 plan 是否可执行
 - 按 Step 顺序实施
 - 更新计划文档中的复选框
-- `REVIEW_FAILED` / `FIXING_REVIEW` 阶段默认按“缺陷族”收敛修复，不按单个 DEF 编号孤立修补
+- `REVIEW_FAILED` / `FIXING_REVIEW` 阶段默认按”缺陷族”收敛修复，不按单个 DEF 编号孤立修补
+- 如果 plan 的 `执行范围` 为 `workspace`，文件路径相对于 workspace 根目录；修改文件时需确保路径包含正确的 repo 前缀
 - 如果用户追加需求，先运行：
 
 ```bash
-${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-change.sh {slug} "变更描述"
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-change.sh {slug} “变更描述”
 ```
 
 ### 4. 完成后的状态推进

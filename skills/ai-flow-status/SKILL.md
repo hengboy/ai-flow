@@ -9,6 +9,12 @@ description: 查看当前项目 .ai-flow/state/ 下所有流程状态，并按 J
 
 **Announce at start:** "正在使用 ai-flow-status 技能查看当前项目的 AI 协作流程状态。"
 
+## 运行目录
+
+- 单仓模式：在目标 Git 仓库根目录运行。
+- 多仓模式（workspace）：在包含 `.ai-flow/workspace.json` 的 workspace 根目录运行。
+- workspace 根目录本身不必是 Git 仓库。
+
 ## 流程
 
 ### 1. 执行扫描

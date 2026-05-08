@@ -17,3 +17,4 @@ __AI_FLOW_REVIEW_ITEMS__
 5. `## 1. 需求概述` 中必须保留 `**原始需求（原文）**`
 6. 保持 `.ai-flow/state/...` 仍然只由 `flow-state.sh` 管理
 7. 直接输出完整 Markdown，不要附加解释文字
+8. 如果审核意见涉及 workspace 模式（plan 顶部 `执行范围` 为 workspace），确保修正后：每个"涉及模块"和"文件边界总览"表格的 `仓库` 列正确填写、文件路径相对于 workspace 根目录、Git 命令使用 `git -C <repo_path>` 前缀。单仓模式下 `仓库` 列填写 `-`。
