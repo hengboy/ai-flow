@@ -134,7 +134,12 @@ test_workspace_state_create_without_manifest_defaults_to_single_repo() {
     )
 
     assert_equals "single_repo" "$(state_field "$project" "default-scope" "execution_scope.mode")"
-    assert_equals "null" "$(state_field "$project" "default-scope" "execution_scope.workspace_file")"
+    # workspace_file is null in single_repo mode
+    python3 - "$project/.ai-flow/state/default-scope.json" <<'PY'
+import json, sys
+state = json.loads(open(sys.argv[1]).read())
+assert state["execution_scope"]["workspace_file"] is None, "workspace_file should be null"
+PY
     rm -rf "$temp_root"
 }
 

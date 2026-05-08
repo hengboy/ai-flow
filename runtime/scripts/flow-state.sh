@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 STATUS_VALUES = {
     "AWAITING_PLAN_REVIEW",
     "PLAN_REVIEW_FAILED",
@@ -248,12 +248,158 @@ def synchronize_derived_fields(state: dict) -> dict:
     return state
 
 
+def build_execution_scope(*, mode, workspace_file=None):
+    """Build execution_scope from explicit parameters or auto-detect."""
+    if mode == "workspace":
+        if not workspace_file:
+            raise FlowError("workspace 模式必须提供 workspace_file")
+        ws_path = Path(workspace_file)
+        if ws_path.is_absolute():
+            abs_ws = ws_path.resolve()
+        else:
+            abs_ws = (PROJECT_DIR / ws_path).resolve()
+        try:
+            rel_ws = abs_ws.relative_to(PROJECT_DIR).as_posix()
+        except ValueError:
+            rel_ws = abs_ws.as_posix()
+
+        # Load manifest to get repo list
+        if not abs_ws.is_file():
+            raise FlowError(f"workspace manifest 不存在: {abs_ws}")
+        manifest = json.loads(abs_ws.read_text(encoding="utf-8"))
+        repos = manifest.get("repos")
+        if not isinstance(repos, list) or not repos:
+            raise FlowError("workspace manifest repos 必须是非空数组")
+
+        # Validate each repo is a valid git repo
+        import subprocess
+        validated_repos = []
+        seen_ids: set[str] = set()
+        for idx, repo in enumerate(repos):
+            repo_id = repo.get("id")
+            repo_path = repo.get("path")
+            if not isinstance(repo_id, str) or not repo_id.strip():
+                raise FlowError(f"manifest repos[{idx}].id 无效")
+            if not isinstance(repo_path, str) or not repo_path.strip():
+                raise FlowError(f"manifest repos[{idx}].path 无效")
+            if repo_id in seen_ids:
+                raise FlowError(f"manifest repos[{idx}].id 重复: {repo_id!r}")
+            seen_ids.add(repo_id)
+
+            abs_repo = (PROJECT_DIR / repo_path).resolve()
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(abs_repo), "rev-parse", "--show-toplevel"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode != 0:
+                    raise FlowError(f"manifest repos[{idx}].path={repo_path!r} 不是有效的 Git 仓库")
+                git_root = result.stdout.strip()
+            except FileNotFoundError:
+                raise FlowError("git 命令不可用")
+
+            try:
+                rel_git_root = Path(git_root).relative_to(PROJECT_DIR).as_posix()
+            except ValueError:
+                rel_git_root = git_root
+
+            validated_repos.append({
+                "id": repo_id,
+                "path": (abs_repo.relative_to(PROJECT_DIR)).as_posix(),
+                "git_root": rel_git_root,
+            })
+
+        return {
+            "mode": "workspace",
+            "workspace_file": rel_ws,
+            "repos": validated_repos,
+        }
+
+    # single_repo mode — derive from current repo root
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(PROJECT_DIR),
+        )
+        if result.returncode == 0:
+            git_root = result.stdout.strip()
+        else:
+            git_root = PROJECT_DIR.as_posix()
+    except FileNotFoundError:
+        git_root = PROJECT_DIR.as_posix()
+
+    try:
+        rel_git_root = Path(git_root).relative_to(PROJECT_DIR).as_posix()
+    except ValueError:
+        rel_git_root = git_root
+
+    return {
+        "mode": "single_repo",
+        "workspace_file": None,
+        "repos": [{
+            "id": "root",
+            "path": ".",
+            "git_root": rel_git_root,
+        }],
+    }
+
+
+def normalize_execution_scope(state: dict) -> None:
+    """Inject execution_scope into states that lack it (schema_version 1)."""
+    if "execution_scope" in state:
+        return
+
+    import subprocess
+    # Derive single_repo scope
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(PROJECT_DIR),
+        )
+        if result.returncode == 0:
+            git_root = result.stdout.strip()
+        else:
+            git_root = PROJECT_DIR.as_posix()
+    except FileNotFoundError:
+        git_root = PROJECT_DIR.as_posix()
+
+    try:
+        rel_git_root = Path(git_root).relative_to(PROJECT_DIR).as_posix()
+    except ValueError:
+        rel_git_root = git_root
+
+    state["execution_scope"] = {
+        "mode": "single_repo",
+        "workspace_file": None,
+        "repos": [{
+            "id": "root",
+            "path": ".",
+            "git_root": rel_git_root,
+        }],
+    }
+
+
 def normalize_legacy_state(state: dict) -> list[str]:
     transitions = state.get("transitions")
     if not isinstance(transitions, list) or not transitions:
         raise FlowError("transitions 不能为空，无法执行 normalize")
 
     changes = []
+
+    # Bump schema_version to 2
+    if state.get("schema_version", 1) < SCHEMA_VERSION:
+        old_sv = state.get("schema_version", 1)
+        state["schema_version"] = SCHEMA_VERSION
+        changes.append(f"schema_version: {old_sv} -> {SCHEMA_VERSION}")
+
+    # Inject execution_scope if missing
+    if "execution_scope" not in state:
+        normalize_execution_scope(state)
+        changes.append("execution_scope: <missing> -> injected")
+
     review_events = {"review_passed", "review_failed", "recheck_passed", "recheck_failed"}
     for index, item in enumerate(transitions):
         if not isinstance(item, dict):
@@ -372,6 +518,7 @@ def validate_state(state: dict, *, expected_slug: str = None) -> None:
         "last_review",
         "active_fix",
         "transitions",
+        "execution_scope",
     }
     missing = required - set(state.keys())
     if missing:
@@ -394,6 +541,29 @@ def validate_state(state: dict, *, expected_slug: str = None) -> None:
 
     if not isinstance(state["plan_file"], str) or not state["plan_file"]:
         raise FlowError("plan_file 不能为空")
+
+    exec_scope = state.get("execution_scope")
+    if not isinstance(exec_scope, dict):
+        raise FlowError("execution_scope 必须是对象")
+    for key in ("mode", "workspace_file", "repos"):
+        if key not in exec_scope:
+            raise FlowError(f"execution_scope 缺少字段: {key}")
+    if exec_scope["mode"] not in {"single_repo", "workspace"}:
+        raise FlowError(f"execution_scope.mode 必须是 single_repo 或 workspace，实际: {exec_scope['mode']!r}")
+    if exec_scope["mode"] == "workspace" and not exec_scope["workspace_file"]:
+        raise FlowError("workspace 模式必须存在 execution_scope.workspace_file")
+    if not isinstance(exec_scope["repos"], list) or not exec_scope["repos"]:
+        raise FlowError("execution_scope.repos 必须是非空数组")
+    seen_repo_ids: set[str] = set()
+    for r_idx, r_item in enumerate(exec_scope["repos"]):
+        if not isinstance(r_item, dict):
+            raise FlowError(f"execution_scope.repos[{r_idx}] 必须是对象")
+        for r_key in ("id", "path", "git_root"):
+            if r_key not in r_item:
+                raise FlowError(f"execution_scope.repos[{r_idx}] 缺少字段: {r_key}")
+        if r_item["id"] in seen_repo_ids:
+            raise FlowError(f"execution_scope.repos[{r_idx}].id 重复: {r_item['id']!r}")
+        seen_repo_ids.add(r_item["id"])
 
     rounds = state["review_rounds"]
     if not isinstance(rounds, dict) or set(rounds.keys()) != {"regular", "recheck"}:
@@ -494,6 +664,11 @@ def cmd_create(args):
     if not title:
         raise FlowError("title 不能为空")
 
+    # Derive execution_scope
+    scope_mode = getattr(args, "scope_mode", None) or "single_repo"
+    workspace_file = getattr(args, "workspace_file", None)
+    exec_scope = build_execution_scope(mode=scope_mode, workspace_file=workspace_file)
+
     def mutator(state):
         if state is not None:
             raise FlowError(f"状态文件已存在: {state_path_for_slug(args.slug)}")
@@ -511,6 +686,7 @@ def cmd_create(args):
             "latest_recheck_review_file": None,
             "last_review": None,
             "active_fix": None,
+            "execution_scope": exec_scope,
             "transitions": [
                 {
                     "seq": 1,
@@ -859,6 +1035,8 @@ def build_parser():
     create.add_argument("--slug", required=True)
     create.add_argument("--title", required=True)
     create.add_argument("--plan-file", required=True)
+    create.add_argument("--scope-mode", choices=["single_repo", "workspace"])
+    create.add_argument("--workspace-file")
     create.set_defaults(func=cmd_create)
 
     record_plan_review = subparsers.add_parser("record-plan-review")

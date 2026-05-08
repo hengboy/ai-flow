@@ -1256,9 +1256,10 @@ run_with_fake_coding_review_agents() {
 setup_workspace_root() {
     local workspace_root="$1"
     local workspace_name="${2:-workspace-test}"
+    local date_dir="${3:-20260503}"
     mkdir -p "$workspace_root/.ai-flow/state/.locks" \
-             "$workspace_root/.ai-flow/plans" \
-             "$workspace_root/.ai-flow/reports"
+             "$workspace_root/.ai-flow/plans/$date_dir" \
+             "$workspace_root/.ai-flow/reports/$date_dir"
 
     cat > "$workspace_root/.ai-flow/workspace.json" <<WS
 {
