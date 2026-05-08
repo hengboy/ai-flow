@@ -123,5 +123,22 @@ test_custom_roots_install() {
     rm -rf "$temp_root"
 }
 
+test_reinstall_keeps_real_lib_dir() {
+    local temp_root agents_root
+    temp_root=$(make_temp_root)
+    agents_root="$temp_root/home/.claude/agents"
+
+    install_ai_flow "$temp_root"
+    install_ai_flow "$temp_root"
+
+    assert_dir_exists "$agents_root/ai-flow-codex-plan/lib"
+    [ ! -L "$agents_root/ai-flow-codex-plan/lib" ] || fail "Expected installed lib to remain a real directory"
+    assert_file_exists "$agents_root/ai-flow-codex-plan/lib/agent-common.sh"
+    assert_file_exists "$agents_root/ai-flow-codex-plan/bin/plan-executor.sh"
+    assert_file_exists "$agents_root/ai-flow-codex-plan/prompts/plan-generation.md"
+    rm -rf "$temp_root"
+}
+
 test_default_install_layout
 test_custom_roots_install
+test_reinstall_keeps_real_lib_dir

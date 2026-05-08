@@ -70,10 +70,19 @@ copy_tree() {
 overlay_tree_contents() {
     local source_dir="$1"
     local target_dir="$2"
+    local entry
+    local name
 
     [ -d "$source_dir" ] || return 0
     mkdir -p "$target_dir"
-    cp -R "$source_dir"/. "$target_dir"/
+    for entry in "$source_dir"/*; do
+        [ -e "$entry" ] || continue
+        name="$(basename "$entry")"
+        # Shared lib is installed separately as a real directory. Skip overlaying
+        # any role-specific lib symlink so macOS cp does not try to replace it.
+        [ "$name" = "lib" ] && continue
+        cp -R "$entry" "$target_dir"/
+    done
     if [ -d "$target_dir/scripts" ]; then
         find "$target_dir/scripts" -type f -name "*.sh" -exec chmod +x {} +
     fi
