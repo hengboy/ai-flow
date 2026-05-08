@@ -1290,6 +1290,58 @@ setup_workspace_git_repos() {
     done
 }
 
+setup_workspace_root_with_repos() {
+    local workspace_root="$1"
+    local workspace_name="${2:-workspace-test}"
+    local date_dir="${3:-20260503}"
+    local repo_ids=() repo_paths=()
+    shift 3 || return 1
+    while [ $# -gt 0 ]; do
+        repo_ids+=("${1%%::*}")
+        repo_paths+=("${1#*::}")
+        shift
+    done
+    if [ ${#repo_ids[@]} -eq 0 ]; then
+        repo_ids=("repo-alpha" "repo-beta")
+        repo_paths=("repo-alpha" "repo-beta")
+    fi
+
+    mkdir -p "$workspace_root/.ai-flow/state/.locks" \
+             "$workspace_root/.ai-flow/plans/$date_dir" \
+             "$workspace_root/.ai-flow/reports/$date_dir"
+
+    local repos_json="["
+    local i
+    for i in "${!repo_ids[@]}"; do
+        [ "$i" -gt 0 ] && repos_json+=", "
+        repos_json+="{ \"id\": \"${repo_ids[$i]}\", \"path\": \"${repo_paths[$i]}\" }"
+    done
+    repos_json+="]"
+
+    cat > "$workspace_root/.ai-flow/workspace.json" <<WS
+{
+  "schema_version": 1,
+  "name": "$workspace_name",
+  "repos": $repos_json
+}
+WS
+}
+
+setup_workspace_single_git_repo() {
+    local workspace_root="$1"
+    local repo_name="$2"
+    mkdir -p "$workspace_root/$repo_name/src"
+    printf '{ "name": "%s" }\n' "$repo_name" > "$workspace_root/$repo_name/package.json"
+    (
+        cd "$workspace_root/$repo_name" || exit 1
+        git init -q
+        git config user.email test@example.com
+        git config user.name Test
+        git add .
+        git commit -q -m "init $repo_name"
+    )
+}
+
 setup_workspace_repo_change() {
     local workspace_root="$1"
     local repo="${2:-repo-alpha}"

@@ -65,37 +65,32 @@ test_workspace_coding_review_fails_when_only_undeclared_repos_change() {
     rm -rf "$temp_root"
 }
 
-test_workspace_coding_review_fails_when_declared_repo_missing() {
-    local temp_root workspace runtime_script executor rc
+test_workspace_coding_review_single_declared_repo() {
+    local temp_root workspace runtime_script executor out
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     write_fake_coding_review_agents "$temp_root"
     workspace="$temp_root/workspace"
     runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
-    setup_workspace_root "$workspace" "missing-repo-ws"
+    # Only declare repo-alpha in the manifest; repo-beta is an undeclared neighbour
+    setup_workspace_root_with_repos "$workspace" "single-declared-ws" "20260503" \
+        "repo-alpha::repo-alpha"
+    setup_workspace_single_git_repo "$workspace" "repo-alpha"
+    # Create an undeclared repo-beta to verify it is ignored
+    setup_workspace_single_git_repo "$workspace" "repo-beta"
+    create_workspace_state_fixture "$runtime_script" "$workspace" "ws-single" "AWAITING_REVIEW" "20260503" "single-repo-test"
+    setup_workspace_repo_change "$workspace" "repo-alpha" "src/changed.txt"
 
-    # Only create repo-alpha, not repo-beta
-    mkdir -p "$workspace/repo-alpha/src"
-    printf '{"name":"alpha"}\n' > "$workspace/repo-alpha/package.json"
-    (
-        cd "$workspace/repo-alpha"
-        git init -q
-        git config user.email test@example.com
-        git config user.name Test
-        git add .
-        git commit -q -m init
-    )
-    create_workspace_state_fixture "$runtime_script" "$workspace" "ws-missing" "AWAITING_REVIEW" "20260503" "missing-repo-test"
-
-    set +e
     (
         cd "$workspace"
-        run_with_fake_coding_review_agents "$temp_root" bash "$executor" ws-missing >"$temp_root/missing-repo.out" 2>&1
+        FAKE_CODE_REVIEW_RESULT=passed run_with_fake_coding_review_agents "$temp_root" bash "$executor" ws-single >"$temp_root/single-repo.out"
     )
-    rc=$?
-    set -e
-    [ "$rc" -ne 0 ] || fail "Expected review to fail when a declared repo path is missing"
+    out="$temp_root/single-repo.out"
+
+    assert_protocol_field "$out" "RESULT" "success"
+    assert_protocol_field "$out" "REVIEW_RESULT" "passed"
+    assert_protocol_field "$out" "STATE" "DONE"
     rm -rf "$temp_root"
 }
 
@@ -117,7 +112,7 @@ test_workspace_coding_review_produces_single_report() {
 
     (
         cd "$workspace"
-        FAKE_CODE_REVIEW_RESULT=passed run_with_fake_coding_review_agents "$temp_root" bash "$executor" ws-report >"$temp/report.out"
+        FAKE_CODE_REVIEW_RESULT=passed run_with_fake_coding_review_agents "$temp_root" bash "$executor" ws-report >"$temp_root/review.out"
     )
     out="$temp_root/review.out"
 
@@ -132,5 +127,5 @@ test_workspace_coding_review_produces_single_report() {
 
 test_workspace_coding_review_detects_declared_repo_changes
 test_workspace_coding_review_fails_when_only_undeclared_repos_change
-test_workspace_coding_review_fails_when_declared_repo_missing
+test_workspace_coding_review_single_declared_repo
 test_workspace_coding_review_produces_single_report

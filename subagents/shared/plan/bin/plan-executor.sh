@@ -187,8 +187,31 @@ ensure_project_root_context() {
 
 validate_installed_resources
 
-escape_sed_replacement() {
-    printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
+render_plan_template_content() {
+    local requirement_name="$1"
+    local requirement_text="$2"
+    AI_FLOW_TEMPLATE_REQUIREMENT_NAME="$requirement_name" \
+    AI_FLOW_TEMPLATE_SLUG="$SLUG" \
+    AI_FLOW_TEMPLATE_DATE="$(date +%Y-%m-%d)" \
+    AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL="需求描述" \
+    AI_FLOW_TEMPLATE_REQUIREMENT_TEXT="$requirement_text" \
+    python3 - "$TEMPLATE" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+replacements = {
+    "{需求名称}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_NAME"],
+    "{需求简称}": os.environ["AI_FLOW_TEMPLATE_SLUG"],
+    "{YYYY-MM-DD}": os.environ["AI_FLOW_TEMPLATE_DATE"],
+    "{需求文档/口头描述/Jira 等}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL"],
+    "{原始需求原文}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_TEXT"],
+}
+for needle, value in replacements.items():
+    text = text.replace(needle, value)
+sys.stdout.write(text)
+PY
 }
 
 render_prompt_template() {
@@ -1101,13 +1124,7 @@ if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
         fail_protocol "关联计划文件不存在: $PLAN_FILE" "failed"
     }
     REQUIREMENT=$(extract_requirement_from_plan "$PLAN_FILE")
-    TEMPLATE_CONTENT=$(sed \
-        -e "s/{需求名称}/$(escape_sed_replacement "$PLAN_TITLE")/g" \
-        -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
-        -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
-        -e "s#{需求文档/口头描述/Jira 等}#需求描述#g" \
-        -e "s/{原始需求原文}/$(escape_sed_replacement "$REQUIREMENT")/g" \
-        "$TEMPLATE")
+    TEMPLATE_CONTENT=$(render_plan_template_content "$PLAN_TITLE" "$REQUIREMENT")
     PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
     PLAN_REVIEW_ITEMS_FOR_PROMPT=""
     REVIEW_PROMPT=$(render_prompt_template "$PLAN_REVIEW_PROMPT_TEMPLATE")
@@ -1306,13 +1323,7 @@ fi
 DETECT_STACK="${FRAMEWORKS%, }"
 [ -z "$DETECT_STACK" ] && DETECT_STACK="未检测到明确技术栈"
 
-TEMPLATE_CONTENT=$(sed \
-    -e "s/{需求名称}/$(escape_sed_replacement "$REQUIREMENT")/g" \
-    -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
-    -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
-    -e "s#{需求文档/口头描述/Jira 等}#需求描述#g" \
-    -e "s/{原始需求原文}/$(escape_sed_replacement "$REQUIREMENT")/g" \
-    "$TEMPLATE")
+TEMPLATE_CONTENT=$(render_plan_template_content "$REQUIREMENT" "$REQUIREMENT")
 
 if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
     local_review_items=$(mktemp)

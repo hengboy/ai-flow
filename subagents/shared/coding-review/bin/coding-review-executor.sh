@@ -17,12 +17,37 @@ AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
 REVIEW_OPENCODE_MODEL="${AI_FLOW_REVIEW_OPENCODE_MODEL:-zhipuai-coding-plan/glm-5.1}"
+WORKSPACE_ROOT=""
+IS_WORKSPACE_MODE=0
+WORKSPACE_REPOS=()    # parallel arrays: _IDS and _PATHS
+WORKSPACE_REPO_IDS=()
+WORKSPACE_REPO_PATHS=()
 PROTOCOL_ARTIFACT="none"
 PROTOCOL_STATE="none"
 PROTOCOL_NEXT="none"
 PROTOCOL_REVIEW_RESULT="failed"
 PROTOCOL_SUMMARY=""
 PROTOCOL_EMITTED=0
+
+detect_workspace_context() {
+    if [ ! -f "$PROJECT_DIR/.ai-flow/workspace.json" ]; then
+        return 1
+    fi
+    IS_WORKSPACE_MODE=1
+    WORKSPACE_ROOT="$PROJECT_DIR"
+    while IFS=$'\t' read -r repo_id repo_path; do
+        WORKSPACE_REPO_IDS+=("$repo_id")
+        WORKSPACE_REPO_PATHS+=("$repo_path")
+    done < <(python3 - "$PROJECT_DIR/.ai-flow/workspace.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+for repo in data.get("repos", []):
+    print(f"{repo['id']}\t{repo['path']}")
+PY
+    )
+    return 0
+}
+detect_workspace_context || true
 
 emit_current_protocol() {
     PROTOCOL_EMITTED=1
@@ -124,7 +149,7 @@ render_adhoc_template() {
 render_adhoc_prompt() {
     local template_content="$1"
     AI_FLOW_REVIEW_SCOPE_GUIDANCE="这是 adhoc review：没有绑定 slug 和实施计划，只基于当前 Git 未提交改动审查正确性、回归风险、验证证据和范围控制。" \
-    AI_FLOW_HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入“4. 缺陷清单”，并同步更新“6. 缺陷修复追踪”。\n6. 对于独立模式，没有上一轮状态上下文；仅基于当前工作区给出结论。' \
+    AI_FLOW_HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入"4. 缺陷清单"，并同步更新"6. 缺陷修复追踪"。\n6. 对于独立模式，没有上一轮状态上下文；仅基于当前工作区给出结论。' \
     AI_FLOW_PLAN_CONTENT="独立模式：无绑定 slug，无状态文件，无计划文档。本轮仅审查当前 Git 未提交改动，并在 2.1 中记录真正需要确认或回退的计划外变更。" \
     AI_FLOW_HISTORY_CONTEXT="" \
     AI_FLOW_TEMPLATE_CONTENT="$template_content" \
@@ -132,6 +157,7 @@ render_adhoc_prompt() {
     AI_FLOW_REVIEW_MODE="adhoc" \
     AI_FLOW_CURRENT_ROUND="1" \
     AI_FLOW_PLAN_TITLE="独立改动" \
+    AI_FLOW_WORKSPACE_CONTEXT="" \
     python3 - "$PROMPT_TEMPLATE" <<'PY'
 import os
 import sys
@@ -148,6 +174,7 @@ replacements = {
     "__AI_FLOW_REVIEW_MODE__": os.environ["AI_FLOW_REVIEW_MODE"],
     "__AI_FLOW_CURRENT_ROUND__": os.environ["AI_FLOW_CURRENT_ROUND"],
     "__AI_FLOW_PLAN_TITLE__": os.environ["AI_FLOW_PLAN_TITLE"],
+    "__AI_FLOW_WORKSPACE_CONTEXT__": os.environ.get("AI_FLOW_WORKSPACE_CONTEXT", ""),
 }
 for needle, value in replacements.items():
     text = text.replace(needle, value)
@@ -309,6 +336,14 @@ is_codex_unavailable_error() {
 
 render_prompt_template() {
     local prompt_template="$1"
+    local workspace_ctx=""
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
+        workspace_ctx="workspace"
+        local i
+        for i in "${!WORKSPACE_REPO_IDS[@]}"; do
+            workspace_ctx="${workspace_ctx}; repo=${WORKSPACE_REPO_IDS[$i]} path=${WORKSPACE_REPO_PATHS[$i]}"
+        done
+    fi
     AI_FLOW_REVIEW_SCOPE_GUIDANCE="$REVIEW_SCOPE_GUIDANCE" \
     AI_FLOW_HISTORY_RULES="$HISTORY_RULES" \
     AI_FLOW_PLAN_CONTENT="$PLAN_CONTENT" \
@@ -318,6 +353,7 @@ render_prompt_template() {
     AI_FLOW_REVIEW_MODE="$REVIEW_MODE" \
     AI_FLOW_CURRENT_ROUND="$CURRENT_ROUND" \
     AI_FLOW_PLAN_TITLE="$PLAN_TITLE" \
+    AI_FLOW_WORKSPACE_CONTEXT="$workspace_ctx" \
     python3 - "$prompt_template" <<'PY'
 import os
 import sys
@@ -334,6 +370,7 @@ replacements = {
     "__AI_FLOW_REVIEW_MODE__": os.environ["AI_FLOW_REVIEW_MODE"],
     "__AI_FLOW_CURRENT_ROUND__": os.environ["AI_FLOW_CURRENT_ROUND"],
     "__AI_FLOW_PLAN_TITLE__": os.environ["AI_FLOW_PLAN_TITLE"],
+    "__AI_FLOW_WORKSPACE_CONTEXT__": os.environ.get("AI_FLOW_WORKSPACE_CONTEXT", ""),
 }
 for needle, value in replacements.items():
     text = text.replace(needle, value)
@@ -374,22 +411,43 @@ state_field_optional() {
 }
 
 ensure_reviewable_git_changes() {
-    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        fail_protocol "当前目录不是 Git 仓库，无法确认审查范围"
-    fi
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
+        # Workspace mode: check each declared repo for changes
+        local any_changes=0
+        local i
+        for i in "${!WORKSPACE_REPO_PATHS[@]}"; do
+            local repo_path="${WORKSPACE_REPO_PATHS[$i]}"
+            local repo_id="${WORKSPACE_REPO_IDS[$i]}"
+            if ! git -C "$WORKSPACE_ROOT/$repo_path" rev-parse --show-toplevel >/dev/null 2>&1; then
+                fail_protocol "声明的仓库 '${repo_id}' ($repo_path) 不是有效的 Git 仓库"
+            fi
+            local changes
+            changes=$(git -C "$WORKSPACE_ROOT/$repo_path" status --porcelain --untracked-files=all 2>/dev/null || true)
+            if [ -n "$changes" ]; then
+                any_changes=1
+            fi
+        done
+        if [ "$any_changes" -eq 0 ]; then
+            fail_protocol "所有声明的仓库均无可审查的 Git 变更"
+        fi
+    else
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            fail_protocol "当前目录不是 Git 仓库，无法确认审查范围"
+        fi
 
-    local relevant_changes
-    relevant_changes=$(git status --porcelain --untracked-files=all | awk '
-        {
-            path = substr($0, 4)
-            if (path ~ /^\.ai-flow\//) {
-                next
+        local relevant_changes
+        relevant_changes=$(git status --porcelain --untracked-files=all | awk '
+            {
+                path = substr($0, 4)
+                if (path ~ /^\.ai-flow\//) {
+                    next
+                }
+                print
             }
-            print
-        }
-    ')
-    if [ -z "$relevant_changes" ]; then
-        fail_protocol "没有可审查的 Git 变更（已忽略 .ai-flow/ 元数据）"
+        ')
+        if [ -z "$relevant_changes" ]; then
+            fail_protocol "没有可审查的 Git 变更（已忽略 .ai-flow/ 元数据）"
+        fi
     fi
 }
 
@@ -890,7 +948,7 @@ case "$REVIEW_MODE:$CURRENT_ROUND" in
 esac
 
 HISTORY_CONTEXT=""
-HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入“4. 缺陷清单”，并同步更新“6. 缺陷修复追踪”。\n6. “3.6 缺陷族覆盖度”至少要覆盖 plan 中与本次变更相关的缺陷族，并说明已覆盖 / 未覆盖 / 需人工验证。'
+HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入"4. 缺陷清单"，并同步更新"6. 缺陷修复追踪"。\n6. "3.6 缺陷族覆盖度"至少要覆盖 plan 中与本次变更相关的缺陷族，并说明已覆盖 / 未覆盖 / 需人工验证。'
 if [ -n "$PREV_REVIEW" ] && [ -f "$PREV_REVIEW" ]; then
     PREV_DEFECTS=$(extract_defect_section "$PREV_REVIEW")
     PREV_TRACKING=$(extract_tracking_section "$PREV_REVIEW")
@@ -906,12 +964,12 @@ $PREV_TRACKING
 EOF
 )
     HISTORY_RULES=$(cat <<'EOF'
-5. 必须同时参考上一轮“4. 缺陷清单”和“6. 缺陷修复追踪”：
+5. 必须同时参考上一轮"4. 缺陷清单"和"6. 缺陷修复追踪"：
    - 已修复项要重新验证；修复无效或不完整时，必须改回 [待修复] 并重新列入缺陷清单
    - Minor 建议未处理时保持 [可选]；只有严重度升级为 Critical/Important 时才改为 [待修复]
-   - 上一轮涉及的缺陷族，本轮必须在“3.6 缺陷族覆盖度”中逐项写出已覆盖 / 未覆盖 / 需人工验证及原因
+   - 上一轮涉及的缺陷族，本轮必须在"3.6 缺陷族覆盖度"中逐项写出已覆盖 / 未覆盖 / 需人工验证及原因
    - 不要只继承 DEF 编号状态，要继承上一轮严重缺陷的正文语义、影响面和修复追踪
-6. 仅列出当前仍未修复的缺陷和新增缺陷到“4. 缺陷清单”；“6. 缺陷修复追踪”需要保留并更新历史条目。
+6. 仅列出当前仍未修复的缺陷和新增缺陷到"4. 缺陷清单"；"6. 缺陷修复追踪"需要保留并更新历史条目。
 EOF
 )
 fi

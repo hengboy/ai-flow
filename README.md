@@ -135,7 +135,8 @@ ai-flow/
 │   └── scripts/
 │       ├── flow-change.sh
 │       ├── flow-state.sh
-│       └── flow-status.sh
+│       ├── flow-status.sh
+│       └── flow-workspace.sh
 ├── skills/
 │   ├── ai-flow-plan/
 │   │   └── SKILL.md
@@ -160,6 +161,7 @@ ai-flow/
 │   │   └── AGENT.md
 │   └── shared/
 │       ├── lib/agent-common.sh
+│       ├── lib/workspace-common.sh
 │       ├── plan/
 │       │   ├── bin/plan-executor.sh
 │       │   ├── prompts/
@@ -304,7 +306,70 @@ AI Flow 支持单仓模式和基于 workspace manifest 的多仓模式；
 - 单仓模式下，一个 `slug` 只属于一个 Git 仓库根目录。
 - 多仓模式下，一个 `slug` 只属于一个 workspace 根目录，不能再在子仓重复创建同名 flow。
 
+### Workspace manifest 格式
+
+`.ai-flow/workspace.json` 定义了 workspace 的元数据和声明的仓库列表：
+
+```json
+{
+  "schema_version": 1,
+  "name": "my-workspace",
+  "repos": [
+    { "id": "frontend", "path": "packages/frontend" },
+    { "id": "backend", "path": "services/api" }
+  ]
+}
+```
+
+字段约束：
+
+- `schema_version`：当前固定为 1
+- `name`：工作区名称，非空字符串
+- `repos`：非空数组，每个条目必须有 `id`（小写 kebab-case，唯一）和 `path`（相对于 workspace 根目录）
+- 每个声明的 path 必须是有效的 Git 仓库根目录
+
+### 状态 schema v2
+
+状态文件 `schema_version` 已升级为 2，新增了 `execution_scope` 字段：
+
+```json
+{
+  "schema_version": 2,
+  "execution_scope": {
+    "mode": "single_repo",
+    "workspace_file": null,
+    "repos": []
+  }
+}
+```
+
+workspace 模式下 `execution_scope` 示例：
+
+```json
+{
+  "execution_scope": {
+    "mode": "workspace",
+    "workspace_file": ".ai-flow/workspace.json",
+    "repos": [
+      { "id": "frontend", "path": "packages/frontend", "git_root": "packages/frontend" },
+      { "id": "backend", "path": "services/api", "git_root": "services/api" }
+    ]
+  }
+}
+```
+
+旧状态（schema_version 1）可通过 `flow-state.sh normalize` 自动注入 `execution_scope.mode=single_repo`。
+
 ## Runtime 契约
+
+### `flow-workspace.sh`
+
+Workspace manifest 校验与查询子命令：
+
+- `detect-root`：向上查找包含 `.ai-flow/workspace.json` 的目录
+- `validate-manifest`：校验 schema_version、name、repos 数组
+- `list-repos`：以制表符分隔输出 repo id / path
+- `repo-git-root`：获取指定 repo 的 git rev-parse --show-toplevel
 
 ### `flow-state.sh`
 
@@ -442,6 +507,22 @@ bash tests/run.sh
   - 无 Git 变更拒绝
   - root-cause gate
   - fallback 到 OpenCode
+- `tests/test_runtime_workspace_state.sh`
+  - workspace 模式 state 创建与 manifest 校验
+  - 旧状态 normalize 注入 `execution_scope`
+  - 无 workspace manifest 时默认单仓模式
+- `tests/test_runtime_workspace_status.sh`
+  - workspace 模式 status 展示工作区与 repo 清单
+  - 接受 workspace 根目录无 git
+- `tests/test_runtime_workspace_change.sh`
+  - workspace 模式下 change 更新 workspace 级 plan
+- `tests/test_subagent_workspace_plan.sh`
+  - workspace plan 生成与 artifact 落在 workspace 根目录
+- `tests/test_subagent_workspace_coding_review.sh`
+  - 检测声明的 repo 变更
+  - 拒绝仅有未声明 repo 变更
+  - 单一声明 repo 场景
+  - 多个 repo 聚合为一份 review 报告
 
 `tests/lib/testkit.bash` 提供新架构专用夹具和 helper：
 
