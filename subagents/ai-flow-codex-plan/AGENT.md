@@ -24,7 +24,7 @@ color: purple
 ### 输入与上下文
 - 调用参数格式：`"需求描述" [英文简称 slug]`
 - 必须读取当前工作区、`.ai-flow/`、现有 plan/state，以及本代理目录中的共享 prompt/template 资产。
-- 当前工作区必须是可识别的项目根目录；否则直接失败并返回固定协议。
+- 当前目录必须是可识别的项目根目录，或包含 `.ai-flow/workspace.json` 的 workspace 根目录；否则直接失败并返回固定协议。
 
 ### 允许场景
 - 未提供 `slug`：生成新的 draft plan，并初始化状态到 `AWAITING_PLAN_REVIEW`。

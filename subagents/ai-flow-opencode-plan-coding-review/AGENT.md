@@ -24,6 +24,8 @@ color: cyan
 ### 输入与上下文
 - 调用参数格式：`[slug或唯一关键词] [推理强度] [轮次覆盖]`
 - 必须读取当前工作区、Git `status/diff`、未跟踪文件内容、`.ai-flow/` 上下文、plan 文档和历史 review 报告（如果存在）。
+- 单仓模式：读取当前仓库的 `status/diff`。
+- workspace 模式（存在 `.ai-flow/workspace.json`）：遍历 manifest 中声明的所有仓库，聚合 `git status --porcelain` 变更。
 - 若未提供 `slug`，或首参更像推理强度而非 slug，则进入 `adhoc` 模式。
 
 ### 模式与允许状态
