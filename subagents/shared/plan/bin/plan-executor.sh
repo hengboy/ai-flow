@@ -51,20 +51,21 @@ fail_protocol() {
 
 trap 'rc=$?; if [ "$rc" -ne 0 ] && [ "$PROTOCOL_EMITTED" -eq 0 ]; then emit_protocol "failed" "$PROTOCOL_ARTIFACT" "$PROTOCOL_STATE" "$PROTOCOL_NEXT" "${PROTOCOL_SUMMARY:-执行失败}" "${PROTOCOL_REVIEW_RESULT:-}"; fi' EXIT
 
+# 模型选择由执行器内部默认值和降级逻辑统一决定；不再接受调用方显式覆盖。
 if [ "${1:-}" = "--internal-plan-review" ]; then
     INTERNAL_PLAN_REVIEW=1
     MATCH_KEYWORD="${2:-}"
-    MODEL="${3:-$(default_model_for_engine "$AGENT_ENGINE")}"
+    MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
     if [ -z "$MATCH_KEYWORD" ]; then
-        fail_protocol "用法: plan-review-executor.sh {slug或唯一关键词} [模型名]" "failed"
+        fail_protocol "用法: plan-review-executor.sh {slug或唯一关键词}" "failed"
     fi
 else
     if [ -z "${1:-}" ]; then
-        fail_protocol "用法: plan-executor.sh \"需求描述\" [英文简称] [模型名]" ""
+        fail_protocol "用法: plan-executor.sh \"需求描述\" [英文简称]" ""
     fi
     REQUIREMENT="$1"
     SLUG="${2:-}"
-    MODEL="${3:-$(default_model_for_engine "$AGENT_ENGINE")}"
+    MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
 fi
 
 require_file() {
@@ -539,7 +540,7 @@ validate_plan_structure() {
                 errors="${errors}计划中不得为状态文件设计自定义 schema 字段: $field_marker\n"
             fi
         done
-        if grep -qE 'TBD|TODO|后续补充|类似上一步|适当处理异常|根据情况处理' "$plan_file"; then
+        if plan_contains_disallowed_text "$plan_file"; then
             errors="${errors}包含不可执行描述或临时标记\n"
         fi
         if ! python3 - "$plan_file" "$REQUIREMENT" <<'PY'
@@ -1026,6 +1027,28 @@ if not match:
     raise SystemExit(0)
 items = match.group(1).strip()
 print(items or "- 待审核")
+PY
+}
+
+plan_contains_disallowed_text() {
+    local plan_file="$1"
+    python3 - "$plan_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+text = re.sub(r"```.*?```", "", text, flags=re.S)
+text = re.sub(r"`[^`\n]*`", "", text)
+patterns = (
+    r"\bTBD\b",
+    r"\bTODO\b",
+    "后续补充",
+    "类似上一步",
+    "适当处理异常",
+    "根据情况处理",
+)
+raise SystemExit(0 if any(re.search(pattern, text) for pattern in patterns) else 1)
 PY
 }
 

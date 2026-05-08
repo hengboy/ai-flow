@@ -155,9 +155,9 @@ sys.stdout.write(text)
 PY
 }
 
-looks_like_model_or_reasoning() {
+looks_like_reasoning() {
     case "${1:-}" in
-        gpt-*|o*|glm*|zhipuai-coding-plan/*|high|xhigh|medium|low|minimal|max)
+        high|xhigh|medium|low|minimal|max)
             return 0
             ;;
         *)
@@ -166,12 +166,65 @@ looks_like_model_or_reasoning() {
     esac
 }
 
+looks_like_model_override() {
+    case "${1:-}" in
+        gpt-*|o*|glm*|zhipuai-coding-plan/*|qwen*|claude*|gemini*|deepseek*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+apply_review_arg_compat() {
+    local first_extra="${1:-}"
+    local second_extra="${2:-}"
+    local third_extra="${3:-}"
+
+    if [ -z "$first_extra" ]; then
+        return 0
+    fi
+
+    if looks_like_reasoning "$first_extra"; then
+        REASONING="$first_extra"
+        ROUND_OVERRIDE="${second_extra:-}"
+        return 0
+    fi
+
+    if looks_like_model_override "$first_extra"; then
+        if looks_like_reasoning "$second_extra"; then
+            REASONING="$second_extra"
+            ROUND_OVERRIDE="${third_extra:-}"
+        else
+            ROUND_OVERRIDE="${second_extra:-}"
+        fi
+        return 0
+    fi
+
+    ROUND_OVERRIDE="$first_extra"
+}
+
+apply_adhoc_arg_compat() {
+    local first_extra="${1:-}"
+    local second_extra="${2:-}"
+
+    if looks_like_reasoning "$first_extra"; then
+        REASONING="$first_extra"
+        return 0
+    fi
+
+    if looks_like_model_override "$first_extra" && looks_like_reasoning "$second_extra"; then
+        REASONING="$second_extra"
+    fi
+}
+
 derive_result() {
     local report_file="$1"
     local critical minor todo
     critical=$(grep -cE '^\| (DEF-[0-9]+|SUG-[0-9]+) \| (Critical|Important) ' "$report_file" || true)
     minor=$(grep -cE '^\| (DEF-[0-9]+|SUG-[0-9]+) \| Minor ' "$report_file" || true)
-    todo=$(grep -c '\[待修复\]' "$report_file" || true)
+    todo=$(count_issue_status_marker "$report_file" "[待修复]")
     if [ "$critical" -gt 0 ] || [ "$todo" -gt 0 ]; then
         echo "failed"
     elif [ "$minor" -gt 0 ]; then
@@ -179,6 +232,30 @@ derive_result() {
     else
         echo "passed"
     fi
+}
+
+count_issue_status_marker() {
+    local report_file="$1"
+    local marker="$2"
+    python3 - "$report_file" "$marker" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+pattern = re.compile(r'^\| [A-Z]+[0-9-]+ \|')
+marker = sys.argv[2]
+count = 0
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    if pattern.match(line) and marker in line:
+        count += 1
+print(count)
+PY
+}
+
+has_issue_status_marker() {
+    local report_file="$1"
+    local marker="$2"
+    [ "$(count_issue_status_marker "$report_file" "$marker")" -gt 0 ]
 }
 
 default_reasoning_for_engine() {
@@ -590,9 +667,12 @@ PY
 }
 
 REQUEST_KEY="${1:-}"
-MODEL="${2:-$(default_model_for_engine "$AGENT_ENGINE")}"
-REASONING="${3:-$(default_reasoning_for_engine "$AGENT_ENGINE")}"
-ROUND_OVERRIDE="${4:-}"
+MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
+REASONING="$(default_reasoning_for_engine "$AGENT_ENGINE")"
+ROUND_OVERRIDE=""
+ARG2="${2:-}"
+ARG3="${3:-}"
+ARG4="${4:-}"
 DATE_DIR="$(date +%Y%m%d)"
 STATE_FILE=""
 ADHOC_MODE=0
@@ -604,10 +684,9 @@ if [ -n "$REQUEST_KEY" ]; then
     done < <(find "$FLOW_DIR/state" -name "*${REQUEST_KEY}*.json" -type f -print0 2>/dev/null)
 
     if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
-        if looks_like_model_or_reasoning "$REQUEST_KEY"; then
+        if looks_like_reasoning "$REQUEST_KEY" || looks_like_model_override "$REQUEST_KEY"; then
             ADHOC_MODE=1
-            MODEL="$REQUEST_KEY"
-            REASONING="${2:-$(default_reasoning_for_engine "$AGENT_ENGINE")}"
+            apply_adhoc_arg_compat "$REQUEST_KEY" "$ARG2"
         else
             fail_protocol "找不到匹配 slug/关键词 '$REQUEST_KEY' 的状态文件"
         fi
@@ -615,6 +694,7 @@ if [ -n "$REQUEST_KEY" ]; then
         fail_protocol "关键词 '$REQUEST_KEY' 匹配到多个状态文件，请使用精确 slug"
     else
         STATE_FILE="${MATCHED_STATES[0]}"
+        apply_review_arg_compat "$ARG2" "$ARG3" "$ARG4"
     fi
 else
     ADHOC_MODE=1
@@ -996,10 +1076,10 @@ if ! optional_marker_error=$(validate_optional_markers 2>&1); then
 fi
 
 if [ "$META_RESULT" = "passed" ]; then
-    if grep -q '\[待修复\]' "$REPORT_FILE"; then
+    if has_issue_status_marker "$REPORT_FILE" "[待修复]"; then
         ERRORS="${ERRORS}审查结果为 passed，但报告仍包含 [待修复] 项\n"
     fi
-    if grep -q '\[可选\]' "$REPORT_FILE"; then
+    if has_issue_status_marker "$REPORT_FILE" "[可选]"; then
         ERRORS="${ERRORS}审查结果为 passed，但报告仍包含 [可选] 的 Minor 建议\n"
     fi
     if printf '%s\n' "$CONCLUSION_SECTION" | grep -qE '^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*\*\*需要修复\*\*'; then
@@ -1016,13 +1096,13 @@ if [ "$META_RESULT" = "passed_with_notes" ]; then
     if grep -qE '\| (DEF-[0-9]+|SUG-[0-9]+) \| (Critical|Important)' "$REPORT_FILE"; then
         ERRORS="${ERRORS}审查结果为 passed_with_notes，但报告仍存在 Critical/Important 缺陷\n"
     fi
-    if grep -q '\[待修复\]' "$REPORT_FILE"; then
+    if has_issue_status_marker "$REPORT_FILE" "[待修复]"; then
         ERRORS="${ERRORS}审查结果为 passed_with_notes，但报告仍包含 [待修复] 项\n"
     fi
     if ! grep -qE '^\| SUG-[0-9]+ \| Minor ' "$REPORT_FILE"; then
         ERRORS="${ERRORS}审查结果为 passed_with_notes，但报告缺少 Minor 建议项\n"
     fi
-    if ! grep -q '\[可选\]' "$REPORT_FILE"; then
+    if ! has_issue_status_marker "$REPORT_FILE" "[可选]"; then
         ERRORS="${ERRORS}审查结果为 passed_with_notes，但报告缺少 [可选] 的 Minor 状态标记\n"
     fi
     if printf '%s\n' "$CONCLUSION_SECTION" | grep -qE '^[[:space:]]*-[[:space:]]*\[[xX]\][[:space:]]*\*\*需要修复\*\*'; then
@@ -1032,7 +1112,7 @@ if [ "$META_RESULT" = "passed_with_notes" ]; then
         ERRORS="${ERRORS}审查结果为 passed_with_notes，但审查结论未勾选通过（附建议）\n"
     fi
 fi
-if [ "$META_RESULT" = "failed" ] && ! grep -qE '\[待修复\]|DEF-[0-9]+|SUG-[0-9]+' "$REPORT_FILE"; then
+if [ "$META_RESULT" = "failed" ] && ! grep -qE '^\| [A-Z]+[0-9-]+ \|' "$REPORT_FILE" && ! has_issue_status_marker "$REPORT_FILE" "[待修复]"; then
     ERRORS="${ERRORS}审查结果为 failed，但缺少缺陷或追踪标记\n"
 fi
 
@@ -1050,7 +1130,7 @@ echo "    结构校验通过"
 #       只有 Minor（未处理项为 [可选]）→ passed_with_notes；无任何缺陷 → passed
 SEVERITY_CRITICAL=$(grep -cE '^\| (DEF-[0-9]+|SUG-[0-9]+) \| (Critical|Important) ' "$REPORT_FILE" || true)
 SEVERITY_MINOR=$(grep -cE '^\| (DEF-[0-9]+|SUG-[0-9]+) \| Minor ' "$REPORT_FILE" || true)
-TODO_MARKERS=$(grep -c '\[待修复\]' "$REPORT_FILE" || true)
+TODO_MARKERS=$(count_issue_status_marker "$REPORT_FILE" "[待修复]")
 
 if [ "$SEVERITY_CRITICAL" -gt 0 ] || [ "$TODO_MARKERS" -gt 0 ]; then
     DERIVED_RESULT="failed"

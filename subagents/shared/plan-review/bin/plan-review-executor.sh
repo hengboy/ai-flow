@@ -7,7 +7,7 @@ AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PLAN_EXECUTOR="$SCRIPT_DIR/plan-executor.sh"
 
 if [ -z "${1:-}" ]; then
-    echo "用法: plan-review-executor.sh {slug或唯一关键词} [模型名]" >&2
+    echo "用法: plan-review-executor.sh {slug或唯一关键词}" >&2
     exit 1
 fi
 
