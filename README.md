@@ -302,6 +302,8 @@ bash install.sh
 
 每个 agent 目录本身只靠 `AGENT.md` frontmatter 暴露定义；跨多个同类 agent 复用的 executor / prompt / template 保持在 `subagents/shared/<role>/`，安装时按角色叠加，只有通用 helper 会装到所有 agent。
 
+调用方不再向 `plan`、`plan-review`、`coding-review` executor 透传具体模型名；模型选择统一由执行器依据当前 agent、默认环境变量和 fallback 规则决定。旧链路若仍附带模型参数，执行器会忽略该覆盖。
+
 ## Skill 语义
 
 | Skill | 下一步 |
