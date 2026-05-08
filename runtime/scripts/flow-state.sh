@@ -498,6 +498,11 @@ def validate_transition_item(item: dict, previous_to, index: int) -> None:
             raise FlowError(f"transitions[{index}] 的计划审核 engine 不能为空")
         if not isinstance(item["artifacts"]["model"], str) or not item["artifacts"]["model"]:
             raise FlowError(f"transitions[{index}] 的计划审核 model 不能为空")
+    if item["event"] in {"review_passed", "review_failed", "recheck_passed", "recheck_failed"}:
+        if "engine" in item["artifacts"] and (not isinstance(item["artifacts"]["engine"], str) or not item["artifacts"]["engine"]):
+            raise FlowError(f"transitions[{index}] 的审查 engine 不能为空")
+        if "model" in item["artifacts"] and (not isinstance(item["artifacts"]["model"], str) or not item["artifacts"]["model"]):
+            raise FlowError(f"transitions[{index}] 的审查 model 不能为空")
 
 
 def validate_state(state: dict, *, expected_slug: str = None) -> None:
@@ -673,6 +678,14 @@ def cmd_create(args):
         if state is not None:
             raise FlowError(f"状态文件已存在: {state_path_for_slug(args.slug)}")
         at = now_iso()
+        artifacts: dict = {"plan_file": plan_file}
+        engine = (getattr(args, "engine", None) or "").strip()
+        model = (getattr(args, "model", None) or "").strip()
+        if engine:
+            artifacts["engine"] = engine
+        if model:
+            artifacts["model"] = model
+
         return {
             "schema_version": SCHEMA_VERSION,
             "slug": ensure_slug(args.slug),
@@ -695,7 +708,7 @@ def cmd_create(args):
                     "from": None,
                     "to": "AWAITING_PLAN_REVIEW",
                     "actor": ACTOR,
-                    "artifacts": {"plan_file": plan_file},
+                    "artifacts": artifacts,
                     "note": "",
                 }
             ],
@@ -772,6 +785,15 @@ def resolve_record_plan_review_note(flag_note, positional_note: str) -> str:
     return flag_note or positional_note
 
 
+def _add_engine_model(artifacts: dict, engine, model) -> None:
+    e = (engine or "").strip()
+    m = (model or "").strip()
+    if e:
+        artifacts["engine"] = e
+    if m:
+        artifacts["model"] = m
+
+
 def require_state(state, slug: str) -> dict:
     if state is None:
         raise FlowError(f"状态文件不存在: {state_path_for_slug(slug)}")
@@ -783,12 +805,14 @@ def cmd_start_execute(args):
         state = require_state(state, args.slug)
         if state["current_status"] != "PLANNED":
             raise FlowError(f"只有 PLANNED 可以 start-execute，当前是 {state['current_status']}")
+        artifacts: dict = {"plan_file": state["plan_file"]}
+        _add_engine_model(artifacts, getattr(args, "engine", None), getattr(args, "model", None))
         append_transition(
             state,
             event="execute_started",
             to_status="IMPLEMENTING",
             at=now_iso(),
-            artifacts={"plan_file": state["plan_file"]},
+            artifacts=artifacts,
         )
         return state
 
@@ -801,12 +825,14 @@ def cmd_finish_implementation(args):
         state = require_state(state, args.slug)
         if state["current_status"] != "IMPLEMENTING":
             raise FlowError(f"只有 IMPLEMENTING 可以 finish-implementation，当前是 {state['current_status']}")
+        artifacts: dict = {"plan_file": state["plan_file"]}
+        _add_engine_model(artifacts, getattr(args, "engine", None), getattr(args, "model", None))
         append_transition(
             state,
             event="implementation_completed",
             to_status="AWAITING_REVIEW",
             at=now_iso(),
-            artifacts={"plan_file": state["plan_file"]},
+            artifacts=artifacts,
         )
         return state
 
@@ -851,17 +877,19 @@ def cmd_record_review(args):
             "at": at,
         }
         state["active_fix"] = None
+        artifacts: dict = {
+            "mode": mode,
+            "round": round_number,
+            "result": result,
+            "report_file": report_file,
+        }
+        _add_engine_model(artifacts, getattr(args, "engine", None), getattr(args, "model", None))
         append_transition(
             state,
             event=event,
             to_status=to_status,
             at=at,
-            artifacts={
-                "mode": mode,
-                "round": round_number,
-                "result": result,
-                "report_file": report_file,
-            },
+            artifacts=artifacts,
         )
         return state
 
@@ -883,12 +911,14 @@ def cmd_start_fix(args):
             "report_file": state["last_review"]["report_file"],
             "at": at,
         }
+        artifacts: dict = {"report_file": state["active_fix"]["report_file"]}
+        _add_engine_model(artifacts, getattr(args, "engine", None), getattr(args, "model", None))
         append_transition(
             state,
             event="fix_started",
             to_status="FIXING_REVIEW",
             at=at,
-            artifacts={"report_file": state["active_fix"]["report_file"]},
+            artifacts=artifacts,
         )
         return state
 
@@ -903,12 +933,14 @@ def cmd_finish_fix(args):
             raise FlowError(f"只有 FIXING_REVIEW 可以 finish-fix，当前是 {state['current_status']}")
         report_file = state["active_fix"]["report_file"]
         state["active_fix"] = None
+        artifacts: dict = {"report_file": report_file}
+        _add_engine_model(artifacts, getattr(args, "engine", None), getattr(args, "model", None))
         append_transition(
             state,
             event="fix_completed",
             to_status="AWAITING_REVIEW",
             at=now_iso(),
-            artifacts={"report_file": report_file},
+            artifacts=artifacts,
         )
         return state
 
@@ -1037,6 +1069,8 @@ def build_parser():
     create.add_argument("--plan-file", required=True)
     create.add_argument("--scope-mode", choices=["single_repo", "workspace"])
     create.add_argument("--workspace-file")
+    create.add_argument("--engine")
+    create.add_argument("--model")
     create.set_defaults(func=cmd_create)
 
     record_plan_review = subparsers.add_parser("record-plan-review")
@@ -1054,10 +1088,14 @@ def build_parser():
 
     start_execute = subparsers.add_parser("start-execute")
     start_execute.add_argument("slug")
+    start_execute.add_argument("--engine")
+    start_execute.add_argument("--model")
     start_execute.set_defaults(func=cmd_start_execute)
 
     finish_implementation = subparsers.add_parser("finish-implementation")
     finish_implementation.add_argument("slug")
+    finish_implementation.add_argument("--engine")
+    finish_implementation.add_argument("--model")
     finish_implementation.set_defaults(func=cmd_finish_implementation)
 
     record_review = subparsers.add_parser("record-review")
@@ -1065,14 +1103,20 @@ def build_parser():
     record_review.add_argument("--mode", required=True, choices=sorted(REVIEW_MODES))
     record_review.add_argument("--result", required=True, choices=sorted(REVIEW_RESULTS))
     record_review.add_argument("--report-file", required=True)
+    record_review.add_argument("--engine")
+    record_review.add_argument("--model")
     record_review.set_defaults(func=cmd_record_review)
 
     start_fix = subparsers.add_parser("start-fix")
     start_fix.add_argument("slug")
+    start_fix.add_argument("--engine")
+    start_fix.add_argument("--model")
     start_fix.set_defaults(func=cmd_start_fix)
 
     finish_fix = subparsers.add_parser("finish-fix")
     finish_fix.add_argument("slug")
+    finish_fix.add_argument("--engine")
+    finish_fix.add_argument("--model")
     finish_fix.set_defaults(func=cmd_finish_fix)
 
     show = subparsers.add_parser("show")

@@ -1,6 +1,6 @@
 ---
 name: ai-flow-opencode-plan-coding-review
-description: "使用此代理审查计划内或 adhoc 代码变更；完整审查、报告校验、结果推导和状态推进由共享 coding-review executor 负责，代理本体只暴露调用契约和固定摘要协议。"
+description: "使用此代理审查计划内代码变更；完整审查、报告校验、结果推导和状态推进由共享 coding-review executor 负责，代理本体只暴露调用契约和固定摘要协议。"
 tools: Bash
 model: inherit
 color: cyan
@@ -22,16 +22,15 @@ color: cyan
 ## 调用契约
 
 ### 输入与上下文
-- 调用参数格式：`[slug或唯一关键词] [推理强度] [轮次覆盖]`
+- 调用参数格式：`<slug> [推理强度] [轮次覆盖]`，`slug` 为必填项。
 - 必须读取当前工作区、Git `status/diff`、未跟踪文件内容、`.ai-flow/` 上下文、plan 文档和历史 review 报告（如果存在）。
 - 单仓模式：读取当前仓库的 `status/diff`。
 - workspace 模式（存在 `.ai-flow/workspace.json`）：遍历 manifest 中声明的所有仓库，聚合 `git status --porcelain` 变更。
-- 若未提供 `slug`，或首参更像推理强度而非 slug，则进入 `adhoc` 模式。
+- 未提供 `slug` 时必须报错退出，不得进入任何降级模式。
 
 ### 模式与允许状态
 - `regular review`：仅允许绑定 `slug` 且当前状态为 `AWAITING_REVIEW`。
 - `recheck review`：仅允许绑定 `slug` 且当前状态为 `DONE`。
-- `adhoc review`：不绑定状态文件，只基于当前 Git 未提交变更生成报告，`STATE` 固定为 `none`。
 - 非上述状态、slug 匹配失败或轮次与状态文件不一致时：直接失败。
 
 ### 前置条件
@@ -45,7 +44,7 @@ color: cyan
 3. 必须生成完整审查报告，并由执行器校验 `1.2 定向验证执行证据`、`3.6 缺陷族覆盖度`、缺陷严重级别和可选标记语义。
 4. 非文档代码变更时，报告必须包含实际执行过的定向验证证据，或明确说明未执行原因与人工验证边界。
 5. `REVIEW_RESULT` 以执行器根据报告严重度重新推导的结果为准，不以模型自评为准。
-6. `failed` 时状态推进到 `REVIEW_FAILED`；`passed` / `passed_with_notes` 时常规审查推进到 `DONE`，再审查保持 `DONE`；`adhoc` 模式不推进状态。
+6. `failed` 时状态推进到 `REVIEW_FAILED`；`passed` / `passed_with_notes` 时常规审查推进到 `DONE`，再审查保持 `DONE`。
 7. 只返回固定摘要协议，不要返回完整审查报告正文。
 
 ### 引擎语义

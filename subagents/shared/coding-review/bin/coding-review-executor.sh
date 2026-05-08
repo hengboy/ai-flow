@@ -126,61 +126,6 @@ render_template_content() {
         "$TEMPLATE"
 }
 
-render_adhoc_template() {
-    local engine="$1"
-    local model_name="$2"
-    local reasoning="$3"
-    local tool_label="${engine} (${model_name} ${reasoning})"
-
-    sed \
-        -e "s/{需求名称}/独立改动/g" \
-        -e "s/{需求简称}/adhoc/g" \
-        -e "s/{审查模式}/adhoc/g" \
-        -e "s/{审查轮次}/1/g" \
-        -e "s/{审查结果}/passed/g" \
-        -e "s#{计划文件}#无绑定计划（独立模式）#g" \
-        -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
-        -e "s/{模型名}/${model_name}/g" \
-        -e "s/{推理强度}/${reasoning}/g" \
-        -e "s/{审查工具}/$(escape_sed_replacement "$tool_label")/g" \
-        "$TEMPLATE"
-}
-
-render_adhoc_prompt() {
-    local template_content="$1"
-    AI_FLOW_REVIEW_SCOPE_GUIDANCE="这是 adhoc review：没有绑定 slug 和实施计划，只基于当前 Git 未提交改动审查正确性、回归风险、验证证据和范围控制。" \
-    AI_FLOW_HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入"4. 缺陷清单"，并同步更新"6. 缺陷修复追踪"。\n6. 对于独立模式，没有上一轮状态上下文；仅基于当前工作区给出结论。' \
-    AI_FLOW_PLAN_CONTENT="独立模式：无绑定 slug，无状态文件，无计划文档。本轮仅审查当前 Git 未提交改动，并在 2.1 中记录真正需要确认或回退的计划外变更。" \
-    AI_FLOW_HISTORY_CONTEXT="" \
-    AI_FLOW_TEMPLATE_CONTENT="$template_content" \
-    AI_FLOW_SLUG="adhoc" \
-    AI_FLOW_REVIEW_MODE="adhoc" \
-    AI_FLOW_CURRENT_ROUND="1" \
-    AI_FLOW_PLAN_TITLE="独立改动" \
-    AI_FLOW_WORKSPACE_CONTEXT="" \
-    python3 - "$PROMPT_TEMPLATE" <<'PY'
-import os
-import sys
-from pathlib import Path
-
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-replacements = {
-    "__AI_FLOW_REVIEW_SCOPE_GUIDANCE__": os.environ["AI_FLOW_REVIEW_SCOPE_GUIDANCE"],
-    "__AI_FLOW_HISTORY_RULES__": os.environ["AI_FLOW_HISTORY_RULES"],
-    "__AI_FLOW_PLAN_CONTENT__": os.environ["AI_FLOW_PLAN_CONTENT"],
-    "__AI_FLOW_HISTORY_CONTEXT__": os.environ["AI_FLOW_HISTORY_CONTEXT"],
-    "__AI_FLOW_TEMPLATE_CONTENT__": os.environ["AI_FLOW_TEMPLATE_CONTENT"],
-    "__AI_FLOW_SLUG__": os.environ["AI_FLOW_SLUG"],
-    "__AI_FLOW_REVIEW_MODE__": os.environ["AI_FLOW_REVIEW_MODE"],
-    "__AI_FLOW_CURRENT_ROUND__": os.environ["AI_FLOW_CURRENT_ROUND"],
-    "__AI_FLOW_PLAN_TITLE__": os.environ["AI_FLOW_PLAN_TITLE"],
-    "__AI_FLOW_WORKSPACE_CONTEXT__": os.environ.get("AI_FLOW_WORKSPACE_CONTEXT", ""),
-}
-for needle, value in replacements.items():
-    text = text.replace(needle, value)
-sys.stdout.write(text)
-PY
-}
 
 looks_like_reasoning() {
     case "${1:-}" in
@@ -232,19 +177,6 @@ apply_review_arg_compat() {
     ROUND_OVERRIDE="$first_extra"
 }
 
-apply_adhoc_arg_compat() {
-    local first_extra="${1:-}"
-    local second_extra="${2:-}"
-
-    if looks_like_reasoning "$first_extra"; then
-        REASONING="$first_extra"
-        return 0
-    fi
-
-    if looks_like_model_override "$first_extra" && looks_like_reasoning "$second_extra"; then
-        REASONING="$second_extra"
-    fi
-}
 
 derive_result() {
     local report_file="$1"
@@ -724,7 +656,12 @@ if missing:
 PY
 }
 
-REQUEST_KEY="${1:-}"
+if [ -z "${1:-}" ]; then
+    echo "用法: coding-review-executor.sh <slug> [推理强度] [轮次覆盖]" >&2
+    echo "  slug 为必填项，不提供则报错退出。" >&2
+    fail_protocol "缺少必填参数 slug"
+fi
+REQUEST_KEY="$1"
 MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
 REASONING="$(default_reasoning_for_engine "$AGENT_ENGINE")"
 ROUND_OVERRIDE=""
@@ -733,98 +670,19 @@ ARG3="${3:-}"
 ARG4="${4:-}"
 DATE_DIR="$(date +%Y%m%d)"
 STATE_FILE=""
-ADHOC_MODE=0
 
-if [ -n "$REQUEST_KEY" ]; then
-    MATCHED_STATES=()
-    while IFS= read -r -d '' f; do
-        MATCHED_STATES+=("$f")
-    done < <(find "$FLOW_DIR/state" -name "*${REQUEST_KEY}*.json" -type f -print0 2>/dev/null)
+MATCHED_STATES=()
+while IFS= read -r -d '' f; do
+    MATCHED_STATES+=("$f")
+done < <(find "$FLOW_DIR/state" -name "*${REQUEST_KEY}*.json" -type f -print0 2>/dev/null)
 
-    if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
-        if looks_like_reasoning "$REQUEST_KEY" || looks_like_model_override "$REQUEST_KEY"; then
-            ADHOC_MODE=1
-            apply_adhoc_arg_compat "$REQUEST_KEY" "$ARG2"
-        else
-            fail_protocol "找不到匹配 slug/关键词 '$REQUEST_KEY' 的状态文件"
-        fi
-    elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
-        fail_protocol "关键词 '$REQUEST_KEY' 匹配到多个状态文件，请使用精确 slug"
-    else
-        STATE_FILE="${MATCHED_STATES[0]}"
-        apply_review_arg_compat "$ARG2" "$ARG3" "$ARG4"
-    fi
+if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
+    fail_protocol "找不到匹配 slug '$REQUEST_KEY' 的状态文件"
+elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
+    fail_protocol "slug '$REQUEST_KEY' 匹配到多个状态文件，请使用精确 slug"
 else
-    ADHOC_MODE=1
-    MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
-    REASONING="$(default_reasoning_for_engine "$AGENT_ENGINE")"
-fi
-
-if [ "$ADHOC_MODE" -eq 1 ]; then
-    ensure_reviewable_git_changes
-    mkdir -p "$REPORTS_DIR/adhoc/$DATE_DIR"
-    REPORT_FILE="$REPORTS_DIR/adhoc/$DATE_DIR/adhoc-review-$(date +%H%M%S).md"
-    PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$REPORT_FILE")"
-    OPENCODE_REASONING=$(map_reasoning_to_opencode_variant "$REASONING")
-    ACTIVE_ENGINE="Codex"
-    ACTIVE_MODEL="$MODEL"
-    ACTIVE_REASONING="$REASONING"
-    if [ "$AGENT_ENGINE" = "opencode" ] || [ "${AI_FLOW_REVIEW_FORCE_OPENCODE:-0}" = "1" ] || ! command -v codex >/dev/null 2>&1; then
-        ACTIVE_ENGINE="OpenCode"
-        ACTIVE_MODEL="${MODEL:-$REVIEW_OPENCODE_MODEL}"
-        ACTIVE_REASONING="${REASONING:-$(default_reasoning_for_engine opencode)}"
-    fi
-    if [ "$ACTIVE_ENGINE" = "OpenCode" ] && ! command -v opencode >/dev/null 2>&1; then
-        fail_protocol "OpenCode 不可用，无法执行 adhoc 审查"
-    fi
-
-    TEMPLATE_CONTENT=$(render_adhoc_template "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
-    REVIEW_PROMPT=$(render_adhoc_prompt "$TEMPLATE_CONTENT")
-
-    if [ "$ACTIVE_ENGINE" = "Codex" ]; then
-        stderr_file=$(mktemp)
-        set +e
-        run_codex_review_prompt "$REVIEW_PROMPT" 2>"$stderr_file"
-        rc=$?
-        set -e
-        if [ "$rc" -ne 0 ]; then
-            if is_codex_unavailable_error "$rc" "$stderr_file"; then
-                if ! command -v opencode >/dev/null 2>&1; then
-                    cat "$stderr_file" >&2
-                    rm -f "$stderr_file"
-                    fail_protocol "Codex 不可用，且 opencode 未安装，无法执行 adhoc 审查"
-                fi
-                ACTIVE_ENGINE="OpenCode"
-                ACTIVE_MODEL="$REVIEW_OPENCODE_MODEL"
-                ACTIVE_REASONING="$OPENCODE_REASONING"
-                TEMPLATE_CONTENT=$(render_adhoc_template "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
-                REVIEW_PROMPT=$(render_adhoc_prompt "$TEMPLATE_CONTENT")
-                run_opencode_review_prompt "$REVIEW_PROMPT" "$ACTIVE_MODEL" "$ACTIVE_REASONING"
-            else
-                cat "$stderr_file" >&2
-                rm -f "$stderr_file"
-                fail_protocol "Codex 执行 adhoc 审查失败，且不属于可降级场景"
-            fi
-        fi
-        rm -f "$stderr_file"
-    else
-        run_opencode_review_prompt "$REVIEW_PROMPT" "$ACTIVE_MODEL" "$ACTIVE_REASONING"
-    fi
-
-    if ! head -1 "$REPORT_FILE" | grep -qE '^# 审查报告：'; then
-        fail_protocol "adhoc 审查报告首行非法: $REPORT_FILE"
-    fi
-
-    RESULT="$(derive_result "$REPORT_FILE")"
-    PROTOCOL_REVIEW_RESULT="$RESULT"
-    PROTOCOL_STATE="none"
-    PROTOCOL_NEXT="none"
-    PROTOCOL_SUMMARY="adhoc 审查完成，结果为 [$RESULT]。"
-    if [ "$ACTIVE_ENGINE" = "OpenCode" ] && [ "$AGENT_ENGINE" = "codex" ]; then
-        PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 OpenCode。"
-    fi
-    emit_current_protocol
-    exit 0
+    STATE_FILE="${MATCHED_STATES[0]}"
+    apply_review_arg_compat "$ARG2" "$ARG3" "$ARG4"
 fi
 
 SLUG=$(basename "$STATE_FILE" .json)
@@ -1214,7 +1072,9 @@ AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" record-review \
     --slug "$SLUG" \
     --mode "$REVIEW_MODE" \
     --result "$RESULT" \
-    --report-file "$REPORT_FILE"
+    --report-file "$REPORT_FILE" \
+    --engine "$ACTIVE_ENGINE" \
+    --model "$ACTIVE_MODEL"
 UPDATED_STATUS=$(state_field "$SLUG" "current_status")
 echo "    状态已验证为 [$UPDATED_STATUS]"
 PROTOCOL_STATE="$UPDATED_STATUS"
