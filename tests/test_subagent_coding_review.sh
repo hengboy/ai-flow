@@ -82,6 +82,30 @@ test_recheck_pass_keeps_done() {
     rm -rf "$temp_root"
 }
 
+test_passed_with_notes_ignores_status_guide_text() {
+    local temp_root project runtime_script executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_coding_review_agents "$temp_root"
+    runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_REVIEW" "20260503" "demo"
+    setup_git_repo_with_change "$project"
+
+    (
+        cd "$project"
+        FAKE_REVIEW_INCLUDE_STATUS_NOTE=1 FAKE_CODE_REVIEW_RESULT=passed_with_notes run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/review-status-note.out"
+    )
+
+    assert_protocol_field "$temp_root/review-status-note.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/review-status-note.out" "REVIEW_RESULT" "passed_with_notes"
+    assert_protocol_field "$temp_root/review-status-note.out" "STATE" "DONE"
+    assert_equals "DONE" "$(state_field "$project" "demo" "current_status")"
+    rm -rf "$temp_root"
+}
+
 test_adhoc_review_without_slug() {
     local temp_root project executor today
     temp_root=$(make_temp_root)
@@ -187,9 +211,35 @@ test_root_cause_gate_and_fallback() {
     rm -rf "$temp_root"
 }
 
+test_coding_review_ignores_model_override_but_keeps_reasoning() {
+    local temp_root project runtime_script executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_coding_review_agents "$temp_root"
+    runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_REVIEW" "20260503" "demo"
+    setup_git_repo_with_change "$project"
+
+    (
+        cd "$project"
+        FAKE_CODE_REVIEW_RESULT=passed run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo qwen3.6-plus high >"$temp_root/review-model.out"
+    )
+
+    assert_protocol_field "$temp_root/review-model.out" "RESULT" "success"
+    assert_contains "$temp_root/codex.review.argv" "-m gpt-5.5"
+    assert_not_contains "$temp_root/codex.review.argv" "-m qwen3.6-plus"
+    assert_contains "$temp_root/codex.review.argv" "model_reasoning_effort=\"high\""
+    rm -rf "$temp_root"
+}
+
 test_regular_passed_with_notes_to_done
 test_regular_failed_to_review_failed
 test_recheck_pass_keeps_done
+test_passed_with_notes_ignores_status_guide_text
 test_adhoc_review_without_slug
 test_no_git_changes_rejected
 test_root_cause_gate_and_fallback
+test_coding_review_ignores_model_override_but_keeps_reasoning

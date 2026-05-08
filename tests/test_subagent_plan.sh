@@ -72,6 +72,50 @@ test_plan_fallback_once() {
     rm -rf "$temp_root"
 }
 
+test_plan_generation_ignores_explicit_model_override() {
+    local temp_root project executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+
+    (
+        cd "$project"
+        run_with_fake_plan_agents "$temp_root" bash "$executor" "新增用户权限管理模块" user-permission qwen3.6-plus >"$temp_root/plan-model.out"
+    )
+
+    assert_protocol_field "$temp_root/plan-model.out" "RESULT" "success"
+    assert_contains "$temp_root/codex.plan.argv" "-m gpt-5.5"
+    assert_not_contains "$temp_root/codex.plan.argv" "-m qwen3.6-plus"
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_allows_negative_tbd_references() {
+    local temp_root project out today executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+    today="$(date +%Y%m%d)"
+
+    (
+        cd "$project"
+        FAKE_PLAN_INCLUDE_NEGATIVE_TBD=1 run_with_fake_plan_agents "$temp_root" bash "$executor" "新增用户权限管理模块" guard-notes >"$temp_root/plan-guard.out"
+    )
+    out="$temp_root/plan-guard.out"
+
+    assert_protocol_field "$out" "RESULT" "success"
+    assert_protocol_field "$out" "ARTIFACT" ".ai-flow/plans/$today/guard-notes.md"
+    assert_file_exists "$project/.ai-flow/plans/$today/guard-notes.md"
+    assert_contains "$project/.ai-flow/plans/$today/guard-notes.md" '计划文件不得包含 `TBD`、`TODO`'
+    assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "guard-notes" "current_status")"
+    rm -rf "$temp_root"
+}
+
 test_plan_missing_runtime_fails_deterministically() {
     local temp_root project executor
     temp_root=$(make_temp_root)
@@ -94,4 +138,6 @@ test_plan_missing_runtime_fails_deterministically() {
 test_plan_generation_protocol_and_state
 test_plan_revision_after_failed_review
 test_plan_fallback_once
+test_plan_generation_ignores_explicit_model_override
+test_plan_generation_allows_negative_tbd_references
 test_plan_missing_runtime_fails_deterministically

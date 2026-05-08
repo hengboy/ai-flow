@@ -128,7 +128,31 @@ test_plan_review_fallback_to_opencode() {
     rm -rf "$temp_root"
 }
 
+test_plan_review_ignores_explicit_model_override() {
+    local temp_root project runtime_script executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
+
+    (
+        cd "$project"
+        FAKE_PLAN_REVIEW_RESULT=passed run_with_fake_plan_agents "$temp_root" bash "$executor" demo qwen3.6-plus >"$temp_root/review-model.out"
+    )
+
+    assert_protocol_field "$temp_root/review-model.out" "RESULT" "success"
+    assert_contains "$temp_root/codex.plan.argv" "-m gpt-5.5"
+    assert_not_contains "$temp_root/codex.plan.argv" "-m qwen3.6-plus"
+    assert_equals "gpt-5.5" "$(state_field "$project" "demo" "transitions.1.artifacts.model")"
+    rm -rf "$temp_root"
+}
+
 test_plan_review_passed_with_notes
 test_plan_review_failed
 test_plan_review_failed_then_passed_with_notes_returns_planned
 test_plan_review_fallback_to_opencode
+test_plan_review_ignores_explicit_model_override

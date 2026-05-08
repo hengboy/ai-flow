@@ -79,9 +79,9 @@ require_file() {
 
 default_model_for_engine() {
     case "$1" in
-        codex) echo "${AI_FLOW_CODEX_DEFAULT_MODEL:-gpt-5.4}" ;;
+        codex) echo "${AI_FLOW_CODEX_DEFAULT_MODEL:-gpt-5.5}" ;;
         opencode) echo "${AI_FLOW_OPENCODE_DEFAULT_MODEL:-zhipuai-coding-plan/glm-5.1}" ;;
-        *) echo "${AI_FLOW_DEFAULT_MODEL:-gpt-5.4}" ;;
+        *) echo "${AI_FLOW_DEFAULT_MODEL:-gpt-5.5}" ;;
     esac
 }
 

@@ -503,6 +503,7 @@ HELP
 fi
 temp_root="${FAKE_PLAN_TEMP_ROOT:?}"
 printf 'call\n' >> "$temp_root/codex.plan.calls"
+printf '%s\n' "$*" >> "$temp_root/codex.plan.argv"
 if [ "${FAKE_PLAN_CODEX_MODE:-success}" = "unavailable" ]; then
     echo "codex unavailable during plan execution" >&2
     exit 127
@@ -529,6 +530,10 @@ extract_requirement() {
     printf '%s' "${result:-测试需求}"
 }
 requirement="$(extract_requirement "$prompt_file")"
+guard_note=""
+if [ "${FAKE_PLAN_INCLUDE_NEGATIVE_TBD:-0}" = "1" ]; then
+    guard_note=$'> 校验说明：计划文件不得包含 `TBD`、`TODO`。\n'
+fi
 build_plan() {
     cat > "$out" <<PLAN
 # 实施计划：$slug
@@ -538,6 +543,7 @@ build_plan() {
 > 需求来源：测试
 > 状态文件：\`.ai-flow/state/$slug.json\`
 > 文档角色：本文件仅记录实施证据与执行步骤；流程状态以 JSON 状态文件为准。
+$guard_note
 
 ## 1. 需求概述
 
@@ -702,6 +708,7 @@ FAKE_CODEX
 set -euo pipefail
 temp_root="${FAKE_PLAN_TEMP_ROOT:?}"
 printf 'call\n' >> "$temp_root/opencode.plan.calls"
+printf '%s\n' "$*" >> "$temp_root/opencode.plan.argv"
 prompt="${*: -1}"
 prompt_file="$temp_root/opencode-plan-prompt-$(date +%s%N).txt"
 printf '%s' "$prompt" > "$prompt_file"
@@ -905,6 +912,7 @@ HELP
 fi
 temp_root="${FAKE_REVIEW_TEMP_ROOT:?}"
 printf 'call\n' >> "$temp_root/codex.review.calls"
+printf '%s\n' "$*" >> "$temp_root/codex.review.argv"
 if [ "${FAKE_REVIEW_CODEX_MODE:-success}" = "unavailable" ]; then
     echo "codex unavailable during review" >&2
     exit 127
@@ -939,6 +947,10 @@ suggest_rows=""
 tracking='| 缺陷编号 | 首次发现轮次 | 当前状态 | 修复说明 | 验证结果 |
 |----------|------------|----------|----------|----------|
 | DEF-1 | v1 | [已修复] | fixed | verified |'
+tracking_note=""
+if [ "${FAKE_REVIEW_INCLUDE_STATUS_NOTE:-0}" = "1" ]; then
+    tracking_note=$'> 每轮修复后，在此更新对应缺陷的状态。阻塞缺陷未修复时标记为 `[待修复]`，Minor 未处理时标记为 `[可选]`，已修复项标记为 `[已修复]`。\n'
+fi
 if [ "$result" = "failed" ]; then
     overall="需要修复"
     conclusion_pass="- [ ] **通过** — 所有步骤已实现，无严重缺陷"
@@ -1061,6 +1073,7 @@ $conclusion_fix
 
 ## 6. 缺陷修复追踪
 
+$tracking_note
 $tracking
 REPORT
 FAKE_CODEX
@@ -1071,6 +1084,7 @@ FAKE_CODEX
 set -euo pipefail
 temp_root="${FAKE_REVIEW_TEMP_ROOT:?}"
 printf 'call\n' >> "$temp_root/opencode.review.calls"
+printf '%s\n' "$*" >> "$temp_root/opencode.review.argv"
 prompt="${*: -1}"
 prompt_file="$temp_root/opencode-review-prompt-$(date +%s%N).txt"
 printf '%s' "$prompt" > "$prompt_file"
@@ -1094,6 +1108,10 @@ suggest_rows=""
 tracking='| 缺陷编号 | 首次发现轮次 | 当前状态 | 修复说明 | 验证结果 |
 |----------|------------|----------|----------|----------|
 | DEF-1 | v1 | [已修复] | fixed | verified |'
+tracking_note=""
+if [ "${FAKE_REVIEW_INCLUDE_STATUS_NOTE:-0}" = "1" ]; then
+    tracking_note=$'> 每轮修复后，在此更新对应缺陷的状态。阻塞缺陷未修复时标记为 `[待修复]`，Minor 未处理时标记为 `[可选]`，已修复项标记为 `[已修复]`。\n'
+fi
 if [ "$result" = "failed" ]; then
     overall="需要修复"
     conclusion_pass="- [ ] **通过** — 所有步骤已实现，无严重缺陷"
@@ -1216,6 +1234,7 @@ $conclusion_fix
 
 ## 6. 缺陷修复追踪
 
+$tracking_note
 $tracking
 REPORT
 FAKE_OPENCODE
