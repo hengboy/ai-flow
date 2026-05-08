@@ -16,7 +16,7 @@ test_workspace_status_accepts_root_without_git() {
         bash "$SOURCE_FLOW_STATUS_SCRIPT" > "$temp_root/status.out" 2>&1
     )
 
-    assert_contains "$temp_root/status.out" "AI Flow 状态"
+    assert_contains "$temp_root/status.out" "AI Flow 工作区"
     rm -rf "$temp_root"
 }
 

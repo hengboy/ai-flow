@@ -3,7 +3,32 @@
 
 set -euo pipefail
 
-PROJECT_DIR="$(pwd)"
+# Resolve flow root: prefer workspace manifest, fall back to pwd/.ai-flow
+resolve_flow_root() {
+    local candidate
+    candidate="$(pwd)"
+    while true; do
+        if [ -f "$candidate/.ai-flow/workspace.json" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+        if [ -d "$candidate/.ai-flow" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+        local parent
+        parent="$(cd "$candidate/.." 2>/dev/null && pwd)" || break
+        if [ "$parent" = "$candidate" ]; then
+            break
+        fi
+        candidate="$parent"
+    done
+    printf '%s' "$(pwd)"
+    return 1
+}
+
+FLOW_ROOT="$(resolve_flow_root)" || true
+PROJECT_DIR="$FLOW_ROOT"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +38,16 @@ if [ ! -d "$FLOW_DIR" ]; then
     echo "当前项目没有 .ai-flow/ 目录"
     echo "项目路径: $PROJECT_DIR"
     exit 0
+fi
+
+# Detect workspace mode
+WORKSPACE_MODE=0
+WORKSPACE_NAME=""
+WORKSPACE_REPO_COUNT=0
+if [ -f "$FLOW_DIR/workspace.json" ]; then
+    WORKSPACE_MODE=1
+    WORKSPACE_NAME="$(python3 -c "import json; d=json.load(open('$FLOW_DIR/workspace.json')); print(d.get('name',''))")"
+    WORKSPACE_REPO_COUNT="$(python3 -c "import json; d=json.load(open('$FLOW_DIR/workspace.json')); print(len(d.get('repos',[])))")"
 fi
 
 VALID_LIST="$(mktemp)"
@@ -35,7 +70,7 @@ if [ -d "$STATE_DIR" ]; then
     shopt -u nullglob
 fi
 
-python3 - "$PROJECT_DIR" "$VALID_LIST" "$INVALID_LIST" "$FLOW_STATE_SH" <<'PY'
+python3 - "$PROJECT_DIR" "$VALID_LIST" "$INVALID_LIST" "$FLOW_STATE_SH" "$WORKSPACE_MODE" "$WORKSPACE_NAME" "$WORKSPACE_REPO_COUNT" "$FLOW_DIR" <<'PY'
 import json
 import sys
 from collections import Counter
@@ -45,7 +80,10 @@ project_dir = Path(sys.argv[1]).resolve()
 valid_list = Path(sys.argv[2])
 invalid_list = Path(sys.argv[3])
 flow_state_sh = Path(sys.argv[4])
-flow_dir = project_dir / ".ai-flow"
+workspace_mode = sys.argv[5] == "1"
+workspace_name = sys.argv[6]
+workspace_repo_count = int(sys.argv[7]) if sys.argv[7].isdigit() else 0
+flow_dir = Path(sys.argv[8])
 state_dir = flow_dir / "state"
 
 def rel(path_value):
@@ -75,7 +113,11 @@ if invalid_list.exists():
         invalid_states.append((Path(path_value), error))
 
 print("===============================")
-print(f"  AI Flow 状态: {project_dir.name}")
+if workspace_mode:
+    print(f"  AI Flow 工作区: {workspace_name}")
+    print(f"  范围: workspace ({workspace_repo_count} repos)")
+else:
+    print(f"  AI Flow 状态: {project_dir.name}")
 print("===============================")
 print()
 
@@ -97,9 +139,18 @@ if not states:
 else:
     for state in states:
         latest = state["latest_recheck_review_file"] or state["latest_regular_review_file"]
+        scope_info = ""
+        exec_scope = state.get("execution_scope", {})
+        if isinstance(exec_scope, dict):
+            mode = exec_scope.get("mode", "")
+            if mode == "workspace":
+                repos = exec_scope.get("repos", [])
+                scope_info = f" [scope:workspace repos:{len(repos)}]"
+            elif mode == "single_repo":
+                scope_info = " [scope:single_repo]"
         print(
             f"  {state['slug']:<20} [{state['current_status']}]  "
-            f"plan: {rel(state['plan_file'])}  latest: {rel(latest)}"
+            f"plan: {rel(state['plan_file'])}  latest: {rel(latest)}{scope_info}"
         )
 print()
 
