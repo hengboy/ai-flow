@@ -224,6 +224,86 @@ bash install.sh
 - `~/.claude/agents/<agent>/`：`AGENT.md`、该角色所需的 `bin/`、`prompts/`、`templates/`，以及共享 `lib/`
 - `~/.config/opencode/agents/<agent>/`：同上
 
+## 运行模式
+
+AI Flow 支持单仓模式和基于 workspace manifest 的多仓模式；
+
+### 单仓模式
+
+适用场景：
+
+- 一个功能只修改一个真实 Git 仓库
+- 在该仓库根目录运行全部流程
+
+运行约束：
+
+- 当前目录必须是目标 Git 仓库根目录
+- `.ai-flow/`、plan、report、state 都落在该仓库根目录下
+- `coding-review` 只审查当前仓库的 Git 未提交变更
+
+步骤流转：
+
+| 步骤 | 运行方式 |
+|------|----------|
+| `ai-flow-status` | 在当前仓库根目录读取 `.ai-flow/state/*.json` 并展示下一步动作 |
+| `ai-flow-plan` | 生成当前仓库的 plan，并创建 `.ai-flow/state/<slug>.json` |
+| `ai-flow-plan-review` | 审核当前仓库 plan，结果推进到 `PLANNED` 或 `PLAN_REVIEW_FAILED` |
+| `ai-flow-plan-coding` | 只在当前仓库内实施代码或修复，按状态机推进到 `IMPLEMENTING` / `AWAITING_REVIEW` |
+| `ai-flow-change` | 修改当前仓库 plan，并向 `## 7. 需求变更记录` 追加审计 |
+| `ai-flow-plan-coding-review` | 只读取当前仓库的 `git status` / `git diff`，生成单仓 review 报告并推进状态 |
+
+推荐顺序：
+
+1. 进入目标 Git 仓库根目录。
+2. 运行 `ai-flow-status` 确认当前待办。
+3. 运行 `ai-flow-plan` 生成或修订 plan。
+4. 运行 `ai-flow-plan-review` 审核 plan。
+5. 运行 `ai-flow-plan-coding` 实施代码。
+6. 如需求变化，运行 `ai-flow-change` 更新 plan。
+7. 运行 `ai-flow-plan-coding-review` 完成 review / recheck。
+
+### 多仓模式（workspace-aware）
+
+适用场景：
+
+- 一个功能同时修改多个真实 Git 仓库
+- 需要一条统一的 `slug`、一份统一的 plan / state / review 报告来协调跨仓改动
+
+运行约束：
+
+- 在 workspace 根目录运行全部流程
+- workspace 根目录包含 `.ai-flow/workspace.json`
+- workspace 根目录本身不必是 Git 仓库，但 manifest 中声明的每个 repo 都必须是可用 Git 仓库
+- plan、report、state 统一落在 workspace 根目录的 `.ai-flow/` 下
+
+步骤流转：
+
+| 步骤 | 运行方式 |
+|------|----------|
+| `ai-flow-status` | 在 workspace 根目录读取统一的 `.ai-flow/state/*.json`，并展示该 flow 涉及的 repo 范围 |
+| `ai-flow-plan` | 基于 `.ai-flow/workspace.json` 生成跨仓 plan，并创建一份 workspace 级 state |
+| `ai-flow-plan-review` | 审核跨仓 plan，重点确认 repo 边界、步骤顺序、跨仓依赖和验证命令 |
+| `ai-flow-plan-coding` | 从 workspace 根目录发起实施，但允许按 plan 修改多个已声明 repo |
+| `ai-flow-change` | 修改 workspace 级统一 plan，并同步维护跨仓步骤、边界和审计 |
+| `ai-flow-plan-coding-review` | 遍历 manifest 中声明的 repo，聚合各仓 `git status` / `git diff`，输出一份跨仓 review 报告并推进统一状态 |
+
+推荐顺序：
+
+1. 在 workspace 根目录准备 `.ai-flow/workspace.json`。
+2. 运行 `ai-flow-status` 查看当前 workspace 级任务。
+3. 运行 `ai-flow-plan` 生成一份跨仓 plan。
+4. 运行 `ai-flow-plan-review` 审核跨仓边界与依赖。
+5. 运行 `ai-flow-plan-coding`，按 plan 修改多个 repo。
+6. 如需求变化，运行 `ai-flow-change` 更新统一 plan。
+7. 运行 `ai-flow-plan-coding-review`，聚合多个 repo 的变更完成一次 review / recheck。
+
+使用原则：
+
+- 只改一个 repo 时，优先使用单仓模式。
+- 同一个功能要同时改多个 repo 时，使用多仓模式。
+- 单仓模式下，一个 `slug` 只属于一个 Git 仓库根目录。
+- 多仓模式下，一个 `slug` 只属于一个 workspace 根目录，不能再在子仓重复创建同名 flow。
+
 ## Runtime 契约
 
 ### `flow-state.sh`
