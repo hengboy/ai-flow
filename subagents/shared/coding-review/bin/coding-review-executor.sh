@@ -22,6 +22,9 @@ IS_WORKSPACE_MODE=0
 WORKSPACE_REPOS=()    # parallel arrays: _IDS and _PATHS
 WORKSPACE_REPO_IDS=()
 WORKSPACE_REPO_PATHS=()
+# 提前获取 slug 用于日志文件名（第一个参数作为 key）
+LOGGING_SLUG="${1:-}"
+setup_agent_logging "$PROJECT_DIR" "${AGENT_NAME:-coding-review}" "$LOGGING_SLUG"
 PROTOCOL_ARTIFACT="none"
 PROTOCOL_STATE="none"
 PROTOCOL_NEXT="none"
@@ -253,7 +256,7 @@ run_opencode_review_prompt() {
         --dangerously-skip-permissions \
         --format default \
         --dir "$PROJECT_DIR" \
-        "$prompt" > "$REPORT_FILE"
+        "$prompt" 2>/dev/null | sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' > "$REPORT_FILE"
     trim_report_to_header "$REPORT_FILE"
 }
 
@@ -263,7 +266,7 @@ is_codex_unavailable_error() {
     if [ "$rc" -eq 127 ]; then
         return 0
     fi
-    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable' "$stderr_file"
+    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable|model not found|model not available|model .*does not exist|invalid model|quota exceeded|rate limit|service unavailable|5\d\d|model error' "$stderr_file"
 }
 
 render_prompt_template() {
@@ -844,10 +847,11 @@ if [ "$ACTIVE_ENGINE" = "Codex" ]; then
     if [ "$rc" -ne 0 ]; then
         if is_codex_unavailable_error "$rc" "$stderr_file"; then
             if ! command -v opencode >/dev/null 2>&1; then
-                cat "$stderr_file" >&2
+                emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
                 rm -f "$stderr_file"
                 fail_protocol "Codex 不可用，且 opencode 未安装，无法执行审查"
             fi
+            emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
             echo ">>> Codex 不可用，降级到 OpenCode ($REVIEW_OPENCODE_MODEL)"
             ACTIVE_ENGINE="OpenCode"
             ACTIVE_MODEL="$REVIEW_OPENCODE_MODEL"
@@ -856,7 +860,7 @@ if [ "$ACTIVE_ENGINE" = "Codex" ]; then
             REVIEW_PROMPT=$(render_prompt_template "$PROMPT_TEMPLATE")
             run_opencode_review_prompt "$REVIEW_PROMPT" "$ACTIVE_MODEL" "$ACTIVE_REASONING"
         else
-            cat "$stderr_file" >&2
+            emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
             rm -f "$stderr_file"
             fail_protocol "Codex 执行审查失败，且不属于可降级的不可用场景"
         fi

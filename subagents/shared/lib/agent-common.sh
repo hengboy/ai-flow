@@ -67,6 +67,87 @@ normalize_one_line() {
     printf '%s' "${1:-}" | tr '\r\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
 }
 
+sanitize_for_filename() {
+    printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9._-]/-/g; s/-\{2,\}/-/g; s/^-//; s/-$//'
+}
+
+agent_log_path() {
+    local log_file="${1:-${AI_FLOW_LOG_FILE:-}}"
+    if [ -z "$log_file" ]; then
+        return 1
+    fi
+    if [ -n "${PROJECT_DIR:-}" ]; then
+        display_path "$PROJECT_DIR" "$log_file"
+    else
+        printf '%s\n' "$log_file"
+    fi
+}
+
+append_log_path_to_summary() {
+    local summary="${1:-}"
+    local log_path
+    log_path="$(agent_log_path 2>/dev/null || true)"
+    if [ -z "$log_path" ]; then
+        printf '%s' "$summary"
+        return 0
+    fi
+    case "$summary" in
+        *"$log_path"*)
+            printf '%s' "$summary"
+            ;;
+        "")
+            printf '日志: %s' "$log_path"
+            ;;
+        *)
+            printf '%s；日志: %s' "$summary" "$log_path"
+            ;;
+    esac
+}
+
+setup_agent_logging() {
+    local project_dir="$1"
+    local context="${2:-$AGENT_NAME}"
+    local slug="${3:-}"
+    local flow_dir logs_dir safe_context timestamp
+
+    if [ -n "$slug" ]; then
+        safe_context="$(sanitize_for_filename "$slug")"
+    else
+        safe_context="$(sanitize_for_filename "$context")"
+    fi
+    [ -n "$safe_context" ] || safe_context="agent"
+
+    flow_dir="$project_dir/.ai-flow"
+    logs_dir="$flow_dir/logs/$(date +%Y%m%d)"
+    mkdir -p "$logs_dir"
+
+    timestamp="$(date +%H%M%S)"
+    AI_FLOW_LOG_FILE="$logs_dir/${timestamp}-${safe_context}-$$.log"
+    export AI_FLOW_LOG_FILE
+
+    : > "$AI_FLOW_LOG_FILE"
+    # Save original stderr to fd4, then tee both stdout and stderr into the log.
+    # The display copy goes to fd4 (original stderr). This works correctly
+    # whether or not the caller has already done exec 3>&1 1>&2:
+    #   - fd3 (if set) still points at original stdout for protocol output.
+    #   - fd1 and fd2 both go through tee into the log.
+    exec 4>&2
+    exec 1> >(tee -a "$AI_FLOW_LOG_FILE" >&4) 2>&1
+    echo ">>> 日志文件: $(display_path "$project_dir" "$AI_FLOW_LOG_FILE")" >&4
+}
+
+emit_captured_stderr() {
+    local stderr_file="$1"
+    local label="${2:-stderr}"
+    if [ ! -s "$stderr_file" ]; then
+        return 0
+    fi
+    # Output goes to stdout, which (after setup_agent_logging) is teed into the
+    # log file and displayed on the original stderr.
+    echo ">>> ${label}:"
+    cat "$stderr_file"
+}
+
 require_file() {
     local path="$1"
     local label="$2"
@@ -104,6 +185,9 @@ emit_protocol() {
     [ -n "$artifact" ] || artifact="none"
     [ -n "$state" ] || state="none"
     [ -n "$next" ] || next="none"
+    if [ "$result" = "failed" ]; then
+        summary="$(append_log_path_to_summary "$summary")"
+    fi
 
     printf 'RESULT: %s\n' "$result" >&3
     printf 'AGENT: %s\n' "$AGENT_NAME" >&3

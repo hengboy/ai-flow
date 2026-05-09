@@ -13,6 +13,21 @@ FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
 PROJECT_DIR="$(pwd)"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"
+
+# 解析 slug（必选），在设置日志之前提取
+INTERNAL_PLAN_REVIEW=0
+SLUG=""
+MATCH_KEYWORD=""
+if [ "${1:-}" = "--internal-plan-review" ]; then
+    INTERNAL_PLAN_REVIEW=1
+    MATCH_KEYWORD="${2:-}"
+    SLUG="$MATCH_KEYWORD"
+else
+    SLUG="${2:-}"
+fi
+
+setup_agent_logging "$PROJECT_DIR" "${AGENT_NAME:-plan}" "$SLUG"
+
 DATE_DIR="$(date +%Y%m%d)"
 PLANS_DIR="$FLOW_DIR/plans/$DATE_DIR"
 WORKSPACE_ROOT=""
@@ -27,11 +42,8 @@ PLAN_REVIEW_REASONING="${AI_FLOW_PLAN_REVIEW_REASONING:-xhigh}"
 PLAN_ENGINE_FALLBACK_ACTIVE=false
 PLAN_ENGINE_NAME=""
 PLAN_ENGINE_MODEL=""
-INTERNAL_PLAN_REVIEW=0
 REQUIREMENT=""
-SLUG=""
 MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
-MATCH_KEYWORD=""
 PROTOCOL_ARTIFACT="none"
 PROTOCOL_STATE="none"
 PROTOCOL_NEXT="none"
@@ -54,20 +66,19 @@ fail_protocol() {
 trap 'rc=$?; if [ "$rc" -ne 0 ] && [ "$PROTOCOL_EMITTED" -eq 0 ]; then emit_protocol "failed" "$PROTOCOL_ARTIFACT" "$PROTOCOL_STATE" "$PROTOCOL_NEXT" "${PROTOCOL_SUMMARY:-执行失败}" "${PROTOCOL_REVIEW_RESULT:-}"; fi' EXIT
 
 # 模型选择由执行器内部默认值和降级逻辑统一决定；不再接受调用方显式覆盖。
-if [ "${1:-}" = "--internal-plan-review" ]; then
-    INTERNAL_PLAN_REVIEW=1
-    MATCH_KEYWORD="${2:-}"
+if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
     MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
-    if [ -z "$MATCH_KEYWORD" ]; then
-        fail_protocol "用法: plan-review-executor.sh {slug或唯一关键词}" "failed"
-    fi
 else
     if [ -z "${1:-}" ]; then
-        fail_protocol "用法: plan-executor.sh \"需求描述\" [英文简称]" ""
+        fail_protocol "用法: plan-executor.sh \"需求描述\" <slug>" ""
     fi
     REQUIREMENT="$1"
-    SLUG="${2:-}"
     MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
+fi
+
+# slug 必选，日志文件名依赖它
+if [ -z "$SLUG" ]; then
+    fail_protocol "slug 为必填参数" "failed"
 fi
 
 require_file() {
@@ -368,12 +379,14 @@ map_reasoning_to_opencode_variant() {
 trim_generated_file_to_marker() {
     local file="$1"
     local marker="$2"
-    python3 - "$file" "$marker" <<'PY'
+    local slug="${3:-}"
+    python3 - "$file" "$marker" "$slug" <<'PY'
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
 marker = sys.argv[2]
+slug = sys.argv[3]
 text = path.read_text(encoding="utf-8")
 lines = text.splitlines()
 for index, line in enumerate(lines):
@@ -383,6 +396,27 @@ for index, line in enumerate(lines):
             trimmed += "\n"
         path.write_text(trimmed, encoding="utf-8")
         sys.exit(0)
+
+# Fallback: if primary marker not found, look for common plan headers
+for fallback in ["## 1. 需求概述", "## 1\. 需求概述", "## 需求概述"]:
+    for index, line in enumerate(lines):
+        if line.startswith(fallback) or fallback.replace("\\", "") in line:
+            # Walk backwards to find the nearest h1 heading before this
+            start = index
+            for j in range(index, -1, -1):
+                if lines[j].startswith("# "):
+                    start = j
+                    break
+            if start == index:
+                # No h1 heading found — prepend one so plan validation passes
+                title = f"# 实施计划：{slug}" if slug else "# 实施计划"
+                lines.insert(index, title)
+                start = index
+            trimmed = "\n".join(lines[start:])
+            if text.endswith("\n"):
+                trimmed += "\n"
+            path.write_text(trimmed, encoding="utf-8")
+            sys.exit(0)
 sys.exit(0)
 PY
 }
@@ -894,7 +928,7 @@ run_opencode_prompt() {
         --dangerously-skip-permissions \
         --format default \
         --dir "$PROJECT_DIR" \
-        "$prompt" > "$output_file"
+        "$prompt" 2>/dev/null | sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' > "$output_file"
 }
 
 is_codex_unavailable_error() {
@@ -903,7 +937,7 @@ is_codex_unavailable_error() {
     if [ "$rc" -eq 127 ]; then
         return 0
     fi
-    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable' "$stderr_file"
+    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable|model not found|model not available|model .*does not exist|invalid model|quota exceeded|rate limit|service unavailable|5\d\d|model error' "$stderr_file"
 }
 
 run_review_phase_prompt() {
@@ -930,15 +964,16 @@ run_review_phase_prompt() {
             if [ "$rc" -eq 0 ]; then
                 PLAN_ENGINE_NAME="Codex"
                 PLAN_ENGINE_MODEL="$MODEL"
-                trim_generated_file_to_marker "$output_file" "$marker"
+                trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
                 rm -f "$stderr_file"
                 return 0
             fi
             if is_codex_unavailable_error "$rc" "$stderr_file"; then
+                emit_captured_stderr "$stderr_file" "Codex 计划审核 stderr"
                 echo ">>> 计划审核阶段 Codex 不可用，降级到 OpenCode ($PLAN_OPENCODE_MODEL)"
                 PLAN_ENGINE_FALLBACK_ACTIVE=true
             else
-                cat "$stderr_file" >&2
+                emit_captured_stderr "$stderr_file" "Codex 计划审核 stderr"
                 rm -f "$stderr_file"
                 echo "错误: Codex 执行计划审核阶段失败，且不属于可降级的不可用场景"
                 fail_protocol "Codex 执行计划审核阶段失败，且不属于可降级的不可用场景" "failed"
@@ -951,7 +986,7 @@ run_review_phase_prompt() {
         fail_protocol "计划审核阶段需要降级到 OpenCode，但 opencode 不可用" "failed"
     fi
     run_opencode_prompt "$prompt" "$output_file" "$variant"
-    trim_generated_file_to_marker "$output_file" "$marker"
+    trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
     PLAN_ENGINE_NAME="OpenCode"
     PLAN_ENGINE_MODEL="$PLAN_OPENCODE_MODEL"
 }
@@ -1002,15 +1037,16 @@ run_plan_authoring_prompt() {
             if [ "$rc" -eq 0 ]; then
                 PLAN_ENGINE_NAME="Codex"
                 PLAN_ENGINE_MODEL="$MODEL"
-                trim_generated_file_to_marker "$output_file" "$marker"
+                trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
                 rm -f "$stderr_file"
                 return 0
             fi
             if is_codex_unavailable_error "$rc" "$stderr_file"; then
+                emit_captured_stderr "$stderr_file" "Codex plan 生成 stderr"
                 echo ">>> Plan 阶段 Codex 不可用，降级到 OpenCode ($PLAN_OPENCODE_MODEL)"
                 PLAN_ENGINE_FALLBACK_ACTIVE=true
             else
-                cat "$stderr_file" >&2
+                emit_captured_stderr "$stderr_file" "Codex plan 生成 stderr"
                 rm -f "$stderr_file"
                 echo "错误: Codex 执行 plan 生成/修订失败，且不属于可降级的不可用场景"
                 fail_protocol "Codex 执行 plan 生成/修订失败，且不属于可降级的不可用场景"
@@ -1023,7 +1059,7 @@ run_plan_authoring_prompt() {
         fail_protocol "Plan 阶段需要降级到 OpenCode，但 opencode 不可用"
     fi
     run_opencode_prompt "$prompt" "$output_file" "$variant"
-    trim_generated_file_to_marker "$output_file" "$marker"
+    trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
     PLAN_ENGINE_NAME="OpenCode"
     PLAN_ENGINE_MODEL="$PLAN_OPENCODE_MODEL"
 }

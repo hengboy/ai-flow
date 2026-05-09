@@ -23,4 +23,28 @@ test_change_appends_audit_rows() {
     rm -rf "$temp_root"
 }
 
+test_change_failure_reports_log_path() {
+    local temp_root project log_path
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    setup_project_root "$project"
+
+    set +e
+    (
+        cd "$project"
+        bash "$SOURCE_FLOW_CHANGE_SCRIPT" missing "desc" >"$temp_root/change-fail.out" 2>&1
+    )
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected flow-change failure to exit non-zero"
+    assert_contains "$temp_root/change-fail.out" "错误: 找不到包含关键词 'missing' 的状态文件"
+    assert_contains "$temp_root/change-fail.out" "完整日志: .ai-flow/logs/"
+    log_path="$(log_path_from_output "$temp_root/change-fail.out")"
+    assert_file_exists "$project/$log_path"
+    assert_contains "$project/$log_path" "错误: 找不到包含关键词 'missing' 的状态文件"
+    rm -rf "$temp_root"
+}
+
 test_change_appends_audit_rows
+test_change_failure_reports_log_path
