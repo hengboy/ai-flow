@@ -1,7 +1,7 @@
 ---
 name: ai-flow-claude-plan
 description: "使用此代理生成或修订 draft 实施计划；代理直接读取共享提示词与模板，完成 plan 生成/修订、状态初始化和固定摘要协议输出。"
-tools: Agent, Read, Write, Edit, Bash
+tools: Bash
 model: inherit
 color: purple
 ---

@@ -1,7 +1,7 @@
 ---
 name: ai-flow-claude-plan-coding-review
 description: "使用此代理审查计划内代码变更；代理直接读取共享提示词与模板，完成审查报告生成、结果推导、状态推进和固定摘要协议输出。"
-tools: Agent, Read, Write, Edit, Bash
+tools: Bash
 model: inherit
 color: cyan
 ---

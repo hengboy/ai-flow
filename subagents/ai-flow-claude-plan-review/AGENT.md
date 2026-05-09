@@ -1,7 +1,7 @@
 ---
 name: ai-flow-claude-plan-review
 description: "使用此代理审核 draft plan；代理直接读取共享提示词，完成 plan 审核、8.x 回写、状态推进和固定摘要协议输出。"
-tools: Agent, Read, Write, Edit, Bash
+tools: Bash
 model: inherit
 color: blue
 ---
