@@ -4,8 +4,13 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/flow-common.sh"
+ai_flow_setup_runtime_logging "${BASH_SOURCE[0]}" create "" "${1:-}"
+
 if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
-    echo "用法: flow-change.sh {slug或唯一关键词} \"变更描述\""
+    echo "用法: flow-change.sh {slug或唯一关键词} \"变更描述\"" >&2
     exit 1
 fi
 
@@ -43,7 +48,7 @@ while IFS= read -r -d '' f; do
 done < <(find "$FLOW_DIR/state" -name "*${1}*.json" -type f -print0 2>/dev/null)
 
 if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
-    echo "错误: 找不到包含关键词 '$1' 的状态文件"
+    echo "错误: 找不到包含关键词 '$1' 的状态文件" >&2
     exit 1
 elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
     echo "匹配到多个状态，请选择："
@@ -56,7 +61,7 @@ elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
     if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#MATCHED_STATES[@]}" ]; then
         STATE_FILE="${MATCHED_STATES[$((choice - 1))]}"
     else
-        echo "错误: 无效编号"
+        echo "错误: 无效编号" >&2
         exit 1
     fi
 else

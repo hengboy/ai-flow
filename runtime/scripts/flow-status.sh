@@ -3,6 +3,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/flow-common.sh"
+ai_flow_setup_runtime_logging "${BASH_SOURCE[0]}" existing
+
 # Resolve flow root: prefer workspace manifest, fall back to pwd/.ai-flow
 resolve_flow_root() {
     local candidate
@@ -31,7 +36,6 @@ FLOW_ROOT="$(resolve_flow_root)" || true
 PROJECT_DIR="$FLOW_ROOT"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
 
 if [ ! -d "$FLOW_DIR" ]; then
@@ -62,8 +66,16 @@ if [ -d "$STATE_DIR" ]; then
         if "$FLOW_STATE_SH" validate "$slug" >/dev/null 2>"$error_file"; then
             printf '%s\n' "$path" >>"$VALID_LIST"
         else
-            error_text="$(tr '\n' ' ' <"$error_file" | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//')"
-            printf '%s\t%s\n' "$path" "$error_text" >>"$INVALID_LIST"
+            error_text_b64="$(python3 - "$error_file" <<'PY'
+import base64
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+print(base64.b64encode(text.encode("utf-8")).decode("ascii"))
+PY
+)"
+            printf '%s\t%s\n' "$path" "$error_text_b64" >>"$INVALID_LIST"
         fi
         rm -f "$error_file"
     done
@@ -73,6 +85,7 @@ fi
 python3 - "$PROJECT_DIR" "$VALID_LIST" "$INVALID_LIST" "$FLOW_STATE_SH" "$WORKSPACE_MODE" "$WORKSPACE_NAME" "$WORKSPACE_REPO_COUNT" "$FLOW_DIR" <<'PY'
 import json
 import sys
+import base64
 from collections import Counter
 from pathlib import Path
 
@@ -109,7 +122,8 @@ if invalid_list.exists():
     for line in invalid_list.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        path_value, error = line.split("\t", 1)
+        path_value, error_b64 = line.split("\t", 1)
+        error = base64.b64decode(error_b64.encode("ascii")).decode("utf-8", errors="replace")
         invalid_states.append((Path(path_value), error))
 
 print("===============================")
@@ -127,10 +141,14 @@ if not invalid_states:
 else:
     for path, error in invalid_states:
         slug = path.stem
-        print(
-            f"  ⚠ {slug} [{rel(path)}] {error}  "
-            f"fix: {flow_state_sh} normalize --slug {slug}"
-        )
+        print(f"  ⚠ {slug} [{rel(path)}]")
+        error_lines = [line.rstrip() for line in error.splitlines() if line.strip()]
+        if not error_lines:
+            error_lines = ["(空错误输出)"]
+        for idx, line in enumerate(error_lines):
+            prefix = "    detail: " if idx == 0 else "            "
+            print(f"{prefix}{line}")
+        print(f"    fix: {flow_state_sh} normalize --slug {slug}")
 print()
 
 print("--- 状态文件 ---")

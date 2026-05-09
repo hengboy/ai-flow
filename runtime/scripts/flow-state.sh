@@ -3,6 +3,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/flow-common.sh"
+ai_flow_setup_runtime_logging "${BASH_SOURCE[0]}" create
+
 python3 - "$@" <<'PY'
 import argparse
 import copy
