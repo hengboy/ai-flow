@@ -74,55 +74,37 @@ test_default_install_layout() {
 }
 
 test_custom_roots_install() {
-    local temp_root runtime_root onespace_skills claude_agents opencode_agents onespace_claude onespace_opencode
+    local temp_root runtime_root onespace_skills claude_agents onespace_claude
     temp_root=$(make_temp_root)
     runtime_root="$temp_root/runtime-home"
     onespace_skills="$temp_root/onespace-skills"
     claude_agents="$temp_root/claude-agents"
-    opencode_agents="$temp_root/opencode-agents"
     onespace_claude="$temp_root/onespace-claude"
-    onespace_opencode="$temp_root/onespace-opencode"
 
     HOME="$temp_root/home" \
         AI_FLOW_HOME="$runtime_root" \
         ONSPACE_SKILLS_DIR="$onespace_skills" \
         CLAUDE_AGENTS_DIR="$claude_agents" \
-        OPENCODE_AGENTS_DIR="$opencode_agents" \
         ONSPACE_SUBAGENTS_CLAUDE_DIR="$onespace_claude" \
-        ONSPACE_SUBAGENTS_OPENCODE_DIR="$onespace_opencode" \
         bash "$TEST_ROOT/install.sh" >"$temp_root/install-custom.out"
 
     assert_file_exists "$onespace_skills/ai-flow-plan/SKILL.md"
     assert_file_exists "$runtime_root/scripts/flow-state.sh"
     assert_file_exists "$claude_agents/ai-flow-codex-plan/AGENT.md"
     assert_file_exists "$claude_agents/ai-flow-codex-plan/bin/plan-executor.sh"
-    assert_file_exists "$opencode_agents/ai-flow-opencode-plan-review/bin/plan-review-executor.sh"
+    assert_file_exists "$claude_agents/ai-flow-codex-plan-review/bin/plan-review-executor.sh"
     assert_file_exists "$onespace_claude/ai-flow-codex-plan-coding-review/templates/review-template.md"
-    assert_file_exists "$onespace_opencode/ai-flow-opencode-plan/lib/agent-common.sh"
     assert_contains "$claude_agents/ai-flow-codex-plan/AGENT.md" "tools: Bash"
     assert_contains "$claude_agents/ai-flow-codex-plan/AGENT.md" "color: purple"
     assert_contains "$claude_agents/ai-flow-codex-plan/AGENT.md" "只允许用 Bash 做两类动作"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan/AGENT.md" 'color: "#800080"'
-    assert_contains "$opencode_agents/ai-flow-opencode-plan/AGENT.md" "tools:"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan/AGENT.md" "  Bash: true"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan/AGENT.md" "只允许用 Bash 做两类动作"
     assert_contains "$claude_agents/ai-flow-codex-plan/AGENT.md" "不得按用户工作区相对路径解析"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan/AGENT.md" "不得按用户工作区相对路径解析"
     assert_contains "$claude_agents/ai-flow-codex-plan-review/AGENT.md" "tools: Bash"
     assert_contains "$claude_agents/ai-flow-codex-plan-review/AGENT.md" "不得按用户工作区相对路径解析"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan-review/AGENT.md" "tools:"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan-review/AGENT.md" "  Bash: true"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan-review/AGENT.md" "不得按用户工作区相对路径解析"
     assert_contains "$claude_agents/ai-flow-codex-plan-coding-review/AGENT.md" "tools: Bash"
     assert_contains "$claude_agents/ai-flow-codex-plan-coding-review/AGENT.md" "不得按用户工作区相对路径解析"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan-coding-review/AGENT.md" "tools:"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan-coding-review/AGENT.md" "  Bash: true"
-    assert_contains "$opencode_agents/ai-flow-opencode-plan-coding-review/AGENT.md" "不得按用户工作区相对路径解析"
     assert_file_not_exists "$claude_agents/ai-flow-codex-plan/bin/plan-review-executor.sh"
     assert_file_not_exists "$claude_agents/ai-flow-codex-plan/bin/coding-review-executor.sh"
-    assert_file_not_exists "$opencode_agents/ai-flow-opencode-plan-review/templates/review-template.md"
     assert_file_not_exists "$claude_agents/index.yaml"
-    assert_file_not_exists "$opencode_agents/ai-flow-opencode-plan-review/meta.yaml"
     rm -rf "$temp_root"
 }
 

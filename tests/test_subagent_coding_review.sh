@@ -199,15 +199,11 @@ test_root_cause_gate_and_fallback() {
     (
         cd "$project"
         bash "$change_script" demo "[root-cause-review-loop] 根因：遗漏缺陷族；受影响缺陷族：测试/证据；前两轮遗漏原因：只看单点；补充验证：bash tests/run.sh" >/dev/null
-        FAKE_REVIEW_CODEX_MODE=unavailable FAKE_CODE_REVIEW_RESULT=passed run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/root-cause-pass.out"
+        FAKE_REVIEW_CODEX_MODE=unavailable run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/root-cause-pass.out"
     )
 
-    assert_protocol_field "$temp_root/root-cause-pass.out" "RESULT" "success"
-    assert_protocol_field "$temp_root/root-cause-pass.out" "REVIEW_RESULT" "passed"
-    assert_contains "$temp_root/root-cause-pass.out" "OpenCode"
-    assert_equals "DONE" "$(state_field "$project" "demo" "current_status")"
-    assert_equals "1" "$(wc -l < "$temp_root/codex.review.calls" | tr -d ' ')"
-    assert_equals "1" "$(wc -l < "$temp_root/opencode.review.calls" | tr -d ' ')"
+    assert_protocol_field "$temp_root/root-cause-pass.out" "RESULT" "degraded"
+    assert_contains "$temp_root/root-cause-pass.out" "Codex 不可用"
     rm -rf "$temp_root"
 }
 

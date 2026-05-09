@@ -52,7 +52,7 @@ test_plan_revision_after_failed_review() {
     rm -rf "$temp_root"
 }
 
-test_plan_fallback_once() {
+test_plan_degraded_when_codex_unavailable() {
     local temp_root project executor
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
@@ -66,9 +66,8 @@ test_plan_fallback_once() {
         FAKE_PLAN_CODEX_MODE=unavailable run_with_fake_plan_agents "$temp_root" bash "$executor" "fallback" fallback >"$temp_root/fallback.out"
     )
 
-    assert_protocol_field "$temp_root/fallback.out" "RESULT" "success"
-    assert_contains "$temp_root/fallback.out" "OpenCode"
-    assert_equals "1" "$(wc -l < "$temp_root/opencode.plan.calls" | tr -d ' ')"
+    assert_protocol_field "$temp_root/fallback.out" "RESULT" "degraded"
+    assert_contains "$temp_root/fallback.out" "Codex 不可用"
     rm -rf "$temp_root"
 }
 
@@ -137,7 +136,7 @@ test_plan_missing_runtime_fails_deterministically() {
 
 test_plan_generation_protocol_and_state
 test_plan_revision_after_failed_review
-test_plan_fallback_once
+test_plan_degraded_when_codex_unavailable
 test_plan_generation_ignores_explicit_model_override
 test_plan_generation_allows_negative_tbd_references
 test_plan_missing_runtime_fails_deterministically

@@ -100,7 +100,7 @@ test_plan_review_failed_then_passed_with_notes_returns_planned() {
     rm -rf "$temp_root"
 }
 
-test_plan_review_fallback_to_opencode() {
+test_plan_review_degraded_when_codex_unavailable() {
     local temp_root project runtime_script executor plan_file
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
@@ -114,17 +114,11 @@ test_plan_review_fallback_to_opencode() {
 
     (
         cd "$project"
-        FAKE_PLAN_CODEX_MODE=unavailable FAKE_PLAN_REVIEW_RESULT=passed run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-fallback.out"
+        FAKE_PLAN_CODEX_MODE=unavailable run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-fallback.out"
     )
 
-    assert_equals "PLANNED" "$(state_field "$project" "demo" "current_status")"
-    assert_protocol_field "$temp_root/review-fallback.out" "RESULT" "success"
-    assert_protocol_field "$temp_root/review-fallback.out" "REVIEW_RESULT" "passed"
-    assert_protocol_field "$temp_root/review-fallback.out" "STATE" "PLANNED"
-    assert_contains "$temp_root/review-fallback.out" "OpenCode"
-    assert_equals "ai-flow-codex-plan-review" "$(state_field "$project" "demo" "transitions.1.actor")"
-    assert_equals "1" "$(wc -l < "$temp_root/codex.plan.calls" | tr -d ' ')"
-    assert_equals "1" "$(wc -l < "$temp_root/opencode.plan.calls" | tr -d ' ')"
+    assert_protocol_field "$temp_root/review-fallback.out" "RESULT" "degraded"
+    assert_contains "$temp_root/review-fallback.out" "Codex 不可用"
     rm -rf "$temp_root"
 }
 
@@ -154,5 +148,5 @@ test_plan_review_ignores_explicit_model_override() {
 test_plan_review_passed_with_notes
 test_plan_review_failed
 test_plan_review_failed_then_passed_with_notes_returns_planned
-test_plan_review_fallback_to_opencode
+test_plan_review_degraded_when_codex_unavailable
 test_plan_review_ignores_explicit_model_override
