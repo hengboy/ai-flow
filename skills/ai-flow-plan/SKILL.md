@@ -48,18 +48,19 @@ Agent(
 
 ### 降级（Codex 不可用时）
 
+当 subagent 返回 `RESULT: degraded` 时，自动委派到 `ai-flow-claude-plan`：
+
 ```
 Agent(
-    description="生成或修订 draft plan",
-    subagent_type="ai-flow-opencode-plan",
+    description="生成或修订 draft plan（Codex 不可用，降级）",
+    subagent_type="ai-flow-claude-plan",
     prompt="需求描述：{需求描述}\nslug：{slug 或留空自动生成}"
 )
 ```
 
-### 降级触发规则
-
-- 首选 `ai-flow-codex-plan` 返回 `RESULT: failed` 时，**必须自动**尝试降级到 `ai-flow-opencode-plan`，无需询问用户。
-- 降级失败（opencode 也不可用）时，向用户报告 `SUMMARY` 并停止。
+claude subagent 完成后：
+- 读取 `ARTIFACT`、`STATE`、`NEXT`、`SUMMARY`
+- 下一步固定进入 `/ai-flow-plan-review`
 
 ### subagent 职责
 

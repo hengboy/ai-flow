@@ -51,18 +51,19 @@ Agent(
 
 ### 降级（Codex 不可用时）
 
+当 subagent 返回 `RESULT: degraded` 时，自动委派到 `ai-flow-claude-plan-review`：
+
 ```
 Agent(
-    description="审核 draft plan",
-    subagent_type="ai-flow-opencode-plan-review",
+    description="审核 draft plan（Codex 不可用，降级）",
+    subagent_type="ai-flow-claude-plan-review",
     prompt="slug：{slug}"
 )
 ```
 
-### 降级触发规则
-
-- 首选 `ai-flow-codex-plan-review` 返回 `RESULT: failed` 时，**必须自动**尝试降级到 `ai-flow-opencode-plan-review`，无需询问用户。
-- 降级失败（opencode 也不可用）时，向用户报告 `SUMMARY` 并停止。
+完成后：
+- `REVIEW_RESULT: passed|passed_with_notes`：下一步进入 `/ai-flow-plan-coding`
+- `REVIEW_RESULT: failed`：按"审核后偏差处理策略"决定
 
 ### subagent 职责
 
