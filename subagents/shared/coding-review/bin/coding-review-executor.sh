@@ -22,9 +22,6 @@ IS_WORKSPACE_MODE=0
 WORKSPACE_REPOS=()    # parallel arrays: _IDS and _PATHS
 WORKSPACE_REPO_IDS=()
 WORKSPACE_REPO_PATHS=()
-# 提前获取 slug 用于日志文件名（第一个参数作为 key）
-LOGGING_SLUG="${1:-}"
-setup_agent_logging "$PROJECT_DIR" "${AGENT_NAME:-coding-review}" "$LOGGING_SLUG"
 PROTOCOL_ARTIFACT="none"
 PROTOCOL_STATE="none"
 PROTOCOL_NEXT="none"
@@ -266,7 +263,7 @@ is_codex_unavailable_error() {
     if [ "$rc" -eq 127 ]; then
         return 0
     fi
-    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable|model not found|model not available|model .*does not exist|invalid model|quota exceeded|rate limit|service unavailable|5\d\d|model error' "$stderr_file"
+    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable|model not found|model not available|model .*does not exist|invalid model|quota exceeded|rate limit|429|too many requests|exceeded retry|service unavailable|5\d\d|model error' "$stderr_file"
 }
 
 render_prompt_template() {

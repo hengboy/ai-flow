@@ -135,37 +135,9 @@ test_plan_missing_runtime_fails_deterministically() {
     rm -rf "$temp_root"
 }
 
-test_plan_failure_writes_debug_log() {
-    local temp_root project executor log_path
-    temp_root=$(make_temp_root)
-    install_ai_flow "$temp_root"
-    write_fake_plan_agents "$temp_root"
-    project="$temp_root/project"
-    setup_project_root "$project"
-    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
-
-    set +e
-    (
-        cd "$project"
-        FAKE_PLAN_CODEX_MODE=error run_with_fake_plan_agents "$temp_root" bash "$executor" "plan error" plan-error >"$temp_root/plan-error.out"
-    )
-    rc=$?
-    set -e
-
-    [ "$rc" -ne 0 ] || fail "Expected plan executor failure to exit non-zero"
-    assert_protocol_field "$temp_root/plan-error.out" "RESULT" "failed"
-    assert_contains "$temp_root/plan-error.out" "日志: .ai-flow/logs/"
-    log_path="$(log_path_from_output "$temp_root/plan-error.out")"
-    assert_file_exists "$project/$log_path"
-    assert_contains "$project/$log_path" "codex failed during plan execution"
-    assert_contains "$project/$log_path" "stack trace line 2"
-    rm -rf "$temp_root"
-}
-
 test_plan_generation_protocol_and_state
 test_plan_revision_after_failed_review
 test_plan_fallback_once
 test_plan_generation_ignores_explicit_model_override
 test_plan_generation_allows_negative_tbd_references
 test_plan_missing_runtime_fails_deterministically
-test_plan_failure_writes_debug_log

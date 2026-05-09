@@ -4,11 +4,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/flow-common.sh"
-ai_flow_setup_runtime_logging "${BASH_SOURCE[0]}" create "" "${1:-}"
-
 if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
     echo "用法: flow-change.sh {slug或唯一关键词} \"变更描述\"" >&2
     exit 1

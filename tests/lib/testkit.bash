@@ -55,11 +55,6 @@ protocol_field() {
     sed -n "s/^${key}: //p" "$file" | tail -1
 }
 
-log_path_from_output() {
-    local file="$1"
-    sed -n 's/^.*日志: //p' "$file" | tail -1
-}
-
 make_temp_root() {
     mktemp -d
 }
@@ -513,14 +508,6 @@ if [ "${FAKE_PLAN_CODEX_MODE:-success}" = "unavailable" ]; then
     echo "codex unavailable during plan execution" >&2
     exit 127
 fi
-if [ "${FAKE_PLAN_CODEX_MODE:-success}" = "error" ]; then
-    cat >&2 <<'ERR'
-codex failed during plan execution
-stack trace line 1
-stack trace line 2
-ERR
-    exit 1
-fi
 out=""
 while [ "$#" -gt 0 ]; do
     if [ "$1" = "-o" ]; then
@@ -929,14 +916,6 @@ printf '%s\n' "$*" >> "$temp_root/codex.review.argv"
 if [ "${FAKE_REVIEW_CODEX_MODE:-success}" = "unavailable" ]; then
     echo "codex unavailable during review" >&2
     exit 127
-fi
-if [ "${FAKE_REVIEW_CODEX_MODE:-success}" = "error" ]; then
-    cat >&2 <<'ERR'
-codex failed during review
-review trace line 1
-review trace line 2
-ERR
-    exit 1
 fi
 out=""
 while [ "$#" -gt 0 ]; do

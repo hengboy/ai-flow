@@ -14,7 +14,7 @@ PROJECT_DIR="$(pwd)"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"
 
-# 解析 slug（必选），在设置日志之前提取
+# 解析 slug（必选）
 INTERNAL_PLAN_REVIEW=0
 SLUG=""
 MATCH_KEYWORD=""
@@ -25,8 +25,6 @@ if [ "${1:-}" = "--internal-plan-review" ]; then
 else
     SLUG="${2:-}"
 fi
-
-setup_agent_logging "$PROJECT_DIR" "${AGENT_NAME:-plan}" "$SLUG"
 
 DATE_DIR="$(date +%Y%m%d)"
 PLANS_DIR="$FLOW_DIR/plans/$DATE_DIR"
@@ -76,7 +74,7 @@ else
     MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
 fi
 
-# slug 必选，日志文件名依赖它
+# slug 必选
 if [ -z "$SLUG" ]; then
     fail_protocol "slug 为必填参数" "failed"
 fi
@@ -937,7 +935,7 @@ is_codex_unavailable_error() {
     if [ "$rc" -eq 127 ]; then
         return 0
     fi
-    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable|model not found|model not available|model .*does not exist|invalid model|quota exceeded|rate limit|service unavailable|5\d\d|model error' "$stderr_file"
+    grep -qiE 'command not found|codex unavailable|codex 未安装|not installed|No such file|unavailable|model not found|model not available|model .*does not exist|invalid model|quota exceeded|rate limit|429|too many requests|exceeded retry|service unavailable|5\d\d|model error' "$stderr_file"
 }
 
 run_review_phase_prompt() {

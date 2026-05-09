@@ -12,10 +12,8 @@ CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 CLAUDE_SKILLS_DIR="$CLAUDE_HOME/skills"
 CLAUDE_AGENTS_DIR="${CLAUDE_AGENTS_DIR:-$CLAUDE_HOME/agents}"
-OPENCODE_AGENTS_DIR="${OPENCODE_AGENTS_DIR:-$HOME/.config/opencode/agents}"
 ONSPACE_SKILLS_DIR="${ONSPACE_SKILLS_DIR:-${ONSPACE_DIR:-$HOME/.config/onespace/skills/local_state/models/claude}}"
 ONSPACE_SUBAGENTS_CLAUDE_DIR="${ONSPACE_SUBAGENTS_CLAUDE_DIR:-$HOME/.config/onespace/subagents/local_state/models/claude}"
-ONSPACE_SUBAGENTS_OPENCODE_DIR="${ONSPACE_SUBAGENTS_OPENCODE_DIR:-$HOME/.config/onespace/subagents/local_state/models/opencode}"
 remove_legacy_claude_layout() {
     rm -rf "$CLAUDE_HOME/workflows" "$CLAUDE_HOME/templates"
 }
@@ -28,7 +26,6 @@ remove_legacy_root_entries() {
         "codex-review.sh" \
         "opencode-review.sh" \
         "flow-change.sh" \
-        "flow-common.sh" \
         "flow-state.sh" \
         "flow-status.sh" \
         "flow-workspace.sh" \
@@ -117,76 +114,6 @@ install_subagent_dir() {
     esac
 }
 
-strip_claude_only_frontmatter_for_opencode() {
-    local target_root="$1"
-    local agent_file
-    while IFS= read -r agent_file; do
-        python3 - "$agent_file" <<'PY'
-import sys, re
-from pathlib import Path
-
-# Claude Code -> OpenCode frontmatter conversion
-COLOR_MAP = {
-    "purple": "#800080",
-    "blue": "#0000FF",
-    "cyan": "#00FFFF",
-    "red": "#FF0000",
-    "green": "#008000",
-    "yellow": "#FFFF00",
-    "orange": "#FFA500",
-    "pink": "#FFC0CB",
-    "white": "#FFFFFF",
-    "black": "#000000",
-    "gray": "#808080",
-}
-
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-lines = text.splitlines()
-if not lines or lines[0].strip() != "---":
-    sys.exit(0)
-
-# Find frontmatter boundaries
-end = None
-for i in range(1, len(lines)):
-    if lines[i].strip() == "---":
-        end = i
-        break
-
-if end is None:
-    sys.exit(0)
-
-# Convert Claude Code fields to OpenCode equivalents
-filtered = [lines[0]]
-for i in range(1, end):
-    stripped = lines[i].strip()
-    if stripped.startswith("tools: "):
-        tool_value = stripped.split("tools: ", 1)[1].strip()
-        # "Bash" -> multi-line YAML object
-        filtered.append("tools:")
-        filtered.append(f"  {tool_value}: true")
-    elif stripped.startswith("color: "):
-        color_value = stripped.split("color: ", 1)[1].strip().lower()
-        hex_color = COLOR_MAP.get(color_value)
-        if hex_color:
-            filtered.append(f'color: "{hex_color}"')
-        elif color_value.startswith("#"):
-            # Already hex, quote it for YAML safety
-            filtered.append(f'color: "{color_value}"')
-        else:
-            filtered.append('color: "#808080"')
-    else:
-        filtered.append(lines[i])
-filtered.extend(lines[end:])
-
-new_text = "\n".join(filtered)
-if text.endswith("\n"):
-    new_text += "\n"
-path.write_text(new_text, encoding="utf-8")
-PY
-    done < <(find "$target_root" -name "AGENT.md" -type f 2>/dev/null)
-}
-
 install_runtime_root() {
     local source_root="$1"
     local destination_root="$2"
@@ -228,15 +155,7 @@ for agent_dir in "$CLAUDE_AGENTS_DIR"/ai-flow-*; do
     [ -e "$agent_dir" ] || continue
     rm -rf "$agent_dir"
 done
-for agent_dir in "$OPENCODE_AGENTS_DIR"/ai-flow-*; do
-    [ -e "$agent_dir" ] || continue
-    rm -rf "$agent_dir"
-done
 for agent_dir in "$ONSPACE_SUBAGENTS_CLAUDE_DIR"/ai-flow-*; do
-    [ -e "$agent_dir" ] || continue
-    rm -rf "$agent_dir"
-done
-for agent_dir in "$ONSPACE_SUBAGENTS_OPENCODE_DIR"/ai-flow-*; do
     [ -e "$agent_dir" ] || continue
     rm -rf "$agent_dir"
 done
@@ -249,7 +168,7 @@ rm -rf "$AI_FLOW_HOME"
 
 # --- Phase 2: Reinstall from scratch ---
 
-mkdir -p "$CLAUDE_SKILLS_DIR" "$CLAUDE_AGENTS_DIR" "$OPENCODE_AGENTS_DIR"
+mkdir -p "$CLAUDE_SKILLS_DIR" "$CLAUDE_AGENTS_DIR"
 
 for skill_dir in "$ROOT_DIR"/skills/*; do
     [ -d "$skill_dir" ] || continue
@@ -258,7 +177,7 @@ done
 
 echo "Installed AI Flow to $CLAUDE_HOME"
 
-mkdir -p "$ONSPACE_SKILLS_DIR" "$ONSPACE_SUBAGENTS_CLAUDE_DIR" "$ONSPACE_SUBAGENTS_OPENCODE_DIR"
+mkdir -p "$ONSPACE_SKILLS_DIR" "$ONSPACE_SUBAGENTS_CLAUDE_DIR"
 remove_legacy_root_entries "$ONSPACE_SKILLS_DIR"
 for skill_dir in "$ROOT_DIR"/skills/*; do
     [ -d "$skill_dir" ] || continue
@@ -272,15 +191,8 @@ echo "Installed AI Flow runtime to $AI_FLOW_HOME"
 for agent_dir in "$ROOT_DIR"/subagents/*; do
     [ -d "$agent_dir" ] || continue
     install_subagent_dir "$agent_dir" "$CLAUDE_AGENTS_DIR"
-    install_subagent_dir "$agent_dir" "$OPENCODE_AGENTS_DIR"
     install_subagent_dir "$agent_dir" "$ONSPACE_SUBAGENTS_CLAUDE_DIR"
-    install_subagent_dir "$agent_dir" "$ONSPACE_SUBAGENTS_OPENCODE_DIR"
 done
 
-# Strip Claude Code-only frontmatter fields (tools, color) from OpenCode agents
-for target in "$OPENCODE_AGENTS_DIR" "$ONSPACE_SUBAGENTS_OPENCODE_DIR"; do
-    strip_claude_only_frontmatter_for_opencode "$target"
-done
-
-echo "Installed AI Flow subagents to $CLAUDE_AGENTS_DIR and $OPENCODE_AGENTS_DIR"
-echo "Synced AI Flow subagents to $ONSPACE_SUBAGENTS_CLAUDE_DIR and $ONSPACE_SUBAGENTS_OPENCODE_DIR"
+echo "Installed AI Flow subagents to $CLAUDE_AGENTS_DIR"
+echo "Synced AI Flow subagents to $ONSPACE_SUBAGENTS_CLAUDE_DIR"

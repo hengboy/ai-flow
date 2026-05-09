@@ -4,9 +4,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/flow-common.sh"
-ai_flow_setup_runtime_logging "${BASH_SOURCE[0]}" existing
 
 # Resolve flow root: prefer workspace manifest, fall back to pwd/.ai-flow
 resolve_flow_root() {
