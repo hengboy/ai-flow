@@ -24,7 +24,6 @@ remove_legacy_root_entries() {
     for legacy_entry in \
         "codex-plan.sh" \
         "codex-review.sh" \
-        "opencode-review.sh" \
         "flow-change.sh" \
         "flow-state.sh" \
         "flow-status.sh" \
