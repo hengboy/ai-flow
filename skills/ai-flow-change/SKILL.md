@@ -51,12 +51,14 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
 
 | 当前状态 | 操作 |
 |----------|------|
-| `PLANNED` | 无需转换，直接编辑计划 |
-| `IMPLEMENTING` | 无需转换，直接编辑计划 |
+| `PLANNED` | revert-plan 转换到 `AWAITING_PLAN_REVIEW` |
+| `IMPLEMENTING` | revert-plan 转换到 `AWAITING_PLAN_REVIEW` |
 | `AWAITING_REVIEW` | repair 转换到 `IMPLEMENTING` |
 | `DONE` | repair 转换到 `IMPLEMENTING` |
 | `REVIEW_FAILED` | repair 转换到 `IMPLEMENTING` |
 | `FIXING_REVIEW` | repair 转换到 `IMPLEMENTING`（同时清除 active_fix）|
+
+#### 4.1 非执行状态（AWAITING_REVIEW / DONE / REVIEW_FAILED / FIXING_REVIEW）
 
 仅在 `AWAITING_REVIEW` / `DONE` / `REVIEW_FAILED` / `FIXING_REVIEW` 状态时执行：
 
@@ -75,6 +77,24 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh show {slug} --field
 ```
 
 预期输出：`IMPLEMENTING`
+
+#### 4.2 执行中状态（PLANNED / IMPLEMENTING）
+
+需求变动后必须重新审核方案。在 `PLANNED` 或 `IMPLEMENTING` 状态时执行：
+
+```bash
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh revert-plan \
+  --slug {slug} \
+  --note "需求变更：{一句话描述变更内容}"
+```
+
+转换后确认：
+
+```bash
+${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh show {slug} --field current_status
+```
+
+预期输出：`AWAITING_PLAN_REVIEW`
 
 ### 5. 更新计划内容
 
@@ -156,25 +176,25 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-change.sh {slug} "[root-caus
 
 ### 8. 后续指引
 
-- 如果状态为 `IMPLEMENTING`：提示使用 `/ai-flow-plan-coding` 继续执行
-- 如果状态为 `PLANNED`：提示使用 `/ai-flow-plan-coding` 开始执行
+- 变更后状态统一为 `AWAITING_PLAN_REVIEW`：提示使用 `/ai-flow-plan-review` 重新审核变更后的计划
+- 审核通过后状态回到 `PLANNED`：提示使用 `/ai-flow-plan-coding` 继续执行
 
 ## 约束
 
-- 只能通过 `flow-state.sh` 调用 `repair`（状态转换）和 `show`（状态查询）子命令，禁止调用 `create`、`record-plan-review`、`record-review`、`start-execute` 等其他子命令
+- 只能通过 `flow-state.sh` 调用 `repair`（状态转换）、`revert-plan`（需求变更回退到审核）和 `show`（状态查询）子命令，禁止调用 `create`、`record-plan-review`、`record-review`、`start-execute` 等其他子命令
 - 禁止直接编辑 `.ai-flow/state/*.json` 文件
 - 计划文件是执行和审查的唯一依据；变更必须写入计划各章节，不能仅记录在 `## 7` 审计表
 - 不得修改 `.ai-flow/state/{slug}.json` 中的固定 schema 字段（repair 状态转换除外）
 - 不得修改已有的审查报告
 - 新增步骤必须遵循当前 plan 模板的格式（目标、文件边界、`本轮 review 预期关注面`、执行动作、验证命令、预期结果、本步自检、验收条件、`本步关闭条件`、阻塞条件）
 - 新增或修改的动作必须用 `- [ ]` 未勾选状态，确保 execute 能识别为待执行
-- repair 只在需要从非执行状态转到 `IMPLEMENTING` 时使用；`PLANNED` 和 `IMPLEMENTING` 状态不需要 repair
+- repair 只在需要从非执行状态转到 `IMPLEMENTING` 时使用；`PLANNED` 和 `IMPLEMENTING` 状态使用 `revert-plan` 回退到 `AWAITING_PLAN_REVIEW`
 - root-cause-review-loop 不只是审计备注；必须把根因对应的缺陷族和定向验证矩阵同步补进 plan 正文
 
 ## 注意事项
 
 - 变更是增量编辑，不是重写。保留已有的已完成步骤和验收记录。
 - 如果用户要求完全推翻原有计划，建议使用 `/ai-flow-plan` 重新生成。
-- 变更后 execute 会从第一个未完成的 `- [ ]` 动作开始，确保新增和修改的动作都是未勾选状态。
+- 变更后需先通过 `/ai-flow-plan-review` 重新审核计划，审核通过后 execute 才会从第一个未完成的 `- [ ]` 动作开始。
 - review 会对比计划内容，所以变更后的步骤必须足够详细（文件路径、具体改动、验证命令）。
 - 如果当前有未提交的 Git 变更，变更计划后这些变更仍然存在，后续 execute 和 review 会基于最新的工作区状态操作。
