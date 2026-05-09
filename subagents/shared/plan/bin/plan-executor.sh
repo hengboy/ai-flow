@@ -147,19 +147,76 @@ discover_project_root_candidates() {
     printf '%s\n' "${candidates[@]}" | awk '!seen[$0]++'
 }
 
-has_workspace_manifest() {
+discover_scope_repos() {
+    # Scan immediate subdirectories for git repos; returns "id\tpath" lines.
     local dir="$1"
-    [ -f "$dir/.ai-flow/workspace.json" ]
+    local sub
+    while IFS= read -r sub; do
+        [ -z "$sub" ] && continue
+        if git -C "$dir/$sub" rev-parse --show-toplevel >/dev/null 2>&1; then
+            printf '%s\t%s\n' "$sub" "$sub"
+        fi
+    done < <(find "$dir" -mindepth 1 -maxdepth 1 -type d ! -path '*/.ai-flow*' ! -path '*/.*' 2>/dev/null | while IFS= read -r full; do basename "$full"; done | sort)
 }
 
-detect_workspace_context() {
-    # Returns "workspace:<path>" if workspace.json exists, empty otherwise
-    local dir="$1"
-    if [ -f "$dir/.ai-flow/workspace.json" ]; then
-        printf 'workspace:%s' "$dir"
+auto_init_workspace_manifest() {
+    # Already exists? nothing to do.
+    if has_workspace_manifest "$PROJECT_DIR"; then
         return 0
     fi
-    return 1
+
+    local ws_name
+    ws_name="$(basename "$PROJECT_DIR")"
+    mkdir -p "$FLOW_DIR"
+
+    # Strategy 1: single-repo — current dir itself is a git repo root
+    if git -C "$PROJECT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
+        cat > "$FLOW_DIR/workspace.json" <<EOF
+{
+  "schema_version": 1,
+  "name": "$ws_name",
+  "repos": [
+    { "id": "root", "path": "." }
+  ]
+}
+EOF
+        echo ">>> 自动初始化 workspace.json（单仓模式）: $FLOW_DIR/workspace.json"
+        return 0
+    fi
+
+    # Strategy 2: multi-repo — scan subdirectories for git repos
+    local -a repo_lines=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && repo_lines+=("$line")
+    done < <(discover_scope_repos "$PROJECT_DIR")
+
+    if [ "${#repo_lines[@]}" -gt 0 ]; then
+        local repos_json=""
+        for i in "${!repo_lines[@]}"; do
+            local repo_id repo_path
+            repo_id="$(printf '%s' "${repo_lines[$i]}" | cut -f1)"
+            repo_path="$(printf '%s' "${repo_lines[$i]}" | cut -f2)"
+            if [ "$i" -gt 0 ]; then
+                repos_json="${repos_json},"
+            fi
+            repos_json="${repos_json}
+    { \"id\": \"${repo_id}\", \"path\": \"${repo_path}\" }"
+        done
+        cat > "$FLOW_DIR/workspace.json" <<EOF
+{
+  "schema_version": 1,
+  "name": "$ws_name",
+  "repos": [${repos_json}
+  ]
+}
+EOF
+        echo ">>> 自动初始化 workspace.json（多仓模式，共 ${#repo_lines[@]} 个仓库）: $FLOW_DIR/workspace.json"
+        return 0
+    fi
+
+    # Strategy 3: not a git repo and no git sub-repos found — keep workspace.json absent
+    # Caller may still proceed in single_repo mode via flow-state.sh auto-detect
+    return 0
 }
 
 ensure_project_root_context() {
@@ -167,6 +224,11 @@ ensure_project_root_context() {
     local -a candidates=()
 
     if has_project_root_marker "$PROJECT_DIR"; then
+        auto_init_workspace_manifest
+        if has_workspace_manifest "$PROJECT_DIR"; then
+            WORKSPACE_ROOT="$PROJECT_DIR"
+            IS_WORKSPACE_MODE=1
+        fi
         return 0
     fi
 
