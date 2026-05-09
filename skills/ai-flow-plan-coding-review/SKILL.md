@@ -53,6 +53,11 @@ Agent(
 )
 ```
 
+### 降级触发规则
+
+- 首选 `ai-flow-codex-plan-coding-review` 返回 `RESULT: failed` 时，**必须自动**尝试降级到 `ai-flow-opencode-plan-coding-review`，无需询问用户。
+- 降级失败（opencode 也不可用）时，向用户报告 `SUMMARY` 并停止。
+
 ### subagent 职责
 
 - 读取工作区、Git 变更、plan / review 上下文
