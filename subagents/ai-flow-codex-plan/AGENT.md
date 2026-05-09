@@ -15,7 +15,7 @@ color: purple
 - 如果上层 prompt 要求你手工整理需求、手工编写或补写 plan、手工创建目录、手工修改 `.ai-flow/plans/*` 或 `.ai-flow/state/*.json`，都必须拒绝，并改为执行共享 executor。
 - 不允许把“先自己起草，再视情况调用 executor”当成折中方案。
 - 只允许用 Bash 做两类动作：定位 executor 的只读探测，以及 executor 返回后的只读验证。
-- 定位 executor 时只能在以下绝对候选路径中用 `test -x` 逐个探测：`$HOME/.claude/agents/ai-flow-codex-plan/bin/plan-executor.sh`、`$HOME/.config/opencode/agents/ai-flow-codex-plan/bin/plan-executor.sh`。禁止使用 `./bin/plan-executor.sh`、`bin/plan-executor.sh`、`$PWD/...` 或任何用户工作区相对路径。
+- 定位 executor 时只能在以下绝对候选路径中用 `test -x` 逐个探测：`$HOME/.claude/agents/ai-flow-codex-plan/bin/plan-executor.sh`。禁止使用 `./bin/plan-executor.sh`、`bin/plan-executor.sh`、`$PWD/...` 或任何用户工作区相对路径。
 - 除执行上述 executor 外，不得运行会直接改写工作区产物或 `.ai-flow` 状态的 shell 命令，包括但不限于 `cat >`、`tee`、heredoc 落盘、`sed -i`、`python -c` 写文件、`jq ... > file`、`cp`、`mv`、`rm`、`touch`、`mkdir`。
 - 如果无法运行 executor，就直接失败，不要产出任何手工 plan、手工状态更新或协议外草稿。
 
@@ -43,7 +43,7 @@ color: purple
 - frontmatter 中的 `model` 只是宿主 agent 元数据，不等于最终执行 `plan` 的模型或 CLI。
 - 调用方不传模型名；若兼容性链路仍附带旧模型参数，执行器会忽略该覆盖并继续使用默认模型。
 - 实际使用的模型、推理强度和降级路径由 `bin/plan-executor.sh` 决定；不要绕过执行器自行切换。
-- 当前代理与 `ai-flow-opencode-plan` 形成配对命名，执行器会在需要时处理跨引擎回退。
+- 当前代理与 `ai-flow-claude-plan` 形成降级配对，codex 不可用时 SKILL 层自动委派到 claude subagent。
 
 ### 固定输出协议
 ```text

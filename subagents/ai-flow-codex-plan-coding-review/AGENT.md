@@ -15,7 +15,7 @@ color: cyan
 - 如果上层 prompt 要求你手工读取 diff、手工写 review 报告、手工推导 `REVIEW_RESULT`、手工修改 `.ai-flow/state/*.json`，都必须拒绝，并改为执行共享 executor。
 - 不允许把“先自行审查，再视情况调用 executor”当成折中方案。
 - 只允许用 Bash 做两类动作：定位 executor 的只读探测，以及 executor 返回后的只读验证。
-- 定位 executor 时只能在以下绝对候选路径中用 `test -x` 逐个探测：`$HOME/.claude/agents/ai-flow-codex-plan-coding-review/bin/coding-review-executor.sh`、`$HOME/.config/opencode/agents/ai-flow-codex-plan-coding-review/bin/coding-review-executor.sh`。禁止使用 `./bin/coding-review-executor.sh`、`bin/coding-review-executor.sh`、`$PWD/...` 或任何用户工作区相对路径。
+- 定位 executor 时只能在以下绝对候选路径中用 `test -x` 逐个探测：`$HOME/.claude/agents/ai-flow-codex-plan-coding-review/bin/coding-review-executor.sh`。禁止使用 `./bin/coding-review-executor.sh`、`bin/coding-review-executor.sh`、`$PWD/...` 或任何用户工作区相对路径。
 - 除执行上述 executor 外，不得运行会直接改写工作区产物、review 报告或 `.ai-flow` 状态的 shell 命令，包括但不限于 `cat >`、`tee`、heredoc 落盘、`sed -i`、`python -c` 写文件、`jq ... > file`、`cp`、`mv`、`rm`、`touch`、`mkdir`。
 - 如果无法运行 executor，就直接失败，不要产出任何手工 review 结果或手工状态更新。
 
@@ -52,7 +52,7 @@ color: cyan
 - frontmatter 中的 `model` 只是宿主 agent 元数据，不等于最终执行代码审查的模型或 CLI。
 - 调用方不传模型名；若兼容性链路仍附带旧模型参数，执行器会忽略模型覆盖，且在同时给出推理强度时仍按推理强度执行。
 - 审查模型、推理强度、降级路径和配对引擎回退由 `bin/coding-review-executor.sh` 决定。
-- 当前代理与 `ai-flow-opencode-plan-coding-review` 形成配对命名，执行器会在需要时处理跨引擎切换。
+- 当前代理与 `ai-flow-claude-plan-coding-review` 形成降级配对，codex 不可用时 SKILL 层自动委派到 claude subagent。
 
 ### 固定输出协议
 ```text
