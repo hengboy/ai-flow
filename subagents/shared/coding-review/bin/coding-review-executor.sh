@@ -16,7 +16,6 @@ PROMPT_TEMPLATE="$AGENT_DIR/prompts/review-generation.md"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
-REVIEW_OPENCODE_MODEL="${AI_FLOW_REVIEW_OPENCODE_MODEL:-zhipuai-coding-plan/glm-5.1}"
 WORKSPACE_ROOT=""
 IS_WORKSPACE_MODE=0
 WORKSPACE_REPOS=()    # parallel arrays: _IDS and _PATHS
@@ -82,14 +81,6 @@ validate_installed_resources
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
-}
-
-map_reasoning_to_opencode_variant() {
-    case "$1" in
-        xhigh) echo "max" ;;
-        high) echo "high" ;;
-        *) echo "minimal" ;;
-    esac
 }
 
 trim_report_to_header() {
@@ -218,10 +209,7 @@ has_issue_status_marker() {
 }
 
 default_reasoning_for_engine() {
-    case "$1" in
-        opencode) echo "${AI_FLOW_OPENCODE_DEFAULT_REASONING:-max}" ;;
-        *) echo "${AI_FLOW_CODEX_DEFAULT_REASONING:-xhigh}" ;;
-    esac
+    echo "${AI_FLOW_CODEX_DEFAULT_REASONING:-xhigh}"
 }
 
 run_codex_review_prompt() {
@@ -241,20 +229,6 @@ run_codex_review_prompt() {
     fi
 
     printf '%s\n' "$prompt" | codex "${codex_args[@]}"
-}
-
-run_opencode_review_prompt() {
-    local prompt="$1"
-    local model_name="$2"
-    local reasoning="$3"
-    opencode run \
-        -m "$model_name" \
-        --variant "$reasoning" \
-        --dangerously-skip-permissions \
-        --format default \
-        --dir "$PROJECT_DIR" \
-        "$prompt" 2>/dev/null | sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' > "$REPORT_FILE"
-    trim_report_to_header "$REPORT_FILE"
 }
 
 is_codex_unavailable_error() {
@@ -754,21 +728,11 @@ mkdir -p "$(dirname "$REPORT_FILE")"
 ensure_reviewable_git_changes
 require_root_cause_review_loop_record
 
-OPENCODE_REASONING=$(map_reasoning_to_opencode_variant "$REASONING")
 ACTIVE_ENGINE="Codex"
 ACTIVE_MODEL="$MODEL"
 ACTIVE_REASONING="$REASONING"
-if [ "$AGENT_ENGINE" = "opencode" ]; then
-    ACTIVE_ENGINE="OpenCode"
-    ACTIVE_MODEL="${MODEL:-$REVIEW_OPENCODE_MODEL}"
-    ACTIVE_REASONING="${REASONING:-$(default_reasoning_for_engine opencode)}"
-elif [ "${AI_FLOW_REVIEW_FORCE_OPENCODE:-0}" = "1" ] || ! command -v codex >/dev/null 2>&1; then
-    if ! command -v opencode >/dev/null 2>&1; then
-        fail_protocol "Codex 不可用，且 opencode 未安装，无法执行审查"
-    fi
-    ACTIVE_ENGINE="OpenCode"
-    ACTIVE_MODEL="$REVIEW_OPENCODE_MODEL"
-    ACTIVE_REASONING="$OPENCODE_REASONING"
+if ! command -v codex >/dev/null 2>&1; then
+    ACTIVE_ENGINE="Codex(unavailable)"
 fi
 
 echo ">>> 匹配到状态: $SLUG [$PLAN_STATUS]"
@@ -834,39 +798,35 @@ fi
 
 REVIEW_PROMPT=$(render_prompt_template "$PROMPT_TEMPLATE")
 
-if [ "$ACTIVE_ENGINE" = "Codex" ]; then
-    echo ">>> 调用 codex ($MODEL) 审查中..."
-    stderr_file=$(mktemp)
-    set +e
-    run_codex_review_prompt "$REVIEW_PROMPT" 2>"$stderr_file"
-    rc=$?
-    set -e
-    if [ "$rc" -ne 0 ]; then
-        if is_codex_unavailable_error "$rc" "$stderr_file"; then
-            if ! command -v opencode >/dev/null 2>&1; then
-                emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
-                rm -f "$stderr_file"
-                fail_protocol "Codex 不可用，且 opencode 未安装，无法执行审查"
-            fi
-            emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
-            echo ">>> Codex 不可用，降级到 OpenCode ($REVIEW_OPENCODE_MODEL)"
-            ACTIVE_ENGINE="OpenCode"
-            ACTIVE_MODEL="$REVIEW_OPENCODE_MODEL"
-            ACTIVE_REASONING="$OPENCODE_REASONING"
-            TEMPLATE_CONTENT=$(render_template_content "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
-            REVIEW_PROMPT=$(render_prompt_template "$PROMPT_TEMPLATE")
-            run_opencode_review_prompt "$REVIEW_PROMPT" "$ACTIVE_MODEL" "$ACTIVE_REASONING"
-        else
-            emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
-            rm -f "$stderr_file"
-            fail_protocol "Codex 执行审查失败，且不属于可降级的不可用场景"
-        fi
-    fi
-    rm -f "$stderr_file"
-else
-    echo ">>> 调用 opencode ($ACTIVE_MODEL) 审查中..."
-    run_opencode_review_prompt "$REVIEW_PROMPT" "$ACTIVE_MODEL" "$ACTIVE_REASONING"
+if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ]; then
+    PROTOCOL_ARTIFACT="none"
+    PROTOCOL_STATE="$PLAN_STATUS"
+    PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan-coding-review。"
+    emit_current_protocol "degraded"
+    exit 0
 fi
+
+echo ">>> 调用 codex ($MODEL) 审查中..."
+stderr_file=$(mktemp)
+set +e
+run_codex_review_prompt "$REVIEW_PROMPT" 2>"$stderr_file"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+    if is_codex_unavailable_error "$rc" "$stderr_file"; then
+        emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
+        rm -f "$stderr_file"
+        PROTOCOL_ARTIFACT="none"
+        PROTOCOL_STATE="$PLAN_STATUS"
+        PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan-coding-review。"
+        emit_current_protocol "degraded"
+        exit 0
+    fi
+    emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
+    rm -f "$stderr_file"
+    fail_protocol "Codex 执行审查失败，且不属于可降级的不可用场景"
+fi
+rm -f "$stderr_file"
 
 echo ""
 echo ">>> 审查报告已生成: $REPORT_FILE"
@@ -1115,7 +1075,7 @@ case "$UPDATED_STATUS" in
         ;;
 esac
 
-if [ "$ACTIVE_ENGINE" = "OpenCode" ] && [ "$AGENT_ENGINE" = "codex" ]; then
-    PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 OpenCode。"
+if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ]; then
+    PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 ai-flow-claude-plan-coding-review。"
 fi
 emit_current_protocol

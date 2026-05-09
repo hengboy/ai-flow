@@ -32,7 +32,7 @@ PY
 derive_engine_from_name() {
     case "$1" in
         ai-flow-codex-*) echo "codex" ;;
-        ai-flow-opencode-*) echo "opencode" ;;
+        ai-flow-claude-*) echo "claude" ;;
         *) echo "" ;;
     esac
 }
@@ -48,8 +48,7 @@ derive_flow_role_from_name() {
 
 derive_fallback_agent_from_name() {
     case "$1" in
-        ai-flow-codex-*) echo "${1/ai-flow-codex-/ai-flow-opencode-}" ;;
-        ai-flow-opencode-*) echo "${1/ai-flow-opencode-/ai-flow-codex-}" ;;
+        ai-flow-codex-*) echo "${1/ai-flow-codex-/ai-flow-claude-}" ;;
         *) echo "" ;;
     esac
 }
@@ -90,16 +89,8 @@ require_file() {
 default_model_for_engine() {
     case "$1" in
         codex) echo "${AI_FLOW_CODEX_DEFAULT_MODEL:-gpt-5.4}" ;;
-        opencode) echo "${AI_FLOW_OPENCODE_DEFAULT_MODEL:-zhipuai-coding-plan/glm-5.1}" ;;
+        claude) echo "${AI_FLOW_CLAUDE_DEFAULT_MODEL:-opus}" ;;
         *) echo "${AI_FLOW_DEFAULT_MODEL:-gpt-5.4}" ;;
-    esac
-}
-
-map_reasoning_to_opencode_variant() {
-    case "${1:-}" in
-        xhigh) echo "max" ;;
-        high) echo "high" ;;
-        *) echo "minimal" ;;
     esac
 }
 

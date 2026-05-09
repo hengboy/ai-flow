@@ -34,10 +34,8 @@ TEMPLATE="$AGENT_DIR/templates/plan-template.md"
 PLAN_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-generation.md"
 PLAN_REVIEW_PROMPT_TEMPLATE="${AI_FLOW_PLAN_REVIEW_PROMPT_TEMPLATE:-$AGENT_DIR/prompts/plan-review.md}"
 PLAN_REVISION_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-revision.md"
-PLAN_OPENCODE_MODEL="${AI_FLOW_PLAN_OPENCODE_MODEL:-zhipuai-coding-plan/glm-5.1}"
 PLAN_REASONING="${AI_FLOW_PLAN_REASONING:-xhigh}"
 PLAN_REVIEW_REASONING="${AI_FLOW_PLAN_REVIEW_REASONING:-xhigh}"
-PLAN_ENGINE_FALLBACK_ACTIVE=false
 PLAN_ENGINE_NAME=""
 PLAN_ENGINE_MODEL=""
 REQUIREMENT=""
@@ -426,14 +424,6 @@ slug_exists() {
         return 0
     fi
     find "$FLOW_DIR/plans" -name "${candidate}.md" -type f 2>/dev/null | grep -q .
-}
-
-map_reasoning_to_opencode_variant() {
-    case "$1" in
-        xhigh) echo "max" ;;
-        high) echo "high" ;;
-        *) echo "minimal" ;;
-    esac
 }
 
 trim_generated_file_to_marker() {
@@ -978,19 +968,6 @@ run_codex_prompt() {
     printf '%s\n' "$prompt" | codex "${codex_args[@]}"
 }
 
-run_opencode_prompt() {
-    local prompt="$1"
-    local output_file="$2"
-    local variant="$3"
-    opencode run \
-        -m "$PLAN_OPENCODE_MODEL" \
-        --variant "$variant" \
-        --dangerously-skip-permissions \
-        --format default \
-        --dir "$PROJECT_DIR" \
-        "$prompt" 2>/dev/null | sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g' > "$output_file"
-}
-
 is_codex_unavailable_error() {
     local rc="$1"
     local stderr_file="$2"
@@ -1004,51 +981,37 @@ run_review_phase_prompt() {
     local prompt="$1"
     local output_file="$2"
     local marker="$3"
-    local variant
-    variant=$(map_reasoning_to_opencode_variant "$PLAN_REVIEW_REASONING")
 
-    if [ "${AI_FLOW_PLAN_REVIEW_FORCE_OPENCODE:-0}" = "1" ]; then
-        PLAN_ENGINE_FALLBACK_ACTIVE=true
+    if ! command -v codex >/dev/null 2>&1; then
+        PLAN_ENGINE_NAME="Codex(unavailable)"
+        echo ">>> 计划审核阶段 Codex 不可用，将输出 degraded 协议"
+        return 1
     fi
 
-    if [ "$PLAN_ENGINE_FALLBACK_ACTIVE" = false ]; then
-        if ! command -v codex >/dev/null 2>&1; then
-            PLAN_ENGINE_FALLBACK_ACTIVE=true
-        else
-            local stderr_file rc
-            stderr_file=$(mktemp)
-            set +e
-            run_codex_prompt "$prompt" "$output_file" "$PLAN_REVIEW_REASONING" 2>"$stderr_file"
-            rc=$?
-            set -e
-            if [ "$rc" -eq 0 ]; then
-                PLAN_ENGINE_NAME="Codex"
-                PLAN_ENGINE_MODEL="$MODEL"
-                trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
-                rm -f "$stderr_file"
-                return 0
-            fi
-            if is_codex_unavailable_error "$rc" "$stderr_file"; then
-                emit_captured_stderr "$stderr_file" "Codex 计划审核 stderr"
-                echo ">>> 计划审核阶段 Codex 不可用，降级到 OpenCode ($PLAN_OPENCODE_MODEL)"
-                PLAN_ENGINE_FALLBACK_ACTIVE=true
-            else
-                emit_captured_stderr "$stderr_file" "Codex 计划审核 stderr"
-                rm -f "$stderr_file"
-                echo "错误: Codex 执行计划审核阶段失败，且不属于可降级的不可用场景"
-                fail_protocol "Codex 执行计划审核阶段失败，且不属于可降级的不可用场景" "failed"
-            fi
-            rm -f "$stderr_file"
-        fi
+    local stderr_file rc
+    stderr_file=$(mktemp)
+    set +e
+    run_codex_prompt "$prompt" "$output_file" "$PLAN_REVIEW_REASONING" 2>"$stderr_file"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+        PLAN_ENGINE_NAME="Codex"
+        PLAN_ENGINE_MODEL="$MODEL"
+        trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
+        rm -f "$stderr_file"
+        return 0
     fi
-
-    if ! command -v opencode >/dev/null 2>&1; then
-        fail_protocol "计划审核阶段需要降级到 OpenCode，但 opencode 不可用" "failed"
+    if is_codex_unavailable_error "$rc" "$stderr_file"; then
+        emit_captured_stderr "$stderr_file" "Codex 计划审核 stderr"
+        rm -f "$stderr_file"
+        PLAN_ENGINE_NAME="Codex(unavailable)"
+        echo ">>> 计划审核阶段 Codex 不可用，将输出 degraded 协议"
+        return 1
     fi
-    run_opencode_prompt "$prompt" "$output_file" "$variant"
-    trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
-    PLAN_ENGINE_NAME="OpenCode"
-    PLAN_ENGINE_MODEL="$PLAN_OPENCODE_MODEL"
+    emit_captured_stderr "$stderr_file" "Codex 计划审核 stderr"
+    rm -f "$stderr_file"
+    echo "错误: Codex 执行计划审核阶段失败，且不属于可降级的不可用场景"
+    fail_protocol "Codex 执行计划审核阶段失败，且不属于可降级的不可用场景" "failed"
 }
 
 revise_plan_from_failed_review() {
@@ -1064,7 +1027,12 @@ revise_plan_from_failed_review() {
     revision_output=$(mktemp)
 
     echo ">>> 基于现有 draft plan 与审核意见修订 plan..."
-    run_plan_authoring_prompt "$revision_prompt" "$revision_output" "# 实施计划："
+    if ! run_plan_authoring_prompt "$revision_prompt" "$revision_output" "# 实施计划："; then
+        if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
+            rm -f "$revision_output" "$review_section_backup"
+            return 1
+        fi
+    fi
     mv "$revision_output" "$PLAN_FILE"
     restore_plan_review_record_section "$PLAN_FILE" "$review_section_backup"
     rm -f "$review_section_backup"
@@ -1077,51 +1045,37 @@ run_plan_authoring_prompt() {
     local prompt="$1"
     local output_file="$2"
     local marker="$3"
-    local variant
-    variant=$(map_reasoning_to_opencode_variant "$PLAN_REASONING")
 
-    if [ "${AI_FLOW_PLAN_FORCE_OPENCODE:-0}" = "1" ]; then
-        PLAN_ENGINE_FALLBACK_ACTIVE=true
+    if ! command -v codex >/dev/null 2>&1; then
+        PLAN_ENGINE_NAME="Codex(unavailable)"
+        echo ">>> Plan 阶段 Codex 不可用，将输出 degraded 协议"
+        return 1
     fi
 
-    if [ "$PLAN_ENGINE_FALLBACK_ACTIVE" = false ]; then
-        if ! command -v codex >/dev/null 2>&1; then
-            PLAN_ENGINE_FALLBACK_ACTIVE=true
-        else
-            local stderr_file rc
-            stderr_file=$(mktemp)
-            set +e
-            run_codex_prompt "$prompt" "$output_file" "$PLAN_REASONING" 2>"$stderr_file"
-            rc=$?
-            set -e
-            if [ "$rc" -eq 0 ]; then
-                PLAN_ENGINE_NAME="Codex"
-                PLAN_ENGINE_MODEL="$MODEL"
-                trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
-                rm -f "$stderr_file"
-                return 0
-            fi
-            if is_codex_unavailable_error "$rc" "$stderr_file"; then
-                emit_captured_stderr "$stderr_file" "Codex plan 生成 stderr"
-                echo ">>> Plan 阶段 Codex 不可用，降级到 OpenCode ($PLAN_OPENCODE_MODEL)"
-                PLAN_ENGINE_FALLBACK_ACTIVE=true
-            else
-                emit_captured_stderr "$stderr_file" "Codex plan 生成 stderr"
-                rm -f "$stderr_file"
-                echo "错误: Codex 执行 plan 生成/修订失败，且不属于可降级的不可用场景"
-                fail_protocol "Codex 执行 plan 生成/修订失败，且不属于可降级的不可用场景"
-            fi
-            rm -f "$stderr_file"
-        fi
+    local stderr_file rc
+    stderr_file=$(mktemp)
+    set +e
+    run_codex_prompt "$prompt" "$output_file" "$PLAN_REASONING" 2>"$stderr_file"
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+        PLAN_ENGINE_NAME="Codex"
+        PLAN_ENGINE_MODEL="$MODEL"
+        trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
+        rm -f "$stderr_file"
+        return 0
     fi
-
-    if ! command -v opencode >/dev/null 2>&1; then
-        fail_protocol "Plan 阶段需要降级到 OpenCode，但 opencode 不可用"
+    if is_codex_unavailable_error "$rc" "$stderr_file"; then
+        emit_captured_stderr "$stderr_file" "Codex plan 生成 stderr"
+        rm -f "$stderr_file"
+        PLAN_ENGINE_NAME="Codex(unavailable)"
+        echo ">>> Plan 阶段 Codex 不可用，将输出 degraded 协议"
+        return 1
     fi
-    run_opencode_prompt "$prompt" "$output_file" "$variant"
-    trim_generated_file_to_marker "$output_file" "$marker" "$SLUG"
-    PLAN_ENGINE_NAME="OpenCode"
-    PLAN_ENGINE_MODEL="$PLAN_OPENCODE_MODEL"
+    emit_captured_stderr "$stderr_file" "Codex plan 生成 stderr"
+    rm -f "$stderr_file"
+    echo "错误: Codex 执行 plan 生成/修订失败，且不属于可降级的不可用场景"
+    fail_protocol "Codex 执行 plan 生成/修订失败，且不属于可降级的不可用场景"
 }
 
 state_json_value() {
@@ -1267,7 +1221,15 @@ PY
     local_review_items=$(mktemp)
     echo ">>> 执行第 ${REVIEW_ROUND} 轮计划审核..."
     echo "    目标需求: $SLUG [$PLAN_STATUS]"
-    run_review_phase_prompt "$REVIEW_PROMPT" "$local_review_output" "RESULT:"
+    if ! run_review_phase_prompt "$REVIEW_PROMPT" "$local_review_output" "RESULT:"; then
+        if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
+            PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
+            PROTOCOL_STATE="$PLAN_STATUS"
+            PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan-review。"
+            emit_current_protocol "degraded"
+            exit 0
+        fi
+    fi
 
     review_meta_output=$(parse_plan_review_response "$local_review_output" "$local_review_items")
     REVIEW_RESULT=$(printf '%s\n' "$review_meta_output" | sed -n '1p')
@@ -1322,8 +1284,8 @@ PY
         PROTOCOL_NEXT="ai-flow-plan"
         PROTOCOL_SUMMARY="计划审核未通过，状态进入 [$CURRENT_STATUS]，请先修订 draft plan。"
     fi
-    if [ "$PLAN_ENGINE_NAME" = "OpenCode" ] && [ "$AGENT_ENGINE" = "codex" ]; then
-        PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 OpenCode。"
+    if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
+        PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 ai-flow-claude-plan-review。"
     fi
     emit_current_protocol "$REVIEW_RESULT"
     exit 0
@@ -1456,7 +1418,16 @@ if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
     PLAN_REVIEW_ITEMS_FOR_PROMPT=$(cat "$local_review_items")
     echo ">>> 修订现有 draft plan: $SLUG [$PLAN_STATUS]"
     echo "    计划文件: $PLAN_FILE"
-    revise_plan_from_failed_review "1" "$local_review_items"
+    if ! revise_plan_from_failed_review "1" "$local_review_items"; then
+        if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
+            rm -f "$local_review_items"
+            PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
+            PROTOCOL_STATE="$PLAN_STATUS"
+            PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan。"
+            emit_current_protocol "degraded"
+            exit 0
+        fi
+    fi
     rm -f "$local_review_items"
     echo "    状态保持 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"
@@ -1468,7 +1439,15 @@ else
     echo "    检测到技术栈: $DETECT_STACK"
     echo ""
     PLAN_PROMPT=$(render_prompt_template "$PLAN_PROMPT_TEMPLATE")
-    run_plan_authoring_prompt "$PLAN_PROMPT" "$PLAN_FILE" "# 实施计划："
+    if ! run_plan_authoring_prompt "$PLAN_PROMPT" "$PLAN_FILE" "# 实施计划："; then
+        if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
+            PROTOCOL_ARTIFACT="none"
+            PROTOCOL_STATE="none"
+            PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan。"
+            emit_current_protocol "degraded"
+            exit 0
+        fi
+    fi
     ensure_requirement_literal "$PLAN_FILE"
     echo ""
     echo ">>> 校验 draft plan 结构..."
@@ -1491,7 +1470,7 @@ else
     PROTOCOL_SUMMARY="draft plan 生成完成，状态进入 [$PLAN_STATUS]。"
 fi
 
-if [ "$PLAN_ENGINE_NAME" = "OpenCode" ] && [ "$AGENT_ENGINE" = "codex" ]; then
-    PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 OpenCode。"
+if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
+    PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 ai-flow-claude-plan。"
 fi
 emit_current_protocol
