@@ -41,7 +41,7 @@
 
 运行时语义不再由 `meta.yaml` 或 `index.yaml` 提供，而是由：
 
-- agent 名称约定推导 `codex` / `opencode`
+- agent 名称约定推导 `codex` / `claude`（降级）
 - agent 名称约定推导 `plan` / `plan_review` / `coding_review`
 - 与角色匹配的共享执行器 `bin/*.sh` 承担完整执行逻辑
 
@@ -157,7 +157,7 @@ ai-flow/
 ├── subagents/
 │   ├── ai-flow-codex-*/
 │   │   └── AGENT.md
-│   ├── ai-flow-opencode-*/
+│   ├── ai-flow-claude-*/
 │   │   └── AGENT.md
 │   └── shared/
 │       ├── lib/agent-common.sh
@@ -205,7 +205,7 @@ bash install.sh
 1. 安装全部 `skills/*/SKILL.md` 到 Claude 和 OneSpace skill 目录。
 2. 不再安装任何 `skills/*/scripts/*`、`skills/*/prompts/*`、`skills/*/templates/*` 旧公开入口。
 3. 安装 `runtime/scripts/flow-state.sh`、`flow-status.sh`、`flow-change.sh` 到 `$AI_FLOW_HOME/scripts/`。
-4. 安装全部 subagent 到 Claude / OpenCode / OneSpace agents 目录。
+4. 安装全部 subagent 到 Claude agents 目录。
 5. 将 `subagents/shared/lib/*` 与当前角色需要的共享子集叠加到每个已安装 agent 目录。
 6. 删除旧的 `~/.claude/workflows`、`~/.claude/templates` 和遗留 skill 名称 `ai-flow-execute`、`ai-flow-review`。
 
@@ -214,17 +214,14 @@ bash install.sh
 - `CLAUDE_HOME`
 - `AI_FLOW_HOME`
 - `CLAUDE_AGENTS_DIR`
-- `OPENCODE_AGENTS_DIR`
 - `ONSPACE_SKILLS_DIR`
 - `ONSPACE_SUBAGENTS_CLAUDE_DIR`
-- `ONSPACE_SUBAGENTS_OPENCODE_DIR`
 
 安装后布局：
 
 - `~/.claude/skills/<skill>/`：skill 定义
 - `$AI_FLOW_HOME/scripts/`：公共 runtime
 - `~/.claude/agents/<agent>/`：`AGENT.md`、该角色所需的 `bin/`、`prompts/`、`templates/`，以及共享 `lib/`
-- `~/.config/opencode/agents/<agent>/`：同上
 
 ## 运行模式
 
@@ -506,7 +503,7 @@ bash tests/run.sh
   - adhoc review
   - 无 Git 变更拒绝
   - root-cause gate
-  - fallback 到 OpenCode
+  - degraded 降级到 ai-flow-claude-*
 - `tests/test_runtime_workspace_state.sh`
   - workspace 模式 state 创建与 manifest 校验
   - 旧状态 normalize 注入 `execution_scope`
@@ -529,7 +526,7 @@ bash tests/run.sh
 - `installed_runtime_script`
 - `installed_subagent_asset`
 - `installed_subagent_executor`
-- fake Codex / OpenCode
+- fake Codex
 - 临时项目、Git 仓库、状态文件、计划 / 报告夹具
 
 ## 兼容性说明
