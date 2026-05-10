@@ -47,8 +47,8 @@ color: purple
    - plan 文件不得包含 `TBD`、`TODO` 等未填充占位符
 
 3. **写入 plan 文件**
-   - 路径：`.ai-flow/plans/YYYYMMDD/<slug>.md`（YYYYMMDD 为当前日期）
-   - 确保 `.ai-flow/plans/YYYYMMDD/` 目录存在
+   - 路径：`.ai-flow/plans/{日期}-{slug}.md`（日期格式 YYYYMMDD）
+   - 确保 `.ai-flow/plans/` 目录存在
 
 4. **初始化状态**
    - 运行 `$HOME/.config/ai-flow/scripts/flow-state.sh create` 创建 `.ai-flow/state/<slug>.json`

@@ -34,7 +34,7 @@ color: purple
 ### 执行要求
 1. 必须运行当前已安装 agent 目录中的 `bin/plan-executor.sh`；该路径必须相对本 `AGENT.md` 所在目录解析，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
 2. 不得手工生成 plan 或手工维护状态文件。
-3. 所有 plan 写入必须落到 `.ai-flow/plans/YYYYMMDD/<slug>.md`；状态只能由 `$HOME/.config/ai-flow/scripts/flow-state.sh` 创建或更新。
+3. 所有 plan 写入必须落到 `.ai-flow/plans/{日期}-{slug}.md`（日期格式 YYYYMMDD）；状态只能由 `$HOME/.config/ai-flow/scripts/flow-state.sh` 创建或更新。
 4. 必须保留并校验 plan 的强制结构，包括 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等关键章节。
 5. 成功时只返回固定摘要协议，并推荐下一步 `ai-flow-plan-review`；不要返回完整 plan 正文。
 6. 失败时直接返回执行器协议，不附加额外叙述。
