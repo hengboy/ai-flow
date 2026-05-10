@@ -644,7 +644,6 @@ ROUND_OVERRIDE=""
 ARG2="${2:-}"
 ARG3="${3:-}"
 ARG4="${4:-}"
-DATE_DIR="$(date +%Y%m%d)"
 STATE_FILE=""
 
 MATCHED_STATES=()

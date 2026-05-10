@@ -28,8 +28,8 @@ else
     SLUG="${2:-}"
 fi
 
-DATE_DIR="$(date +%Y%m%d)"
-PLANS_DIR="$FLOW_DIR/plans/$DATE_DIR"
+DATE_PREFIX="$(date +%Y%m%d)"
+PLANS_DIR="$FLOW_DIR/plans"
 WORKSPACE_ROOT=""
 IS_WORKSPACE_MODE=0
 TEMPLATE="$AGENT_DIR/templates/plan-template.md"
@@ -425,7 +425,7 @@ slug_exists() {
     if [ -f "$STATE_DIR/${candidate}.json" ]; then
         return 0
     fi
-    find "$FLOW_DIR/plans" -name "${candidate}.md" -type f 2>/dev/null | grep -q .
+    find "$FLOW_DIR/plans" -name "*-${candidate}.md" -type f 2>/dev/null | grep -q .
 }
 
 trim_generated_file_to_marker() {
@@ -554,6 +554,9 @@ validate_plan_structure() {
         if ! echo "$first_line" | grep -qE '^# 实施计划：'; then
             errors="${errors}首行必须是 '# 实施计划：...'\n"
         fi
+        if ! head -10 "$plan_file" | grep -q '^> '; then
+            errors="${errors}文件头部元数据必须使用 '> ' 引用块格式\n"
+        fi
         for section in \
             "## 1. 需求概述" \
             "## 2. 技术分析" \
@@ -568,7 +571,15 @@ validate_plan_structure() {
             fi
         done
         for section in \
+            "### 2.1 涉及模块" \
+            "### 2.2 数据模型变更" \
+            "### 2.3 API 变更" \
+            "### 2.4 依赖影响" \
+            "### 2.5 文件边界总览" \
             "### 2.6 高风险路径与缺陷族" \
+            "### 4.1 单元测试" \
+            "### 4.2 集成测试" \
+            "### 4.3 回归验证" \
             "### 4.4 定向验证矩阵" \
             "### 8.1 当前审核结论" \
             "### 8.2 偏差与建议" \
@@ -577,9 +588,15 @@ validate_plan_structure() {
                 errors="${errors}缺少强制小节: $section\n"
             fi
         done
-        if ! grep -Fq '**原始需求（原文）**' "$plan_file"; then
-            errors="${errors}缺少原始需求（原文）字段\n"
-        fi
+        for field in \
+            '**目标**' \
+            '**背景**' \
+            '**原始需求（原文）**' \
+            '**非目标**'; do
+            if ! grep -Fq "$field" "$plan_file"; then
+                errors="${errors}## 1. 需求概述缺少强制字段: $field\n"
+            fi
+        done
         if ! grep -q '^### Step ' "$plan_file"; then
             errors="${errors}缺少可执行 Step\n"
         fi
@@ -597,6 +614,9 @@ validate_plan_structure() {
         fi
         if ! grep -q '\*\*本步关闭条件\*\*' "$plan_file"; then
             errors="${errors}缺少 Step 级别的本步关闭条件\n"
+        fi
+        if ! grep -q '\*\*阻塞条件\*\*' "$plan_file"; then
+            errors="${errors}缺少 Step 级别的阻塞条件\n"
         fi
         if ! awk '
             /^### 2\.6 高风险路径与缺陷族/ {in_section=1; next}
@@ -729,6 +749,32 @@ PY
                 errors="${errors}计划审核记录缺少 execute 门禁结论\n"
             fi
         fi
+    fi
+
+    # Check: no custom top-level sections beyond ## 1. - ## 8.
+    if ! python3 - "$plan_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+allowed = {"## 1. 需求概述", "## 2. 技术分析", "## 3. 实施步骤", "## 4. 测试计划", "## 5. 风险与注意事项", "## 6. 验收标准", "## 7. 需求变更记录", "## 8. 计划审核记录"}
+found = set(re.findall(r"(?m)^## .+$", text))
+unexpected = found - allowed
+sys.exit(1 if unexpected else 0)
+PY
+    then
+        local extra_sections
+        extra_sections=$(python3 - "$plan_file" <<'PY'
+import re
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+allowed = {"## 1. 需求概述", "## 2. 技术分析", "## 3. 实施步骤", "## 4. 测试计划", "## 5. 风险与注意事项", "## 6. 验收标准", "## 7. 需求变更记录", "## 8. 计划审核记录"}
+found = set(re.findall(r"(?m)^## .+$", text))
+unexpected = found - allowed
+print("; ".join(sorted(unexpected)))
+PY
+)
+        errors="${errors}存在模板未定义的顶级章节: $extra_sections\n"
     fi
 
     if [ -n "$errors" ]; then
@@ -1197,7 +1243,7 @@ PY
 }
 
 ensure_project_root_context
-mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports/$DATE_DIR" "$STATE_DIR"
+mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports/$DATE_PREFIX" "$STATE_DIR"
 
 if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
     STATE_FILE=$(find_state_file_by_keyword "$MATCH_KEYWORD")
@@ -1322,7 +1368,7 @@ else
     if [ -n "$ENG_WORDS" ]; then
         SLUG=$(echo "$ENG_WORDS" | tr '[:upper:]' '[:lower:]')
     else
-        SLUG="plan-$DATE_DIR"
+        SLUG="plan-$DATE_PREFIX"
     fi
 fi
 
@@ -1330,7 +1376,7 @@ if ! echo "$SLUG" | grep -qE '^[a-z0-9][a-z0-9-]*$'; then
     fail_protocol "英文简称 '$SLUG' 包含非法字符，只允许小写字母、数字和连字符（-）"
 fi
 
-EXISTING_STATE_FILE="$STATE_DIR/$SLUG.json"
+EXISTING_STATE_FILE="$STATE_DIR/${DATE_PREFIX}-${SLUG}.json"
 if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
     PLAN_STATUS=$(state_json_value "$EXISTING_STATE_FILE" "current_status")
     PLAN_FILE=$(state_json_value "$EXISTING_STATE_FILE" "plan_file")
@@ -1361,7 +1407,7 @@ else
     if slug_exists "$SLUG"; then
         fail_protocol "同名计划或状态已存在: $SLUG；如需重新生成，请先清理对应的 .ai-flow/state/${SLUG}.json 和计划文件，或更换简称"
     fi
-    PLAN_FILE="$PLANS_DIR/$SLUG.md"
+    PLAN_FILE="$PLANS_DIR/${DATE_PREFIX}-${SLUG}.md"
 fi
 PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
 
@@ -1486,11 +1532,11 @@ else
 
     echo ">>> 初始化状态文件..."
     if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
-        AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE" --scope-mode workspace --workspace-file .ai-flow/workspace.json
+        AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "${DATE_PREFIX}-${SLUG}" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE" --scope-mode workspace --workspace-file .ai-flow/workspace.json
     else
-        AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "$SLUG" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
+        AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "${DATE_PREFIX}-${SLUG}" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
     fi
-    PLAN_STATUS=$("$FLOW_STATE_SH" show "$SLUG" --field current_status)
+    PLAN_STATUS=$("$FLOW_STATE_SH" show "${DATE_PREFIX}-${SLUG}" --field current_status)
     echo "    状态已验证为 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"
     PROTOCOL_NEXT="ai-flow-plan-review"
