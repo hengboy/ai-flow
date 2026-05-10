@@ -21,10 +21,10 @@ test_plan_generation_protocol_and_state() {
 
     assert_protocol_field "$out" "RESULT" "success"
     assert_protocol_field "$out" "AGENT" "ai-flow-codex-plan"
-    assert_protocol_field "$out" "ARTIFACT" ".ai-flow/plans/$today/user-permission.md"
+    assert_protocol_field "$out" "ARTIFACT" ".ai-flow/plans/${today}-user-permission.md"
     assert_protocol_field "$out" "STATE" "AWAITING_PLAN_REVIEW"
     assert_protocol_field "$out" "NEXT" "ai-flow-plan-review"
-    assert_file_exists "$project/.ai-flow/plans/$today/user-permission.md"
+    assert_file_exists "$project/.ai-flow/plans/${today}-user-permission.md"
     assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "user-permission" "current_status")"
     rm -rf "$temp_root"
 }
@@ -109,9 +109,9 @@ test_plan_generation_allows_negative_tbd_references() {
     out="$temp_root/plan-guard.out"
 
     assert_protocol_field "$out" "RESULT" "success"
-    assert_protocol_field "$out" "ARTIFACT" ".ai-flow/plans/$today/guard-notes.md"
-    assert_file_exists "$project/.ai-flow/plans/$today/guard-notes.md"
-    assert_contains "$project/.ai-flow/plans/$today/guard-notes.md" '计划文件不得包含 `TBD`、`TODO`'
+    assert_protocol_field "$out" "ARTIFACT" ".ai-flow/plans/${today}-guard-notes.md"
+    assert_file_exists "$project/.ai-flow/plans/${today}-guard-notes.md"
+    assert_contains "$project/.ai-flow/plans/${today}-guard-notes.md" '计划文件不得包含 `TBD`、`TODO`'
     assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "guard-notes" "current_status")"
     rm -rf "$temp_root"
 }

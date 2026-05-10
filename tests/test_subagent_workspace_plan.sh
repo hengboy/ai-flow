@@ -23,8 +23,8 @@ test_workspace_plan_accepts_manifest_root() {
 
     assert_protocol_field "$out" "RESULT" "success"
     assert_protocol_field "$out" "STATE" "AWAITING_PLAN_REVIEW"
-    assert_protocol_field "$out" "ARTIFACT" ".ai-flow/plans/$today/workspace-perms.md"
-    assert_file_exists "$workspace/.ai-flow/plans/$today/workspace-perms.md"
+    assert_protocol_field "$out" "ARTIFACT" ".ai-flow/plans/${today}-workspace-perms.md"
+    assert_file_exists "$workspace/.ai-flow/plans/${today}-workspace-perms.md"
 
     # State should record workspace execution_scope
     assert_equals "2" "$(state_field "$workspace" "workspace-perms" "schema_version")"
@@ -49,7 +49,7 @@ test_workspace_plan_writes_artifacts_at_workspace_root() {
     )
 
     # Plan and state should be at workspace root, not in a sub-repo
-    assert_file_exists "$workspace/.ai-flow/plans/$today/ws-artifacts.md"
+    assert_file_exists "$workspace/.ai-flow/plans/${today}-ws-artifacts.md"
     assert_file_exists "$workspace/.ai-flow/state/ws-artifacts.json"
     rm -rf "$temp_root"
 }

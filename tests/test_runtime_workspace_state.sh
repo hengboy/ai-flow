@@ -13,7 +13,7 @@ test_workspace_state_create_with_manifest() {
 
     (
         cd "$workspace"
-        bash "$state_script" create --slug ws-plan --title "workspace plan" --plan-file .ai-flow/plans/20260503/ws-plan.md \
+        bash "$state_script" create --slug ws-plan --title "workspace plan" --plan-file .ai-flow/plans/20260503-ws-plan.md \
             --scope-mode workspace --workspace-file .ai-flow/workspace.json >/dev/null
     )
 
@@ -48,7 +48,7 @@ test_workspace_state_validate_rejects_missing_repo() {
     set +e
     (
         cd "$workspace"
-        bash "$state_script" create --slug bad --title "bad" --plan-file .ai-flow/plans/20260503/bad.md \
+        bash "$state_script" create --slug bad --title "bad" --plan-file .ai-flow/plans/20260503-bad.md \
             --scope-mode workspace --workspace-file .ai-flow/workspace.json >"$temp_root/bad.out" 2>&1
     )
     rc=$?
@@ -91,7 +91,7 @@ WS
     set +e
     (
         cd "$workspace"
-        bash "$SOURCE_FLOW_STATE_SCRIPT" create --slug dup --title "dup" --plan-file .ai-flow/plans/20260503/dup.md \
+        bash "$SOURCE_FLOW_STATE_SCRIPT" create --slug dup --title "dup" --plan-file .ai-flow/plans/20260503-dup.md \
             --scope-mode workspace --workspace-file .ai-flow/workspace.json >"$temp_root/dup.out" 2>&1
     )
     rc=$?
@@ -111,7 +111,7 @@ test_single_repo_state_normalize_adds_execution_scope() {
     # Create a state with schema_version 1 (old format, no execution_scope)
     (
         cd "$project"
-        bash "$state_script" create --slug legacy --title "legacy" --plan-file .ai-flow/plans/20260503/legacy.md >/dev/null
+        bash "$state_script" create --slug legacy --title "legacy" --plan-file .ai-flow/plans/20260503-legacy.md >/dev/null
         bash "$state_script" normalize --slug legacy --note "add execution scope" >/dev/null
     )
 
@@ -130,7 +130,7 @@ test_workspace_state_create_without_manifest_defaults_to_single_repo() {
 
     (
         cd "$project"
-        bash "$state_script" create --slug default-scope --title "default scope" --plan-file .ai-flow/plans/20260503/default-scope.md >/dev/null
+        bash "$state_script" create --slug default-scope --title "default scope" --plan-file .ai-flow/plans/20260503-default-scope.md >/dev/null
     )
 
     assert_equals "single_repo" "$(state_field "$project" "default-scope" "execution_scope.mode")"

@@ -11,7 +11,7 @@ test_workspace_change_updates_workspace_owned_plan() {
     setup_workspace_root "$workspace" "change-ws"
     setup_workspace_git_repos "$workspace"
     create_workspace_state_fixture "$state_script" "$workspace" "ws-change" "PLANNED" "20260503" "workspace-change-test"
-    plan_file="$workspace/.ai-flow/plans/20260503/ws-change.md"
+    plan_file="$workspace/.ai-flow/plans/20260503-ws-change.md"
 
     (
         cd "$workspace"

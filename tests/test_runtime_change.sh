@@ -9,7 +9,7 @@ test_change_appends_audit_rows() {
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "demo" "PLANNED" "20260503" "demo"
-    plan_file="$project/.ai-flow/plans/20260503/demo.md"
+    plan_file="$project/.ai-flow/plans/20260503-demo.md"
 
     (
         cd "$project"

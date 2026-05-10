@@ -171,7 +171,7 @@ test_root_cause_gate_and_fallback() {
 
     (
         cd "$project"
-        write_review_report_fixture ".ai-flow/reports/20260503/demo-review.md" "demo" ".ai-flow/plans/20260503/demo.md" "regular" "1" "failed" "demo"
+        write_review_report_fixture ".ai-flow/reports/20260503/demo-review.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "1" "failed" "demo"
         bash "$runtime_script" record-review --slug demo --mode regular --result failed --report-file .ai-flow/reports/20260503/demo-review.md >/dev/null || true
     ) >/dev/null 2>&1 || true
 
@@ -180,7 +180,7 @@ test_root_cause_gate_and_fallback() {
         bash "$runtime_script" repair --slug demo --status REVIEW_FAILED --note "fixture align" >/dev/null
         bash "$runtime_script" start-fix demo >/dev/null
         bash "$runtime_script" finish-fix demo >/dev/null
-        write_review_report_fixture ".ai-flow/reports/20260503/demo-review-v2.md" "demo" ".ai-flow/plans/20260503/demo.md" "regular" "2" "failed" "demo"
+        write_review_report_fixture ".ai-flow/reports/20260503/demo-review-v2.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "2" "failed" "demo"
         bash "$runtime_script" record-review --slug demo --mode regular --result failed --report-file .ai-flow/reports/20260503/demo-review-v2.md >/dev/null
         bash "$runtime_script" start-fix demo >/dev/null
         bash "$runtime_script" finish-fix demo >/dev/null

@@ -13,7 +13,7 @@ test_plan_review_passed_with_notes() {
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
-    plan_file="$project/.ai-flow/plans/20260503/demo.md"
+    plan_file="$project/.ai-flow/plans/20260503-demo.md"
 
     (
         cd "$project"
@@ -45,7 +45,7 @@ test_plan_review_failed() {
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
-    plan_file="$project/.ai-flow/plans/20260503/demo.md"
+    plan_file="$project/.ai-flow/plans/20260503-demo.md"
 
     (
         cd "$project"
@@ -76,7 +76,7 @@ test_plan_review_failed_then_passed_with_notes_returns_planned() {
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
-    plan_file="$project/.ai-flow/plans/20260503/demo.md"
+    plan_file="$project/.ai-flow/plans/20260503-demo.md"
 
     (
         cd "$project"
@@ -110,7 +110,7 @@ test_plan_review_degraded_when_codex_unavailable() {
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
-    plan_file="$project/.ai-flow/plans/20260503/demo.md"
+    plan_file="$project/.ai-flow/plans/20260503-demo.md"
 
     (
         cd "$project"
@@ -133,7 +133,7 @@ test_plan_review_codex_mode_fails_when_codex_unavailable() {
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
-    plan_file="$project/.ai-flow/plans/20260503/demo.md"
+    plan_file="$project/.ai-flow/plans/20260503-demo.md"
 
     (
         cd "$project"
