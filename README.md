@@ -188,7 +188,7 @@ ai-flow/
 
 ```text
 .ai-flow/
-├── plans/YYYYMMDD/<slug>.md
+├── plans/{日期}-{slug}.md
 ├── reports/YYYYMMDD/<slug>-review*.md
 ├── reports/adhoc/YYYYMMDD/*.md
 └── state/<slug>.json
