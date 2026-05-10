@@ -11,6 +11,8 @@ description: 执行缺陷修复；绑定 slug 时遵守 plan-coding 状态门禁
 
 ## 规则
 
+> **行为准则**：编码前请遵守 [CLAUDE.md](../../CLAUDE.md) — 先思考再编码、简洁优先、精准修改、目标驱动执行。
+
 - 绑定 `slug` 时：沿用 `/ai-flow-plan-coding` 的状态门禁和收尾方式
 - 无 `slug` 时：允许独立执行，不创建也不修改 `.ai-flow/state`
 - 独立修复完成后，如需审查，统一使用 `/ai-flow-plan-coding-review`

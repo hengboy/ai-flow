@@ -135,6 +135,37 @@ install_runtime_root() {
     fi
 }
 
+sync_claude_md() {
+    local project_claude_md="$ROOT_DIR/CLAUDE.md"
+    local global_claude_md="$CLAUDE_HOME/CLAUDE.md"
+
+    # Skip if project CLAUDE.md doesn't exist
+    [ -f "$project_claude_md" ] || return 0
+
+    # If global CLAUDE.md doesn't exist, copy the entire project file
+    if [ ! -f "$global_claude_md" ]; then
+        mkdir -p "$CLAUDE_HOME"
+        cp "$project_claude_md" "$global_claude_md"
+        echo "Installed CLAUDE.md to $CLAUDE_HOME"
+        return 0
+    fi
+
+    # Check if behavior guidelines are already synced (use "# 行为准则" as marker)
+    if grep -q "# 行为准则" "$global_claude_md" 2>/dev/null; then
+        echo "CLAUDE.md 行为准则已安装，跳过"
+        return 0
+    fi
+
+    # Append entire project CLAUDE.md content to global file
+    # Ensure global file ends with a newline before appending
+    if [ -n "$(tail -c 1 "$global_claude_md")" ]; then
+        echo "" >> "$global_claude_md"
+    fi
+    echo "" >> "$global_claude_md"
+    cat "$project_claude_md" >> "$global_claude_md"
+    echo "已同步行为准则到 $global_claude_md"
+}
+
 # --- Phase 1: Remove all previously installed AI Flow files ---
 
 remove_legacy_claude_layout
@@ -195,3 +226,7 @@ done
 
 echo "Installed AI Flow subagents to $CLAUDE_AGENTS_DIR"
 echo "Synced AI Flow subagents to $ONSPACE_SUBAGENTS_CLAUDE_DIR"
+
+# --- Phase 3: Sync CLAUDE.md ---
+
+sync_claude_md

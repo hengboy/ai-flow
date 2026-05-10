@@ -53,6 +53,19 @@ derive_fallback_agent_from_name() {
     esac
 }
 
+resolve_engine_mode() {
+    local mode="${AI_FLOW_ENGINE_MODE:-auto}"
+    case "$mode" in
+        auto|"") echo "" ;;
+        claude) echo "claude" ;;
+        codex) echo "codex" ;;
+        *)
+            echo "警告: AI_FLOW_ENGINE_MODE=\"$mode\" 无效，已回退到 auto" >&2
+            echo ""
+            ;;
+    esac
+}
+
 display_path() {
     local base="$1"
     local path="$2"
@@ -129,6 +142,19 @@ if [ -n "${AGENT_DIR:-}" ] && [ -f "$AGENT_DIR/AGENT.md" ]; then
     [ -n "$FLOW_ROLE" ] || FLOW_ROLE="$(derive_flow_role_from_name "$AGENT_NAME")"
     [ -n "$FALLBACK_AGENT" ] || FALLBACK_AGENT="$(derive_fallback_agent_from_name "$AGENT_NAME")"
 fi
+
+# Apply AI_FLOW_ENGINE_MODE override after name-based derivation.
+ENGINE_MODE_OVERRIDE="$(resolve_engine_mode)"
+case "$ENGINE_MODE_OVERRIDE" in
+    claude)
+        AGENT_ENGINE="claude"
+        FALLBACK_AGENT=""
+        ;;
+    codex)
+        AGENT_ENGINE="codex"
+        FALLBACK_AGENT=""
+        ;;
+esac
 
 # Source workspace helpers when available (kept separate for overlay safety).
 if [ -f "$SCRIPT_DIR/workspace-common.sh" ]; then

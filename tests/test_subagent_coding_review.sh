@@ -202,7 +202,8 @@ test_root_cause_gate_and_fallback() {
         FAKE_REVIEW_CODEX_MODE=unavailable run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/root-cause-pass.out"
     )
 
-    assert_protocol_field "$temp_root/root-cause-pass.out" "RESULT" "degraded"
+    assert_protocol_field "$temp_root/root-cause-pass.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/root-cause-pass.out" "REVIEW_RESULT" "degraded"
     assert_contains "$temp_root/root-cause-pass.out" "Codex 不可用"
     rm -rf "$temp_root"
 }
@@ -239,3 +240,24 @@ test_adhoc_review_without_slug
 test_no_git_changes_rejected
 test_root_cause_gate_and_fallback
 test_coding_review_ignores_model_override_but_keeps_reasoning
+test_coding_review_codex_mode_fails_when_codex_unavailable() {
+    local temp_root project runtime_script executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_coding_review_agents "$temp_root"
+    runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_REVIEW" "20260503" "demo"
+    setup_git_repo_with_change "$project"
+
+    (
+        cd "$project"
+        AI_FLOW_ENGINE_MODE=codex FAKE_REVIEW_CODEX_MODE=unavailable run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/codex-mode.out"
+    ) || true
+
+    assert_protocol_field "$temp_root/codex-mode.out" "RESULT" "failed"
+    assert_contains "$temp_root/codex-mode.out" "AI_FLOW_ENGINE_MODE=codex"
+    rm -rf "$temp_root"
+}

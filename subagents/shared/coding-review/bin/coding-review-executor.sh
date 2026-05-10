@@ -8,6 +8,8 @@ AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$AGENT_DIR/lib/agent-common.sh"
 exec 3>&1 1>&2
 
+AI_FLOW_ENGINE_MODE="${AI_FLOW_ENGINE_MODE:-auto}"
+
 PROJECT_DIR="$(pwd)"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 REPORTS_DIR="$FLOW_DIR/reports"
@@ -732,6 +734,10 @@ ACTIVE_ENGINE="Codex"
 ACTIVE_MODEL="$MODEL"
 ACTIVE_REASONING="$REASONING"
 if ! command -v codex >/dev/null 2>&1; then
+    if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
+        echo "错误: AI_FLOW_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
+        fail_protocol "AI_FLOW_ENGINE_MODE=codex 模式下 Codex 不可用"
+    fi
     ACTIVE_ENGINE="Codex(unavailable)"
 fi
 
@@ -799,6 +805,9 @@ fi
 REVIEW_PROMPT=$(render_prompt_template "$PROMPT_TEMPLATE")
 
 if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ]; then
+    if [ "$AI_FLOW_ENGINE_MODE" = "claude" ]; then
+        fail_protocol "AI_FLOW_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
+    fi
     PROTOCOL_ARTIFACT="none"
     PROTOCOL_STATE="$PLAN_STATUS"
     PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan-coding-review。"
@@ -816,6 +825,9 @@ if [ "$rc" -ne 0 ]; then
     if is_codex_unavailable_error "$rc" "$stderr_file"; then
         emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
         rm -f "$stderr_file"
+        if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
+            fail_protocol "AI_FLOW_ENGINE_MODE=codex 模式下 Codex 执行失败"
+        fi
         PROTOCOL_ARTIFACT="none"
         PROTOCOL_STATE="$PLAN_STATUS"
         PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan-coding-review。"
@@ -1075,7 +1087,7 @@ case "$UPDATED_STATUS" in
         ;;
 esac
 
-if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ]; then
+if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ] && [ "$AI_FLOW_ENGINE_MODE" = "auto" ]; then
     PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 ai-flow-claude-plan-coding-review。"
 fi
 emit_current_protocol

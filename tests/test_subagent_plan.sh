@@ -66,7 +66,8 @@ test_plan_degraded_when_codex_unavailable() {
         FAKE_PLAN_CODEX_MODE=unavailable run_with_fake_plan_agents "$temp_root" bash "$executor" "fallback" fallback >"$temp_root/fallback.out"
     )
 
-    assert_protocol_field "$temp_root/fallback.out" "RESULT" "degraded"
+    assert_protocol_field "$temp_root/fallback.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/fallback.out" "REVIEW_RESULT" "degraded"
     assert_contains "$temp_root/fallback.out" "Codex 不可用"
     rm -rf "$temp_root"
 }
@@ -134,9 +135,29 @@ test_plan_missing_runtime_fails_deterministically() {
     rm -rf "$temp_root"
 }
 
+test_plan_codex_mode_fails_when_codex_unavailable() {
+    local temp_root project executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+
+    (
+        cd "$project"
+        AI_FLOW_ENGINE_MODE=codex FAKE_PLAN_CODEX_MODE=unavailable run_with_fake_plan_agents "$temp_root" bash "$executor" "codex only" codex-only >"$temp_root/codex-mode.out"
+    ) || true
+
+    assert_protocol_field "$temp_root/codex-mode.out" "RESULT" "failed"
+    assert_contains "$temp_root/codex-mode.out" "AI_FLOW_ENGINE_MODE=codex"
+    rm -rf "$temp_root"
+}
+
 test_plan_generation_protocol_and_state
 test_plan_revision_after_failed_review
 test_plan_degraded_when_codex_unavailable
+test_plan_codex_mode_fails_when_codex_unavailable
 test_plan_generation_ignores_explicit_model_override
 test_plan_generation_allows_negative_tbd_references
 test_plan_missing_runtime_fails_deterministically
