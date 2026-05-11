@@ -28,6 +28,11 @@ is_workspace_mode() {
     [ -f "$(pwd)/.ai-flow/workspace.json" ]
 }
 
+has_workspace_manifest() {
+    local workspace_root="${1:-$(pwd)}"
+    [ -f "$workspace_root/.ai-flow/workspace.json" ]
+}
+
 # ─── Manifest loading ───
 
 load_workspace_manifest() {

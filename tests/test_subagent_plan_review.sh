@@ -211,6 +211,36 @@ test_plan_review_escalates_reasoning_after_failed_round() {
     rm -rf "$temp_root"
 }
 
+test_plan_review_executor_loads_workspace_helpers() {
+    local temp_root project executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    mkdir -p "$project/.ai-flow"
+    cat > "$project/.ai-flow/workspace.json" <<'JSON'
+{
+  "schema_version": 1,
+  "name": "demo-workspace",
+  "repos": [
+    { "id": "root", "path": "." }
+  ]
+}
+JSON
+    create_state_with_status "$(installed_runtime_script "$temp_root" "flow-state.sh")" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
+
+    (
+        cd "$project"
+        FAKE_PLAN_REVIEW_RESULT=passed run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-workspace.out"
+    )
+
+    assert_protocol_field "$temp_root/review-workspace.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/review-workspace.out" "REVIEW_RESULT" "passed"
+    rm -rf "$temp_root"
+}
+
 test_plan_review_passed_with_notes
 test_plan_review_failed
 test_plan_review_failed_then_passed_with_notes_returns_planned
@@ -219,3 +249,4 @@ test_plan_review_codex_mode_fails_when_codex_unavailable
 test_plan_review_ignores_explicit_model_override
 test_plan_review_defaults_to_high_reasoning
 test_plan_review_escalates_reasoning_after_failed_round
+test_plan_review_executor_loads_workspace_helpers
