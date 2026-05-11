@@ -126,7 +126,7 @@ test_adhoc_review_without_slug() {
     assert_protocol_field "$temp_root/adhoc.out" "STATE" "none"
     assert_protocol_field "$temp_root/adhoc.out" "NEXT" "none"
     assert_contains "$temp_root/adhoc.out" "adhoc"
-    assert_file_exists "$project/.ai-flow/reports/adhoc/$today/$(basename "$(protocol_field "$temp_root/adhoc.out" "ARTIFACT")")"
+    assert_file_exists "$project/.ai-flow/reports/adhoc/$(basename "$(protocol_field "$temp_root/adhoc.out" "ARTIFACT")")"
     rm -rf "$temp_root"
 }
 

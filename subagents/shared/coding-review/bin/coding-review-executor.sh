@@ -105,10 +105,11 @@ render_template_content() {
     local model_name="$2"
     local reasoning="$3"
     local tool_label="${engine} (${model_name} ${reasoning})"
+    local slug_val="${SLUG:-adhoc}"
 
     sed \
         -e "s/{需求名称}/$(escape_sed_replacement "$PLAN_TITLE")/g" \
-        -e "s/{需求简称}/$(escape_sed_replacement "$SLUG")/g" \
+        -e "s/{需求简称}/$(escape_sed_replacement "$slug_val")/g" \
         -e "s/{审查模式}/$(escape_sed_replacement "$REVIEW_MODE")/g" \
         -e "s/{审查轮次}/$(escape_sed_replacement "$CURRENT_ROUND")/g" \
         -e "s#{计划文件}#$(escape_sed_replacement "$PLAN_FILE")#g" \
@@ -632,12 +633,18 @@ if missing:
 PY
 }
 
+IS_ADHOC=0
+ADHOC_DATE=""
+ADHOC_REPORT_DIR=""
+ADHOC_SEQ_NUM=""
 if [ -z "${1:-}" ]; then
-    echo "用法: coding-review-executor.sh <slug> [推理强度] [轮次覆盖]" >&2
-    echo "  slug 为必填项，不提供则报错退出。" >&2
-    fail_protocol "缺少必填参数 slug"
+    IS_ADHOC=1
+    ADHOC_DATE="$(date +%Y%m%d)"
+    ADHOC_REPORT_DIR="$REPORTS_DIR/adhoc"
+    mkdir -p "$ADHOC_REPORT_DIR"
+else
+    REQUEST_KEY="$1"
 fi
-REQUEST_KEY="$1"
 MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
 REASONING="$(default_reasoning_for_engine "$AGENT_ENGINE")"
 ROUND_OVERRIDE=""
@@ -646,83 +653,102 @@ ARG3="${3:-}"
 ARG4="${4:-}"
 STATE_FILE=""
 
-MATCHED_STATES=()
-while IFS= read -r -d '' f; do
-    MATCHED_STATES+=("$f")
-done < <(find "$FLOW_DIR/state" -name "*${REQUEST_KEY}*.json" -type f -print0 2>/dev/null)
+if [ "$IS_ADHOC" -eq 0 ]; then
+    MATCHED_STATES=()
+    while IFS= read -r -d '' f; do
+        MATCHED_STATES+=("$f")
+    done < <(find "$FLOW_DIR/state" -name "*${REQUEST_KEY}*.json" -type f -print0 2>/dev/null)
 
-if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
-    fail_protocol "找不到匹配 slug '$REQUEST_KEY' 的状态文件"
-elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
-    fail_protocol "slug '$REQUEST_KEY' 匹配到多个状态文件，请使用精确 slug"
-else
-    STATE_FILE="${MATCHED_STATES[0]}"
-    apply_review_arg_compat "$ARG2" "$ARG3" "$ARG4"
-fi
-
-SLUG=$(basename "$STATE_FILE" .json)
-PLAN_STATUS=$(state_field "$SLUG" "current_status")
-PLAN_FILE=$(state_field "$SLUG" "plan_file")
-PLAN_TITLE=$(state_field "$SLUG" "title")
-REGULAR_ROUND_COUNT=$(state_field "$SLUG" "review_rounds.regular")
-RECHECK_ROUND_COUNT=$(state_field "$SLUG" "review_rounds.recheck")
-LATEST_REGULAR_REVIEW=$(state_field_optional "$SLUG" "latest_regular_review_file")
-LATEST_RECHECK_REVIEW=$(state_field_optional "$SLUG" "latest_recheck_review_file")
-LAST_REVIEW_RESULT=$(state_field_optional "$SLUG" "last_review.result")
-LAST_REVIEW_FILE=$(state_field_optional "$SLUG" "last_review.report_file")
-
-case "$PLAN_STATUS" in
-    AWAITING_REVIEW)
-        REVIEW_MODE="regular"
-        CURRENT_ROUND=$((REGULAR_ROUND_COUNT + 1))
-        BASE_NAME="${SLUG}-review"
-        ;;
-    DONE)
-        REVIEW_MODE="recheck"
-        CURRENT_ROUND=$((RECHECK_ROUND_COUNT + 1))
-        BASE_NAME="${SLUG}-review-recheck"
-        ;;
-    *)
-        PROTOCOL_STATE="$PLAN_STATUS"
-        fail_protocol "当前状态为 [$PLAN_STATUS]，常规审查只允许 [AWAITING_REVIEW]；再审查只允许 [DONE]"
-        ;;
-esac
-
-if [ -n "$ROUND_OVERRIDE" ]; then
-    if ! [[ "$ROUND_OVERRIDE" =~ ^[0-9]+$ ]] || [ "$ROUND_OVERRIDE" -le 0 ]; then
-        fail_protocol "轮次必须是正整数: $ROUND_OVERRIDE"
-    fi
-    if [ "$ROUND_OVERRIDE" -ne "$CURRENT_ROUND" ]; then
-        fail_protocol "轮次以状态文件中的 review_rounds 为准，当前应为第 $CURRENT_ROUND 轮，不能写入第 $ROUND_OVERRIDE 轮"
+    if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
+        fail_protocol "找不到匹配 slug '$REQUEST_KEY' 的状态文件"
+    elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
+        fail_protocol "slug '$REQUEST_KEY' 匹配到多个状态文件，请使用精确 slug"
+    else
+        STATE_FILE="${MATCHED_STATES[0]}"
+        apply_review_arg_compat "$ARG2" "$ARG3" "$ARG4"
     fi
 fi
 
-if [ "$CURRENT_ROUND" -eq 1 ]; then
-    REPORT_FILE="$(dirname "$PLAN_FILE" | sed 's#^\.ai-flow/plans#'"$REPORTS_DIR"'#')/${BASE_NAME}.md"
+if [ "$IS_ADHOC" -eq 1 ]; then
+    ADHOC_SEQ_NUM=$(find "$ADHOC_REPORT_DIR" -maxdepth 1 -name '*-adhoc-review*.md' -type f 2>/dev/null | wc -l | tr -d ' ')
+    ADHOC_SEQ_NUM=$((ADHOC_SEQ_NUM + 1))
+    REPORT_FILE="$ADHOC_REPORT_DIR/${ADHOC_DATE}-adhoc-review-${ADHOC_SEQ_NUM}.md"
+    TEMPLATE="$AGENT_DIR/templates/adhoc-review-template.md"
+    PROTOCOL_STATE="none"
+    PROTOCOL_NEXT="none"
+    CURRENT_ROUND=1
+    REVIEW_MODE="adhoc"
+    PLAN_FILE="none"
+    PLAN_TITLE="adhoc review"
+    PREV_REVIEW=""
 else
-    REPORT_FILE="$(dirname "$PLAN_FILE" | sed 's#^\.ai-flow/plans#'"$REPORTS_DIR"'#')/${BASE_NAME}-v${CURRENT_ROUND}.md"
+    SLUG=$(basename "$STATE_FILE" .json)
+    PLAN_STATUS=$(state_field "$SLUG" "current_status")
+    PLAN_FILE=$(state_field "$SLUG" "plan_file")
+    PLAN_TITLE=$(state_field "$SLUG" "title")
+    REGULAR_ROUND_COUNT=$(state_field "$SLUG" "review_rounds.regular")
+    RECHECK_ROUND_COUNT=$(state_field "$SLUG" "review_rounds.recheck")
+    LATEST_REGULAR_REVIEW=$(state_field_optional "$SLUG" "latest_regular_review_file")
+    LATEST_RECHECK_REVIEW=$(state_field_optional "$SLUG" "latest_recheck_review_file")
+    LAST_REVIEW_RESULT=$(state_field_optional "$SLUG" "last_review.result")
+    LAST_REVIEW_FILE=$(state_field_optional "$SLUG" "last_review.report_file")
+
+    case "$PLAN_STATUS" in
+        AWAITING_REVIEW)
+            REVIEW_MODE="regular"
+            CURRENT_ROUND=$((REGULAR_ROUND_COUNT + 1))
+            BASE_NAME="${SLUG}-review"
+            ;;
+        DONE)
+            REVIEW_MODE="recheck"
+            CURRENT_ROUND=$((RECHECK_ROUND_COUNT + 1))
+            BASE_NAME="${SLUG}-review-recheck"
+            ;;
+        *)
+            PROTOCOL_STATE="$PLAN_STATUS"
+            fail_protocol "当前状态为 [$PLAN_STATUS]，常规审查只允许 [AWAITING_REVIEW]；再审查只允许 [DONE]"
+            ;;
+    esac
+
+    if [ -n "$ROUND_OVERRIDE" ]; then
+        if ! [[ "$ROUND_OVERRIDE" =~ ^[0-9]+$ ]] || [ "$ROUND_OVERRIDE" -le 0 ]; then
+            fail_protocol "轮次必须是正整数: $ROUND_OVERRIDE"
+        fi
+        if [ "$ROUND_OVERRIDE" -ne "$CURRENT_ROUND" ]; then
+            fail_protocol "轮次以状态文件中的 review_rounds 为准，当前应为第 $CURRENT_ROUND 轮，不能写入第 $ROUND_OVERRIDE 轮"
+        fi
+    fi
 fi
-REPORT_FILE=$(python3 - "$REPORT_FILE" <<'PY'
+
+if [ "$IS_ADHOC" -eq 0 ]; then
+    if [ "$CURRENT_ROUND" -eq 1 ]; then
+        REPORT_FILE="$(dirname "$PLAN_FILE" | sed 's#^\.ai-flow/plans#'"$REPORTS_DIR"'#')/${BASE_NAME}.md"
+    else
+        REPORT_FILE="$(dirname "$PLAN_FILE" | sed 's#^\.ai-flow/plans#'"$REPORTS_DIR"'#')/${BASE_NAME}-v${CURRENT_ROUND}.md"
+    fi
+    REPORT_FILE=$(python3 - "$REPORT_FILE" <<'PY'
 import os, sys
 print(os.path.normpath(sys.argv[1]))
 PY
 )
+fi
 PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$REPORT_FILE")"
 
 if [ -e "$REPORT_FILE" ]; then
     fail_protocol "报告文件已存在，拒绝覆盖: $REPORT_FILE"
 fi
 
-PREV_REVIEW=""
-if [ "$LAST_REVIEW_RESULT" = "failed" ] && [ -n "$LAST_REVIEW_FILE" ]; then
-    PREV_REVIEW="$LAST_REVIEW_FILE"
-elif [ "$REVIEW_MODE" = "recheck" ]; then
-    PREV_REVIEW="${LATEST_RECHECK_REVIEW:-}"
-    if [ -z "$PREV_REVIEW" ]; then
+if [ "$IS_ADHOC" -eq 0 ]; then
+    if [ "$LAST_REVIEW_RESULT" = "failed" ] && [ -n "$LAST_REVIEW_FILE" ]; then
+        PREV_REVIEW="$LAST_REVIEW_FILE"
+    elif [ "$REVIEW_MODE" = "recheck" ]; then
+        PREV_REVIEW="${LATEST_RECHECK_REVIEW:-}"
+        if [ -z "$PREV_REVIEW" ]; then
+            PREV_REVIEW="${LATEST_REGULAR_REVIEW:-}"
+        fi
+    else
         PREV_REVIEW="${LATEST_REGULAR_REVIEW:-}"
     fi
-else
-    PREV_REVIEW="${LATEST_REGULAR_REVIEW:-}"
 fi
 
 mkdir -p "$(dirname "$REPORT_FILE")"
@@ -740,8 +766,12 @@ if ! command -v codex >/dev/null 2>&1; then
     ACTIVE_ENGINE="Codex(unavailable)"
 fi
 
-echo ">>> 匹配到状态: $SLUG [$PLAN_STATUS]"
-echo "    对比计划: $PLAN_FILE"
+if [ "$IS_ADHOC" -eq 1 ]; then
+    echo ">>> Adhoc review（未绑定计划）"
+else
+    echo ">>> 匹配到状态: $SLUG [$PLAN_STATUS]"
+    echo "    对比计划: $PLAN_FILE"
+fi
 echo "    审查模式: $REVIEW_MODE"
 echo "    审查轮次: $CURRENT_ROUND"
 echo "    审查引擎: $ACTIVE_ENGINE ($ACTIVE_MODEL $ACTIVE_REASONING)"
@@ -751,12 +781,17 @@ if [ -n "$PREV_REVIEW" ]; then
 fi
 echo ""
 
-PLAN_CONTENT=$(cat "$PLAN_FILE")
-for required_file in "$FLOW_STATE_SH" "$TEMPLATE" "$PROMPT_TEMPLATE"; do
+if [ "$IS_ADHOC" -eq 0 ]; then
+    PLAN_CONTENT=$(cat "$PLAN_FILE")
+fi
+for required_file in "$FLOW_STATE_SH" "$TEMPLATE"; do
     if [ ! -f "$required_file" ]; then
         fail_protocol "缺少运行时资源: $required_file"
     fi
 done
+if [ "$IS_ADHOC" -eq 0 ] && [ ! -f "$PROMPT_TEMPLATE" ]; then
+    fail_protocol "缺少运行时资源: $PROMPT_TEMPLATE"
+fi
 TEMPLATE_CONTENT=$(render_template_content "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
 
 case "$REVIEW_MODE:$CURRENT_ROUND" in
@@ -772,10 +807,16 @@ case "$REVIEW_MODE:$CURRENT_ROUND" in
     recheck:*)
         REVIEW_SCOPE_GUIDANCE="这是 recheck review：确认 DONE 后新增变更没有引入回归，同时复核与本次变更直接相关的缺陷族和关键路径。"
         ;;
+    adhoc:*)
+        REVIEW_SCOPE_GUIDANCE="这是 adhoc review：未绑定任何 AI Flow 计划。请审查当前未提交的 Git 变更，关注代码质量、安全性和正确性。"
+        ;;
 esac
 
 HISTORY_CONTEXT=""
-HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入"4. 缺陷清单"，并同步更新"6. 缺陷修复追踪"。\n6. "3.6 缺陷族覆盖度"至少要覆盖 plan 中与本次变更相关的缺陷族，并说明已覆盖 / 未覆盖 / 需人工验证。'
+HISTORY_RULES=""
+if [ "$IS_ADHOC" -eq 0 ]; then
+    HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入"4. 缺陷清单"，并同步更新"6. 缺陷修复追踪"。\n6. "3.6 缺陷族覆盖度"至少要覆盖 plan 中与本次变更相关的缺陷族，并说明已覆盖 / 未覆盖 / 需人工验证。'
+fi
 if [ -n "$PREV_REVIEW" ] && [ -f "$PREV_REVIEW" ]; then
     PREV_DEFECTS=$(extract_defect_section "$PREV_REVIEW")
     PREV_TRACKING=$(extract_tracking_section "$PREV_REVIEW")
@@ -801,7 +842,38 @@ EOF
 )
 fi
 
-REVIEW_PROMPT=$(render_prompt_template "$PROMPT_TEMPLATE")
+if [ "$IS_ADHOC" -eq 1 ]; then
+    ADHOC_TODAY="$(date +%Y-%m-%d)"
+    REVIEW_PROMPT=$(cat <<PROMPT
+# 审查报告：adhoc review
+
+> 审查日期：${ADHOC_TODAY}
+> 需求简称：adhoc
+> 审查模式：adhoc
+> 审查轮次：1
+> 审查结果：passed
+> 对比计划：无（未绑定计划）
+
+请审查当前未提交的 Git 变更，使用简化 adhoc 模式生成审查报告。
+
+当前变更摘要（git diff --staged + git diff）：
+$(git diff --staged --name-only 2>/dev/null || true)
+$(git diff --name-only 2>/dev/null || true)
+
+请使用 adhoc-review-template.md 模板生成审查报告。
+要求：
+1. 报告首行必须以 "# 审查报告：adhoc review" 开头
+2. 元数据中的需求简称填写 "adhoc"
+3. 审查模式填写 "adhoc"
+4. 审查结果必须为 passed、passed_with_notes 或 failed 之一
+5. 对比计划填写 "无（未绑定计划）"
+6. 重点关注代码质量、安全性和正确性
+7. 缺陷编号以 DEF- 和 SUG- 开头
+PROMPT
+)
+else
+    REVIEW_PROMPT=$(render_prompt_template "$PROMPT_TEMPLATE")
+fi
 
 if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ]; then
     if [ "$AI_FLOW_ENGINE_MODE" = "claude" ]; then
@@ -848,76 +920,101 @@ FIRST_LINE=$(head -1 "$REPORT_FILE")
 if ! echo "$FIRST_LINE" | grep -qE '^# 审查报告：'; then
     ERRORS="${ERRORS}首行必须是 '# 审查报告：...'\n"
 fi
-for section in "## 1\. " "## 2\. " "## 2\.1 " "## 3\." "## 4\." "## 5\." "## 6\."; do
-    if ! grep -qE "$section" "$REPORT_FILE"; then
-        section_label=${section//\\/}
-        ERRORS="${ERRORS}缺少章节: $section_label\n"
-    fi
-done
-for subsection in "### 1\.2 " "### 3\.6 "; do
-    if ! grep -qE "$subsection" "$REPORT_FILE"; then
-        subsection_label=${subsection//\\/}
-        ERRORS="${ERRORS}缺少强制子节: $subsection_label\n"
-    fi
-done
 
-REPORT_PLACEHOLDERS=(
-    "{需求名称}"
-    "{YYYY-MM-DD}"
-    "{需求简称}"
-    "{审查模式}"
-    "{审查轮次}"
-    "{审查结果}"
-    "{计划文件}"
-    "{模型名}"
-    "{推理强度}"
-    "{总体通过 / 需要修复 / 存在风险}"
-    "{无 / xxx-review-vN.md}"
-    "{审查中读取的测试输出、报告状态或需人工验证项}"
-    "{exact_command}"
-    "{为什么执行、结果说明什么、是否需要人工补充验证}"
-    "{标题}"
-    "{说明}"
-    "{X}"
-    "{文件}"
-    "{改了什么}"
-    "{架构是否合理、是否符合项目分层规范}"
-    "{命名规范、注释规范、提交规范等}"
-    "{SQL 注入、XSS、越权、敏感信息泄露等}"
-    "{查询效率、N+1、内存泄漏、缓存策略等}"
-    "{空集合、空字符串、null、最大值、分页边界等}"
-    "{Optional 是否正确使用、判空是否完整、链式调用是否可能 NPE}"
-    "{try-catch 是否吞掉异常、异常后事务状态是否正确、错误码返回是否合理}"
-    "{事务边界是否正确、并发修改是否有乐观锁、关联查询是否遗漏条件}"
-    "{强类型 ID 与字符串的转换、枚举值的映射、数据库字段与 DTO 的映射}"
-    "{接口是否有 @PreAuthorize、数据权限注解是否生效、越权访问是否阻止}"
-    "{Controller 参数是否有 @Validated、自定义校验器是否覆盖所有必填项}"
-    "{GET 接口是否有修改操作、循环中是否有 DB 查询、静态变量是否有并发风险}"
-    "{缺陷族名称}"
-    "{本轮复查了什么、未覆盖原因或人工验证边界}"
-)
-for placeholder in "${REPORT_PLACEHOLDERS[@]}"; do
-    if grep -Fq "$placeholder" "$REPORT_FILE"; then
-        ERRORS="${ERRORS}报告中仍有未替换的模板占位符: $placeholder\n"
-    fi
-done
+if [ "$IS_ADHOC" -eq 1 ]; then
+    for section in "## 1\. " "## 1\.1 " "## 1\.2 " "## 2\. " "## 2\.1 " "## 3\." "## 4\."; do
+        if ! grep -qE "$section" "$REPORT_FILE"; then
+            section_label=${section//\\/}
+            ERRORS="${ERRORS}缺少章节: $section_label\n"
+        fi
+    done
+    ADHOC_PLACEHOLDERS=(
+        "{YYYY-MM-DD}"
+        "{审查结果}"
+        "{审查工具}"
+        "{总体通过 / 总体通过（附建议） / 需要修复}"
+        "{exact_command}"
+        "{为什么执行、结果说明什么}"
+    )
+    for placeholder in "${ADHOC_PLACEHOLDERS[@]}"; do
+        if grep -Fq "$placeholder" "$REPORT_FILE"; then
+            ERRORS="${ERRORS}报告中仍有未替换的模板占位符: $placeholder\n"
+        fi
+    done
+else
+    for section in "## 1\. " "## 2\. " "## 2\.1 " "## 3\." "## 4\." "## 5\." "## 6\."; do
+        if ! grep -qE "$section" "$REPORT_FILE"; then
+            section_label=${section//\\/}
+            ERRORS="${ERRORS}缺少章节: $section_label\n"
+        fi
+    done
+    for subsection in "### 1\.2 " "### 3\.6 "; do
+        if ! grep -qE "$subsection" "$REPORT_FILE"; then
+            subsection_label=${subsection//\\/}
+            ERRORS="${ERRORS}缺少强制子节: $subsection_label\n"
+        fi
+    done
+
+    REPORT_PLACEHOLDERS=(
+        "{需求名称}"
+        "{YYYY-MM-DD}"
+        "{需求简称}"
+        "{审查模式}"
+        "{审查轮次}"
+        "{审查结果}"
+        "{计划文件}"
+        "{模型名}"
+        "{推理强度}"
+        "{总体通过 / 需要修复 / 存在风险}"
+        "{无 / xxx-review-vN.md}"
+        "{审查中读取的测试输出、报告状态或需人工验证项}"
+        "{exact_command}"
+        "{为什么执行、结果说明什么、是否需要人工补充验证}"
+        "{标题}"
+        "{说明}"
+        "{X}"
+        "{文件}"
+        "{改了什么}"
+        "{架构是否合理、是否符合项目分层规范}"
+        "{命名规范、注释规范、提交规范等}"
+        "{SQL 注入、XSS、越权、敏感信息泄露等}"
+        "{查询效率、N+1、内存泄漏、缓存策略等}"
+        "{空集合、空字符串、null、最大值、分页边界等}"
+        "{Optional 是否正确使用、判空是否完整、链式调用是否可能 NPE}"
+        "{try-catch 是否吞掉异常、异常后事务状态是否正确、错误码返回是否合理}"
+        "{事务边界是否正确、并发修改是否有乐观锁、关联查询是否遗漏条件}"
+        "{强类型 ID 与字符串的转换、枚举值的映射、数据库字段与 DTO 的映射}"
+        "{接口是否有 @PreAuthorize、数据权限注解是否生效、越权访问是否阻止}"
+        "{Controller 参数是否有 @Validated、自定义校验器是否覆盖所有必填项}"
+        "{GET 接口是否有修改操作、循环中是否有 DB 查询、静态变量是否有并发风险}"
+        "{缺陷族名称}"
+        "{本轮复查了什么、未覆盖原因或人工验证边界}"
+    )
+    for placeholder in "${REPORT_PLACEHOLDERS[@]}"; do
+        if grep -Fq "$placeholder" "$REPORT_FILE"; then
+            ERRORS="${ERRORS}报告中仍有未替换的模板占位符: $placeholder\n"
+        fi
+    done
+fi
 
 META_SLUG=$(meta_value "需求简称")
 META_MODE=$(meta_value "审查模式")
 META_ROUND=$(meta_value "审查轮次")
 META_RESULT=$(meta_value "审查结果")
 META_PLAN_FILE=$(meta_value "对比计划")
-if [ "$META_SLUG" != "$SLUG" ]; then
-    ERRORS="${ERRORS}需求简称与状态文件不一致: 期望 ${SLUG}，实际 ${META_SLUG}\n"
+if [ "$IS_ADHOC" -eq 0 ]; then
+    if [ "$META_SLUG" != "$SLUG" ]; then
+        ERRORS="${ERRORS}需求简称与状态文件不一致: 期望 ${SLUG}，实际 ${META_SLUG}\n"
+    fi
+    if [ "$META_PLAN_FILE" != "$PLAN_FILE" ]; then
+        ERRORS="${ERRORS}对比计划路径与状态文件不一致\n"
+    fi
 fi
 if [ "$META_MODE" != "$REVIEW_MODE" ]; then
     ERRORS="${ERRORS}审查模式与预期不一致: 期望 ${REVIEW_MODE}，实际 ${META_MODE}\n"
 fi
 if [ "$META_ROUND" != "$CURRENT_ROUND" ]; then
     ERRORS="${ERRORS}审查轮次与预期不一致: 期望 ${CURRENT_ROUND}，实际 ${META_ROUND}\n"
-fi
-if [ "$META_PLAN_FILE" != "$PLAN_FILE" ]; then
-    ERRORS="${ERRORS}对比计划路径与状态文件不一致\n"
 fi
 if [ "$META_RESULT" != "passed" ] && [ "$META_RESULT" != "failed" ] && [ "$META_RESULT" != "passed_with_notes" ]; then
     ERRORS="${ERRORS}审查结果必须是 passed、passed_with_notes 或 failed\n"
@@ -929,38 +1026,50 @@ OVERALL_SECTION=$(awk '
     in_section {print}
 ' "$REPORT_FILE")
 VERIFICATION_SECTION=$(report_section_between "$REPORT_FILE" '^### 1\.2 ' '^## 2\. ')
-CONCLUSION_SECTION=$(awk '
-    /^## 5\./ {in_section=1; next}
-    /^## 6\./ && in_section {exit}
-    in_section {print}
-' "$REPORT_FILE")
-FAMILY_SECTION=$(report_section_between "$REPORT_FILE" '^### 3\.6 ' '^## 4\. ')
+
+if [ "$IS_ADHOC" -eq 1 ]; then
+    CONCLUSION_SECTION=$(awk '
+        /^## 4\./ {in_section=1; next}
+        /^## [5-9]\./ && in_section {exit}
+        in_section {print}
+    ' "$REPORT_FILE")
+else
+    CONCLUSION_SECTION=$(awk '
+        /^## 5\./ {in_section=1; next}
+        /^## 6\./ && in_section {exit}
+        in_section {print}
+    ' "$REPORT_FILE")
+fi
 
 if [ -z "$(printf '%s\n' "$VERIFICATION_SECTION" | sed '/^[[:space:]]*$/d')" ]; then
     ERRORS="${ERRORS}1.2 定向验证执行证据不能为空\n"
 fi
-if [ -z "$(printf '%s\n' "$FAMILY_SECTION" | sed '/^[[:space:]]*$/d')" ]; then
-    ERRORS="${ERRORS}3.6 缺陷族覆盖度不能为空\n"
-fi
-if has_non_doc_git_changes; then
-    if ! printf '%s\n' "$VERIFICATION_SECTION" | awk '
+
+if [ "$IS_ADHOC" -eq 0 ]; then
+    FAMILY_SECTION=$(report_section_between "$REPORT_FILE" '^### 3\.6 ' '^## 4\. ')
+    if [ -z "$(printf '%s\n' "$FAMILY_SECTION" | sed '/^[[:space:]]*$/d')" ]; then
+        ERRORS="${ERRORS}3.6 缺陷族覆盖度不能为空\n"
+    fi
+    if has_non_doc_git_changes; then
+        if ! printf '%s\n' "$VERIFICATION_SECTION" | awk '
+            /^\|/ {count++}
+            END {exit(count >= 3 ? 0 : 1)}
+        '; then
+            ERRORS="${ERRORS}非文档代码变更的 review 报告必须在 1.2 提供定向验证执行证据\n"
+        fi
+    fi
+    if ! printf '%s\n' "$FAMILY_SECTION" | awk '
         /^\|/ {count++}
         END {exit(count >= 3 ? 0 : 1)}
     '; then
-        ERRORS="${ERRORS}非文档代码变更的 review 报告必须在 1.2 提供定向验证执行证据\n"
+        ERRORS="${ERRORS}3.6 缺陷族覆盖度缺少有效表格内容\n"
     fi
-fi
-if ! printf '%s\n' "$FAMILY_SECTION" | awk '
-    /^\|/ {count++}
-    END {exit(count >= 3 ? 0 : 1)}
-'; then
-    ERRORS="${ERRORS}3.6 缺陷族覆盖度缺少有效表格内容\n"
-fi
-if ! previous_family_error=$(validate_previous_family_coverage 2>&1); then
-    ERRORS="${ERRORS}${previous_family_error}\n"
-fi
-if ! optional_marker_error=$(validate_optional_markers 2>&1); then
-    ERRORS="${ERRORS}${optional_marker_error}\n"
+    if ! previous_family_error=$(validate_previous_family_coverage 2>&1); then
+        ERRORS="${ERRORS}${previous_family_error}\n"
+    fi
+    if ! optional_marker_error=$(validate_optional_markers 2>&1); then
+        ERRORS="${ERRORS}${optional_marker_error}\n"
+    fi
 fi
 
 if [ "$META_RESULT" = "passed" ]; then
@@ -1039,52 +1148,68 @@ if [ "$META_RESULT" != "$DERIVED_RESULT" ]; then
 fi
 RESULT="$DERIVED_RESULT"
 
-echo ">>> 更新状态文件..."
-AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" record-review \
-    --slug "$SLUG" \
-    --mode "$REVIEW_MODE" \
-    --result "$RESULT" \
-    --report-file "$REPORT_FILE" \
-    --engine "$ACTIVE_ENGINE" \
-    --model "$ACTIVE_MODEL"
-UPDATED_STATUS=$(state_field "$SLUG" "current_status")
-echo "    状态已验证为 [$UPDATED_STATUS]"
-PROTOCOL_STATE="$UPDATED_STATUS"
-PROTOCOL_REVIEW_RESULT="$RESULT"
+if [ "$IS_ADHOC" -eq 1 ]; then
+    echo ">>> Adhoc review 完成，不更新状态文件"
+    case "$RESULT" in
+        passed)
+            PROTOCOL_SUMMARY="adhoc 审查通过，无状态绑定。"
+            ;;
+        passed_with_notes)
+            PROTOCOL_SUMMARY="adhoc 审查通过（附 Minor 建议），无状态绑定。"
+            ;;
+        failed)
+            PROTOCOL_SUMMARY="adhoc 审查未通过，发现问题，无状态绑定。"
+            ;;
+    esac
+    PROTOCOL_REVIEW_RESULT="$RESULT"
+else
+    echo ">>> 更新状态文件..."
+    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" record-review \
+        --slug "$SLUG" \
+        --mode "$REVIEW_MODE" \
+        --result "$RESULT" \
+        --report-file "$REPORT_FILE" \
+        --engine "$ACTIVE_ENGINE" \
+        --model "$ACTIVE_MODEL"
+    UPDATED_STATUS=$(state_field "$SLUG" "current_status")
+    echo "    状态已验证为 [$UPDATED_STATUS]"
+    PROTOCOL_STATE="$UPDATED_STATUS"
+    PROTOCOL_REVIEW_RESULT="$RESULT"
 
-print_commit_instructions() {
-    echo ">>> 状态已进入 [DONE]，现在允许提交已审查的未提交变更"
-    if [ -f "$CLAUDE_HOME/skills/git-commit/SKILL.md" ]; then
-        echo "    检测到 git-commit 技能：请使用 /git-commit 提交代码"
-    else
-        echo "    未检测到 git-commit 技能：请按项目提交规范提交；若项目无明确规范，使用 Gitmoji + Conventional Commits"
-    fi
-}
-
-case "$UPDATED_STATUS" in
-    DONE)
-        if [ "$REVIEW_MODE" = "recheck" ]; then
-            echo ">>> 再审查通过，状态保持 [DONE]"
-            PROTOCOL_SUMMARY="recheck 审查通过，状态保持 [DONE]。"
-        elif [ "$RESULT" = "passed_with_notes" ]; then
-            echo ">>> 常规审查通过（存在 Minor 建议），状态已更新为 [DONE]"
-            PROTOCOL_SUMMARY="常规审查通过（附 Minor 建议），状态进入 [DONE]。"
+    print_commit_instructions() {
+        echo ">>> 状态已进入 [DONE]，现在允许提交已审查的未提交变更"
+        if [ -f "$CLAUDE_HOME/skills/git-commit/SKILL.md" ]; then
+            echo "    检测到 git-commit 技能：请使用 /git-commit 提交代码"
         else
-            echo ">>> 常规审查通过，状态已更新为 [DONE]"
-            PROTOCOL_SUMMARY="常规审查通过，状态进入 [DONE]。"
+            echo "    未检测到 git-commit 技能：请按项目提交规范提交；若项目无明确规范，使用 Gitmoji + Conventional Commits"
         fi
-        PROTOCOL_NEXT="none"
-        print_commit_instructions
-        ;;
-    REVIEW_FAILED)
-        echo ">>> 审查发现问题，状态已更新为 [REVIEW_FAILED]"
-        PROTOCOL_SUMMARY="审查未通过，状态进入 [REVIEW_FAILED]。"
-        PROTOCOL_NEXT="ai-flow-plan-coding"
-        ;;
-    *)
-        fail_protocol "record-review 后出现意外状态 [$UPDATED_STATUS]"
-        ;;
-esac
+    }
+
+    case "$UPDATED_STATUS" in
+        DONE)
+            if [ "$REVIEW_MODE" = "recheck" ]; then
+                echo ">>> 再审查通过，状态保持 [DONE]"
+                PROTOCOL_SUMMARY="recheck 审查通过，状态保持 [DONE]。"
+            elif [ "$RESULT" = "passed_with_notes" ]; then
+                echo ">>> 常规审查通过（存在 Minor 建议），状态已更新为 [DONE]"
+                PROTOCOL_SUMMARY="常规审查通过（附 Minor 建议），状态进入 [DONE]。"
+            else
+                echo ">>> 常规审查通过，状态已更新为 [DONE]"
+                PROTOCOL_SUMMARY="常规审查通过，状态进入 [DONE]。"
+            fi
+            PROTOCOL_NEXT="none"
+            print_commit_instructions
+            ;;
+        REVIEW_FAILED)
+            echo ">>> 审查发现问题，状态已更新为 [REVIEW_FAILED]"
+            PROTOCOL_SUMMARY="审查未通过，状态进入 [REVIEW_FAILED]。"
+            PROTOCOL_NEXT="ai-flow-plan-coding"
+            ;;
+        *)
+            fail_protocol "record-review 后出现意外状态 [$UPDATED_STATUS]"
+            ;;
+    esac
+fi
 
 if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ] && [ "$AI_FLOW_ENGINE_MODE" = "auto" ]; then
     PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 ai-flow-claude-plan-coding-review。"
