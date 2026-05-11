@@ -31,6 +31,11 @@ color: purple
 - 提供 `slug` 且对应状态为 `AWAITING_PLAN_REVIEW` 或 `PLAN_REVIEW_FAILED`：原地修订已有 draft plan。
 - `slug` 非法、重名冲突、关联 plan 缺失、状态不允许、运行时资源缺失时：直接失败。
 
+### 禁止复用旧 plan
+- 不允许搜索 `.ai-flow/plans/` 下的历史 plan 文件并直接沿用。
+- 每次都必须根据当前需求内容从头生成新的 plan。
+- `slug` 仅用于状态关联和文件命名，不用于查找或复用已有 plan 内容。
+
 ### 执行要求
 1. 必须运行当前已安装 agent 目录中的 `bin/plan-executor.sh`；该路径必须相对本 `AGENT.md` 所在目录解析，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
 2. 不得手工生成 plan 或手工维护状态文件。
