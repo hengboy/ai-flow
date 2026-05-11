@@ -158,7 +158,7 @@ create_plan_file() {
     local date_dir="${3:-20260503}"
     local title="${4:-$slug}"
     local requirement="${5:-测试计划。}"
-    local plan_file="$project_dir/.ai-flow/plans/$date_dir/$slug.md"
+    local plan_file="$project_dir/.ai-flow/plans/${date_dir}-${slug}.md"
     cat > "$plan_file" <<PLAN
 # 实施计划：$title
 
@@ -231,6 +231,9 @@ $requirement
 
 **本步关闭条件**：
 - \`bash tests/run.sh\` 通过，且 review 报告能记录定向验证执行证据
+
+**阻塞条件**：
+- 无
 
 ## 4. 测试计划
 
@@ -438,7 +441,7 @@ create_state_with_status() {
     local target_status="$4"
     local date_dir="${5:-20260503}"
     local title="${6:-$slug}"
-    local plan_file=".ai-flow/plans/$date_dir/$slug.md"
+    local plan_file=".ai-flow/plans/${date_dir}-${slug}.md"
     create_plan_file "$project_dir" "$slug" "$date_dir" "$title"
     (
         cd "$project_dir" || exit 1
@@ -521,9 +524,9 @@ slug=$(sed -n 's/^> 需求简称：//p' "$prompt_file" | head -1)
 extract_requirement() {
     local file="$1"
     local result
-    result=$(awk '/^需求描述：/{flag=1;next}/^要求：/{flag=0}flag{print}' "$file")
+    result=$(awk '/^需求描述：/{getline; print; exit}' "$file")
     if [ -z "$result" ]; then
-        result=$(awk '/^原始需求：/{flag=1;next}/^当前 plan：/{flag=0}flag{print}' "$file")
+        result=$(awk '/^原始需求：/{getline; print; exit}' "$file")
     fi
     printf '%s' "${result:-测试需求}"
 }
@@ -605,6 +608,9 @@ $requirement
 
 **本步关闭条件**：
 - \`bash tests/run.sh\` 通过
+
+**阻塞条件**：
+- 无
 
 ## 4. 测试计划
 

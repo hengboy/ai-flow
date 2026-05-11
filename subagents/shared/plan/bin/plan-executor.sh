@@ -36,8 +36,8 @@ TEMPLATE="$AGENT_DIR/templates/plan-template.md"
 PLAN_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-generation.md"
 PLAN_REVIEW_PROMPT_TEMPLATE="${AI_FLOW_PLAN_REVIEW_PROMPT_TEMPLATE:-$AGENT_DIR/prompts/plan-review.md}"
 PLAN_REVISION_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-revision.md"
-PLAN_REASONING="${AI_FLOW_PLAN_REASONING:-xhigh}"
-PLAN_REVIEW_REASONING="${AI_FLOW_PLAN_REVIEW_REASONING:-xhigh}"
+PLAN_REASONING="${AI_FLOW_PLAN_REASONING:-high}"
+PLAN_REVIEW_REASONING="${AI_FLOW_PLAN_REVIEW_REASONING:-high}"
 PLAN_ENGINE_NAME=""
 PLAN_ENGINE_MODEL=""
 REQUIREMENT=""
@@ -428,6 +428,52 @@ slug_exists() {
     find "$FLOW_DIR/plans" -name "*-${candidate}.md" -type f 2>/dev/null | grep -q .
 }
 
+file_line_count() {
+    local target="$1"
+    if [ ! -f "$target" ]; then
+        echo 0
+        return 0
+    fi
+    wc -l < "$target" | tr -d ' '
+}
+
+plan_authoring_reasoning() {
+    local reasoning="$PLAN_REASONING"
+    if [ -n "${AI_FLOW_PLAN_REASONING:-}" ]; then
+        echo "$reasoning"
+        return 0
+    fi
+
+    local requirement_length stack_count
+    requirement_length=$(printf '%s' "$REQUIREMENT" | wc -m | tr -d ' ')
+    stack_count=$(printf '%s' "$DETECT_STACK" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
+
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ] \
+        || [ "$requirement_length" -ge 120 ] \
+        || [ "$stack_count" -ge 4 ] \
+        || { [ "${SLUG_EXPLICIT:-false}" = true ] && [ -f "${EXISTING_STATE_FILE:-}" ]; }; then
+        reasoning="xhigh"
+    fi
+
+    echo "$reasoning"
+}
+
+plan_review_reasoning() {
+    local reasoning="$PLAN_REVIEW_REASONING"
+    if [ -n "${AI_FLOW_PLAN_REVIEW_REASONING:-}" ]; then
+        echo "$reasoning"
+        return 0
+    fi
+
+    local plan_lines="${1:-0}"
+    local review_round="${2:-1}"
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ] || [ "$plan_lines" -ge 220 ] || [ "$review_round" -ge 2 ]; then
+        reasoning="xhigh"
+    fi
+
+    echo "$reasoning"
+}
+
 trim_generated_file_to_marker() {
     local file="$1"
     local marker="$2"
@@ -766,6 +812,7 @@ PY
         local extra_sections
         extra_sections=$(python3 - "$plan_file" <<'PY'
 import re
+import sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 allowed = {"## 1. 需求概述", "## 2. 技术分析", "## 3. 实施步骤", "## 4. 测试计划", "## 5. 风险与注意事项", "## 6. 验收标准", "## 7. 需求变更记录", "## 8. 计划审核记录"}
@@ -1029,6 +1076,7 @@ run_review_phase_prompt() {
     local prompt="$1"
     local output_file="$2"
     local marker="$3"
+    local reasoning="${4:-$PLAN_REVIEW_REASONING}"
 
     if ! command -v codex >/dev/null 2>&1; then
         if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
@@ -1043,7 +1091,7 @@ run_review_phase_prompt() {
     local stderr_file rc
     stderr_file=$(mktemp)
     set +e
-    run_codex_prompt "$prompt" "$output_file" "$PLAN_REVIEW_REASONING" 2>"$stderr_file"
+    run_codex_prompt "$prompt" "$output_file" "$reasoning" 2>"$stderr_file"
     rc=$?
     set -e
     if [ "$rc" -eq 0 ]; then
@@ -1083,7 +1131,10 @@ revise_plan_from_failed_review() {
     revision_output=$(mktemp)
 
     echo ">>> 基于现有 draft plan 与审核意见修订 plan..."
-    if ! run_plan_authoring_prompt "$revision_prompt" "$revision_output" "# 实施计划："; then
+    local revision_reasoning
+    revision_reasoning=$(plan_authoring_reasoning)
+    echo "    推理强度: $revision_reasoning"
+    if ! run_plan_authoring_prompt "$revision_prompt" "$revision_output" "# 实施计划：" "$revision_reasoning"; then
         if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
             rm -f "$revision_output" "$review_section_backup"
             return 1
@@ -1101,6 +1152,7 @@ run_plan_authoring_prompt() {
     local prompt="$1"
     local output_file="$2"
     local marker="$3"
+    local reasoning="${4:-$PLAN_REASONING}"
 
     if ! command -v codex >/dev/null 2>&1; then
         if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
@@ -1115,7 +1167,7 @@ run_plan_authoring_prompt() {
     local stderr_file rc
     stderr_file=$(mktemp)
     set +e
-    run_codex_prompt "$prompt" "$output_file" "$PLAN_REASONING" 2>"$stderr_file"
+    run_codex_prompt "$prompt" "$output_file" "$reasoning" 2>"$stderr_file"
     rc=$?
     set -e
     if [ "$rc" -eq 0 ]; then
@@ -1167,6 +1219,20 @@ PY
 
 state_json_value_optional() {
     state_json_value "$1" "$2" 2>/dev/null || true
+}
+
+load_state_context() {
+    local state_file="$1"
+    python3 - "$state_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(state.get("current_status", ""))
+print(state.get("plan_file", ""))
+print(state.get("title", ""))
+PY
 }
 
 find_state_file_by_keyword() {
@@ -1248,9 +1314,10 @@ mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports/$DATE_PREFIX" "$STATE_DIR"
 if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
     STATE_FILE=$(find_state_file_by_keyword "$MATCH_KEYWORD")
     SLUG=$(basename "$STATE_FILE" .json)
-    PLAN_STATUS=$(state_json_value "$STATE_FILE" "current_status")
-    PLAN_FILE=$(state_json_value "$STATE_FILE" "plan_file")
-    PLAN_TITLE=$(state_json_value "$STATE_FILE" "title")
+    state_context=$(load_state_context "$STATE_FILE")
+    PLAN_STATUS=$(printf '%s\n' "$state_context" | sed -n '1p')
+    PLAN_FILE=$(printf '%s\n' "$state_context" | sed -n '2p')
+    PLAN_TITLE=$(printf '%s\n' "$state_context" | sed -n '3p')
 
     case "$PLAN_STATUS" in
         AWAITING_PLAN_REVIEW|PLAN_REVIEW_FAILED)
@@ -1283,9 +1350,11 @@ PY
 
     local_review_output=$(mktemp)
     local_review_items=$(mktemp)
+    REVIEW_REASONING_EFFECTIVE=$(plan_review_reasoning "$(file_line_count "$PLAN_FILE")" "$REVIEW_ROUND")
     echo ">>> 执行第 ${REVIEW_ROUND} 轮计划审核..."
     echo "    目标需求: $SLUG [$PLAN_STATUS]"
-    if ! run_review_phase_prompt "$REVIEW_PROMPT" "$local_review_output" "RESULT:"; then
+    echo "    推理强度: $REVIEW_REASONING_EFFECTIVE"
+    if ! run_review_phase_prompt "$REVIEW_PROMPT" "$local_review_output" "RESULT:" "$REVIEW_REASONING_EFFECTIVE"; then
         if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
             if [ "$AI_FLOW_ENGINE_MODE" = "claude" ]; then
                 fail_protocol "AI_FLOW_ENGINE_MODE=claude 模式下不应进入 codex 执行路径" "failed"
@@ -1507,9 +1576,11 @@ else
     echo ">>> 生成 draft plan..."
     echo "    输出文件: $PLAN_FILE"
     echo "    检测到技术栈: $DETECT_STACK"
+    AUTHORING_REASONING=$(plan_authoring_reasoning)
+    echo "    推理强度: $AUTHORING_REASONING"
     echo ""
     PLAN_PROMPT=$(render_prompt_template "$PLAN_PROMPT_TEMPLATE")
-    if ! run_plan_authoring_prompt "$PLAN_PROMPT" "$PLAN_FILE" "# 实施计划："; then
+    if ! run_plan_authoring_prompt "$PLAN_PROMPT" "$PLAN_FILE" "# 实施计划：" "$AUTHORING_REASONING"; then
         if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
             if [ "$AI_FLOW_ENGINE_MODE" = "claude" ]; then
                 fail_protocol "AI_FLOW_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"

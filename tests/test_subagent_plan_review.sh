@@ -168,9 +168,54 @@ test_plan_review_ignores_explicit_model_override() {
     rm -rf "$temp_root"
 }
 
+test_plan_review_defaults_to_high_reasoning() {
+    local temp_root project runtime_script executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
+
+    (
+        cd "$project"
+        FAKE_PLAN_REVIEW_RESULT=passed run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-reasoning.out"
+    )
+
+    assert_protocol_field "$temp_root/review-reasoning.out" "RESULT" "success"
+    assert_contains "$temp_root/codex.plan.argv" "model_reasoning_effort=\"high\""
+    rm -rf "$temp_root"
+}
+
+test_plan_review_escalates_reasoning_after_failed_round() {
+    local temp_root project runtime_script executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
+
+    (
+        cd "$project"
+        FAKE_PLAN_REVIEW_RESULT=failed run_with_fake_plan_agents "$temp_root" bash "$executor" demo >/dev/null
+        FAKE_PLAN_REVIEW_RESULT=passed run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-reasoning-round2.out"
+    )
+
+    assert_protocol_field "$temp_root/review-reasoning-round2.out" "RESULT" "success"
+    assert_contains "$temp_root/codex.plan.argv" "model_reasoning_effort=\"xhigh\""
+    rm -rf "$temp_root"
+}
+
 test_plan_review_passed_with_notes
 test_plan_review_failed
 test_plan_review_failed_then_passed_with_notes_returns_planned
 test_plan_review_degraded_when_codex_unavailable
 test_plan_review_codex_mode_fails_when_codex_unavailable
 test_plan_review_ignores_explicit_model_override
+test_plan_review_defaults_to_high_reasoning
+test_plan_review_escalates_reasoning_after_failed_round

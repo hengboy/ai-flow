@@ -212,7 +212,7 @@ has_issue_status_marker() {
 }
 
 default_reasoning_for_engine() {
-    echo "${AI_FLOW_CODEX_DEFAULT_REASONING:-xhigh}"
+    echo "${AI_FLOW_CODEX_DEFAULT_REASONING:-high}"
 }
 
 run_codex_review_prompt() {
@@ -287,36 +287,70 @@ sys.stdout.write(text)
 PY
 }
 
-state_field() {
-    local slug="$1"
-    local field="$2"
-    python3 - "$FLOW_DIR/state/${slug}.json" "$field" <<'PY'
+load_state_context() {
+    local state_file="$1"
+    python3 - "$state_file" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-value = state
-for part in sys.argv[2].split("."):
-    if value is None:
-        value = None
-        break
-    if isinstance(value, dict):
-        value = value.get(part)
-    else:
-        value = None
-        break
-if value is None:
-    sys.exit(1)
-if isinstance(value, bool):
-    print("true" if value else "false")
-else:
+review_rounds = state.get("review_rounds") or {}
+last_review = state.get("last_review") or {}
+fields = [
+    state.get("current_status", ""),
+    state.get("plan_file", ""),
+    state.get("title", ""),
+    review_rounds.get("regular", 0),
+    review_rounds.get("recheck", 0),
+    state.get("latest_regular_review_file") or "",
+    state.get("latest_recheck_review_file") or "",
+    last_review.get("result") or "",
+    last_review.get("report_file") or "",
+]
+for value in fields:
     print(value)
 PY
 }
 
-state_field_optional() {
-    state_field "$1" "$2" 2>/dev/null || true
+state_current_status() {
+    local state_file="$1"
+    python3 - "$state_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(state.get("current_status", ""))
+PY
+}
+
+count_reviewable_git_paths() {
+    list_reviewable_git_paths | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' '
+}
+
+review_reasoning() {
+    local reasoning="$REASONING"
+    if [ -n "${AI_FLOW_CODEX_DEFAULT_REASONING:-}" ]; then
+        echo "$reasoning"
+        return 0
+    fi
+
+    local reviewable_paths="${1:-0}"
+    local plan_lines="${2:-0}"
+    local current_round="${3:-1}"
+    local prev_review_present="${4:-0}"
+
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ] \
+        || [ "$REVIEW_MODE" = "recheck" ] \
+        || [ "$current_round" -ge 2 ] \
+        || [ "$prev_review_present" -eq 1 ] \
+        || [ "$reviewable_paths" -ge 8 ] \
+        || [ "$plan_lines" -ge 220 ]; then
+        reasoning="xhigh"
+    fi
+
+    echo "$reasoning"
 }
 
 ensure_reviewable_git_changes() {
@@ -683,15 +717,16 @@ if [ "$IS_ADHOC" -eq 1 ]; then
     PREV_REVIEW=""
 else
     SLUG=$(basename "$STATE_FILE" .json)
-    PLAN_STATUS=$(state_field "$SLUG" "current_status")
-    PLAN_FILE=$(state_field "$SLUG" "plan_file")
-    PLAN_TITLE=$(state_field "$SLUG" "title")
-    REGULAR_ROUND_COUNT=$(state_field "$SLUG" "review_rounds.regular")
-    RECHECK_ROUND_COUNT=$(state_field "$SLUG" "review_rounds.recheck")
-    LATEST_REGULAR_REVIEW=$(state_field_optional "$SLUG" "latest_regular_review_file")
-    LATEST_RECHECK_REVIEW=$(state_field_optional "$SLUG" "latest_recheck_review_file")
-    LAST_REVIEW_RESULT=$(state_field_optional "$SLUG" "last_review.result")
-    LAST_REVIEW_FILE=$(state_field_optional "$SLUG" "last_review.report_file")
+    state_context=$(load_state_context "$STATE_FILE")
+    PLAN_STATUS=$(printf '%s\n' "$state_context" | sed -n '1p')
+    PLAN_FILE=$(printf '%s\n' "$state_context" | sed -n '2p')
+    PLAN_TITLE=$(printf '%s\n' "$state_context" | sed -n '3p')
+    REGULAR_ROUND_COUNT=$(printf '%s\n' "$state_context" | sed -n '4p')
+    RECHECK_ROUND_COUNT=$(printf '%s\n' "$state_context" | sed -n '5p')
+    LATEST_REGULAR_REVIEW=$(printf '%s\n' "$state_context" | sed -n '6p')
+    LATEST_RECHECK_REVIEW=$(printf '%s\n' "$state_context" | sed -n '7p')
+    LAST_REVIEW_RESULT=$(printf '%s\n' "$state_context" | sed -n '8p')
+    LAST_REVIEW_FILE=$(printf '%s\n' "$state_context" | sed -n '9p')
 
     case "$PLAN_STATUS" in
         AWAITING_REVIEW)
@@ -755,6 +790,13 @@ mkdir -p "$(dirname "$REPORT_FILE")"
 ensure_reviewable_git_changes
 require_root_cause_review_loop_record
 
+if [ "$IS_ADHOC" -eq 0 ]; then
+    PLAN_CONTENT=$(cat "$PLAN_FILE")
+    REASONING=$(review_reasoning "$(count_reviewable_git_paths)" "$(printf '%s\n' "$PLAN_CONTENT" | wc -l | tr -d ' ')" "$CURRENT_ROUND" "$( [ -n "$PREV_REVIEW" ] && echo 1 || echo 0 )")
+else
+    REASONING=$(review_reasoning "$(count_reviewable_git_paths)" 0 "$CURRENT_ROUND" 0)
+fi
+
 ACTIVE_ENGINE="Codex"
 ACTIVE_MODEL="$MODEL"
 ACTIVE_REASONING="$REASONING"
@@ -780,10 +822,6 @@ if [ -n "$PREV_REVIEW" ]; then
     echo "    上一轮报告: ${PREV_REVIEW}（用于缺陷正文与追踪）"
 fi
 echo ""
-
-if [ "$IS_ADHOC" -eq 0 ]; then
-    PLAN_CONTENT=$(cat "$PLAN_FILE")
-fi
 for required_file in "$FLOW_STATE_SH" "$TEMPLATE"; do
     if [ ! -f "$required_file" ]; then
         fail_protocol "缺少运行时资源: $required_file"
@@ -881,8 +919,9 @@ if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ]; then
     fi
     PROTOCOL_ARTIFACT="none"
     PROTOCOL_STATE="$PLAN_STATUS"
+    PROTOCOL_REVIEW_RESULT="degraded"
     PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan-coding-review。"
-    emit_current_protocol "degraded"
+    emit_current_protocol
     exit 0
 fi
 
@@ -901,8 +940,9 @@ if [ "$rc" -ne 0 ]; then
         fi
         PROTOCOL_ARTIFACT="none"
         PROTOCOL_STATE="$PLAN_STATUS"
+        PROTOCOL_REVIEW_RESULT="degraded"
         PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan-coding-review。"
-        emit_current_protocol "degraded"
+        emit_current_protocol
         exit 0
     fi
     emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
@@ -1171,7 +1211,7 @@ else
         --report-file "$REPORT_FILE" \
         --engine "$ACTIVE_ENGINE" \
         --model "$ACTIVE_MODEL"
-    UPDATED_STATUS=$(state_field "$SLUG" "current_status")
+    UPDATED_STATUS=$(state_current_status "$STATE_FILE")
     echo "    状态已验证为 [$UPDATED_STATUS]"
     PROTOCOL_STATE="$UPDATED_STATUS"
     PROTOCOL_REVIEW_RESULT="$RESULT"
