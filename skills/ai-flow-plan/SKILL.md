@@ -116,6 +116,30 @@ Agent(
 - 创建或保持 `.ai-flow/state/{日期}-{slug}.json`
 - 返回固定摘要协议，而不是回传 plan 正文
 
+## 固定输出协议
+
+plan 生成/修订完成后，用一行自然语言总结结果并给出下一步，示例：
+
+- 成功 → `✅ 计划草案已生成，状态进入 AWAITING_PLAN_REVIEW。`
+- 修订成功 → `✅ 计划已修订，状态进入 AWAITING_PLAN_REVIEW。`
+- 失败 → `❌ 计划生成失败，缺少需求描述。`
+
+然后根据 `NEXT` 值追加下一步提示：
+
+- `NEXT: ai-flow-plan-review` → 输出 `下一步：运行 /ai-flow-plan-review 审核 draft plan。`
+- `NEXT: none` → 不输出下一步提示
+
+内部在末尾追加机器可读的协议块：
+
+```text
+RESULT: success|failed|degraded
+AGENT: ai-flow-plan
+ARTIFACT: <plan-path|none>
+STATE: <status|none>
+NEXT: ai-flow-plan-review|none
+SUMMARY: <one-line-summary>
+```
+
 ## 完成后
 
 - `RESULT: success`：读取 `ARTIFACT`、`STATE`、`NEXT`、`SUMMARY`，确认 draft 已落盘

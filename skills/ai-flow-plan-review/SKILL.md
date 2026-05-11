@@ -119,8 +119,33 @@ Agent(
 - 推进 `.ai-flow/state/{日期}-{slug}.json`
 - 返回固定摘要协议，且包含 `REVIEW_RESULT`
 
+## 固定输出协议
+
+审核完成后，用一行自然语言总结结果并给出下一步，示例：
+
+- 通过 → `✅ 计划审核通过，状态进入 PLANNED，可以开始实施。`
+- 通过但有备注 → `✅ 计划审核通过，有 1 条建议。状态进入 PLANNED。`
+- 失败 → `❌ 计划审核未通过，发现 2 个问题，请回到 /ai-flow-plan 修订。`
+
+然后根据 `NEXT` 值追加下一步提示：
+
+- `NEXT: ai-flow-plan-coding` → 输出 `下一步：运行 /ai-flow-plan-coding 开始实施计划。`
+- `NEXT: ai-flow-plan` → 输出 `下一步：运行 /ai-flow-plan 修订计划后重新审核。`
+- `NEXT: none` → 不输出下一步提示
+
+内部在末尾追加机器可读的协议块：
+
+```text
+RESULT: success|failed
+AGENT: ai-flow-plan-review
+REVIEW_RESULT: passed|passed_with_notes|failed
+STATE: <status|none>
+NEXT: ai-flow-plan-coding|ai-flow-plan|none
+SUMMARY: <one-line-summary>
+```
+
 ## 完成后
 
 - `REVIEW_RESULT: passed|passed_with_notes`：下一步进入 `/ai-flow-plan-coding`
-- `REVIEW_RESULT: failed`：按“审核后偏差处理策略”决定是否先确认，再回到 `/ai-flow-plan`
+- `REVIEW_RESULT: failed`：按”审核后偏差处理策略”决定是否先确认，再回到 `/ai-flow-plan`
 - `RESULT: failed`：直接报告 `SUMMARY` 并停止

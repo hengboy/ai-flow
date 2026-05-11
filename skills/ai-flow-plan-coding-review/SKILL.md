@@ -112,6 +112,30 @@ Agent(
 - 推导 `REVIEW_RESULT` 并在绑定 `slug` 时推进状态
 - 返回固定摘要协议，而不是回传报告全文
 
+## 固定输出协议
+
+审查完成后，用一行自然语言总结结果并给出下一步，示例：
+
+- 通过 → `✅ 代码审查通过，64 个测试全部通过，状态已进入 DONE。`
+- 通过但有备注 → `✅ 代码审查通过，有 2 条建议性备注。状态已进入 DONE。`
+- 失败 → `❌ 代码审查未通过，发现 3 个问题，请回到 /ai-flow-plan-coding 修复。`
+
+然后根据 `NEXT` 值追加下一步提示：
+
+- `NEXT: ai-flow-plan-coding` → 输出 `下一步：运行 /ai-flow-plan-coding 修复审查中发现的问题。`
+- `NEXT: none` → 不输出下一步提示
+
+内部在末尾追加机器可读的协议块：
+
+```text
+RESULT: success|failed
+AGENT: ai-flow-plan-coding-review
+REVIEW_RESULT: passed|passed_with_notes|failed
+STATE: <status|none>
+NEXT: ai-flow-plan-coding|none
+SUMMARY: <one-line-summary>
+```
+
 ## 完成后
 
 - `REVIEW_RESULT: failed` 且绑定 `slug`：下一步回到 `/ai-flow-plan-coding`
