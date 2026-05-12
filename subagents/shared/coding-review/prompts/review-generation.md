@@ -35,7 +35,7 @@ __AI_FLOW_TEMPLATE_CONTENT__
 - **不要放过**：如果不确定是否有问题，标记为“需要人工验证”，不要跳过或静默通过
 
 输出要求：
-0. 如果当前为 workspace 模式（见上方 `__AI_FLOW_WORKSPACE_CONTEXT__`），必须在审查上下文中列出所有有变更的仓库；文件路径需包含仓库标识前缀；每个有变更的仓库至少写一条 per-repo 验证命令。
+0. 如果当前为 workspace 模式（见上方 `__AI_FLOW_WORKSPACE_CONTEXT__`），必须先解析 workspace 根并逐仓执行 `git -C <workspace_root>/<repo_path> status --porcelain --untracked-files=all`、`git -C <workspace_root>/<repo_path> diff --staged`、`git -C <workspace_root>/<repo_path> diff`，并直接读取 untracked 文件内容；禁止在 workspace 根直接运行裸 `git status` / `git diff`。报告中必须列出所有有变更的仓库；文件路径必须包含仓库标识前缀；每个有变更的仓库至少写一条 per-repo 验证命令。
 1. 填充模板中的所有占位符，**1.1 审查上下文**、**1.2 定向验证执行证据**、**3.5 逻辑正确性**、**3.6 缺陷族覆盖度** 必须填写，不能省略
 2. 顶部元数据中的 `需求简称` 必须是 __AI_FLOW_SLUG__，`审查模式` 必须是 __AI_FLOW_REVIEW_MODE__，`审查轮次` 必须是 __AI_FLOW_CURRENT_ROUND__，`审查结果` 只能填写 `passed`、`passed_with_notes` 或 `failed`
 3. 如果仍有 Critical/Important 或任何 `[待修复]` 项，`审查结果` 必须为 `failed`

@@ -4,7 +4,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/testkit.bash"
 
 test_workspace_plan_accepts_manifest_root() {
-    local temp_root workspace runtime_script out today executor
+    local temp_root workspace runtime_script out today executor state_slug
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     write_fake_plan_agents "$temp_root"
@@ -27,8 +27,9 @@ test_workspace_plan_accepts_manifest_root() {
     assert_file_exists "$workspace/.ai-flow/plans/${today}-workspace-perms.md"
 
     # State should record workspace execution_scope
-    assert_equals "2" "$(state_field "$workspace" "workspace-perms" "schema_version")"
-    assert_equals "workspace" "$(state_field "$workspace" "workspace-perms" "execution_scope.mode")"
+    state_slug="${today}-workspace-perms"
+    assert_equals "2" "$(state_field "$workspace" "$state_slug" "schema_version")"
+    assert_equals "workspace" "$(state_field "$workspace" "$state_slug" "execution_scope.mode")"
     rm -rf "$temp_root"
 }
 
@@ -50,7 +51,7 @@ test_workspace_plan_writes_artifacts_at_workspace_root() {
 
     # Plan and state should be at workspace root, not in a sub-repo
     assert_file_exists "$workspace/.ai-flow/plans/${today}-ws-artifacts.md"
-    assert_file_exists "$workspace/.ai-flow/state/ws-artifacts.json"
+    assert_file_exists "$workspace/.ai-flow/state/${today}-ws-artifacts.json"
     rm -rf "$temp_root"
 }
 

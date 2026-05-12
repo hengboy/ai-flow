@@ -10,7 +10,8 @@ exec 3>&1 1>&2
 
 AI_FLOW_ENGINE_MODE="${AI_FLOW_ENGINE_MODE:-auto}"
 
-PROJECT_DIR="$(pwd)"
+ORIGINAL_PROJECT_DIR="$(pwd)"
+PROJECT_DIR="$ORIGINAL_PROJECT_DIR"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 REPORTS_DIR="$FLOW_DIR/reports"
 TEMPLATE="$AGENT_DIR/templates/review-template.md"
@@ -31,24 +32,39 @@ PROTOCOL_SUMMARY=""
 PROTOCOL_EMITTED=0
 
 detect_workspace_context() {
+    local workspace_root=""
+    local membership=""
+
+    if [ -f "$PROJECT_DIR/.ai-flow/workspace.json" ]; then
+        workspace_root="$PROJECT_DIR"
+    else
+        workspace_root="$(resolve_workspace_root "$PROJECT_DIR" 2>/dev/null || true)"
+        if [ -z "$workspace_root" ]; then
+            return 1
+        fi
+        membership="$(resolve_workspace_repo_membership "$workspace_root" "$ORIGINAL_PROJECT_DIR" 2>/dev/null || true)"
+        if [ -z "$membership" ]; then
+            return 1
+        fi
+        PROJECT_DIR="$workspace_root"
+        FLOW_DIR="$PROJECT_DIR/.ai-flow"
+        REPORTS_DIR="$FLOW_DIR/reports"
+    fi
+
     if [ ! -f "$PROJECT_DIR/.ai-flow/workspace.json" ]; then
         return 1
     fi
     IS_WORKSPACE_MODE=1
     WORKSPACE_ROOT="$PROJECT_DIR"
     while IFS=$'\t' read -r repo_id repo_path; do
+        [ -n "$repo_id" ] || continue
         WORKSPACE_REPO_IDS+=("$repo_id")
         WORKSPACE_REPO_PATHS+=("$repo_path")
-    done < <(python3 - "$PROJECT_DIR/.ai-flow/workspace.json" <<'PY'
-import json, sys
-data = json.load(open(sys.argv[1]))
-for repo in data.get("repos", []):
-    print(f"{repo['id']}\t{repo['path']}")
-PY
-    )
+    done < <(list_scope_repos "$PROJECT_DIR")
     return 0
 }
 detect_workspace_context || true
+cd "$PROJECT_DIR"
 
 emit_current_protocol() {
     PROTOCOL_EMITTED=1
@@ -83,6 +99,22 @@ validate_installed_resources
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
+}
+
+resolve_project_path() {
+    local path="${1:-}"
+    if [ -z "$path" ] || [ "$path" = "none" ]; then
+        printf '%s' "$path"
+        return 0
+    fi
+    case "$path" in
+        /*)
+            printf '%s' "$path"
+            ;;
+        *)
+            printf '%s/%s' "$PROJECT_DIR" "$path"
+            ;;
+    esac
 }
 
 trim_report_to_header() {
@@ -247,11 +279,23 @@ render_prompt_template() {
     local prompt_template="$1"
     local workspace_ctx=""
     if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
-        workspace_ctx="workspace"
+        workspace_ctx=$(cat <<EOF
+4. 当前为 workspace 模式。workspace 根目录：\`$PROJECT_DIR\`
+5. 声明仓库清单（仅以下 repo 属于本次审查范围）：
+EOF
+)
         local i
         for i in "${!WORKSPACE_REPO_IDS[@]}"; do
-            workspace_ctx="${workspace_ctx}; repo=${WORKSPACE_REPO_IDS[$i]} path=${WORKSPACE_REPO_PATHS[$i]}"
+            workspace_ctx="${workspace_ctx}
+   - repo=\`${WORKSPACE_REPO_IDS[$i]}\` path=\`${WORKSPACE_REPO_PATHS[$i]}\`"
         done
+        workspace_ctx="${workspace_ctx}
+6. Workspace 操作要求：
+   - 必须逐仓运行 \`git -C <workspace_root>/<repo_path> status --porcelain --untracked-files=all\`，禁止在 workspace 根直接运行裸 \`git status\`
+   - 必须逐仓运行 \`git -C <workspace_root>/<repo_path> diff --staged\` 与 \`git -C <workspace_root>/<repo_path> diff\`，禁止在 workspace 根直接运行裸 \`git diff\`
+   - 对 untracked 文件必须直接读取文件内容，不能只看 diff
+   - 报告中的文件路径必须写成 \`repo_id/path/to/file\`
+   - \`1.1 审查上下文\` 必须列出全部 dirty repo，\`1.2 定向验证执行证据\` 必须每个 dirty repo 至少一条验证命令"
     fi
     AI_FLOW_REVIEW_SCOPE_GUIDANCE="$REVIEW_SCOPE_GUIDANCE" \
     AI_FLOW_HISTORY_RULES="$HISTORY_RULES" \
@@ -329,6 +373,103 @@ count_reviewable_git_paths() {
     list_reviewable_git_paths | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' '
 }
 
+list_workspace_reviewable_git_paths() {
+    local i
+    for i in "${!WORKSPACE_REPO_PATHS[@]}"; do
+        local repo_id="${WORKSPACE_REPO_IDS[$i]}"
+        local repo_path="${WORKSPACE_REPO_PATHS[$i]}"
+        collect_repo_changes "$WORKSPACE_ROOT" "$repo_path" 2>/dev/null | awk -v prefix="${repo_id}/" '
+            {
+                path = substr($0, 4)
+                if (path ~ /^\.ai-flow\//) {
+                    next
+                }
+                print prefix path
+            }
+        '
+    done
+}
+
+list_workspace_dirty_repo_ids() {
+    local i
+    for i in "${!WORKSPACE_REPO_PATHS[@]}"; do
+        local repo_id="${WORKSPACE_REPO_IDS[$i]}"
+        local repo_path="${WORKSPACE_REPO_PATHS[$i]}"
+        local changes
+        changes="$(collect_repo_changes "$WORKSPACE_ROOT" "$repo_path" 2>/dev/null || true)"
+        if [ -n "$(printf '%s\n' "$changes" | awk '
+            {
+                path = substr($0, 4)
+                if (path ~ /^\.ai-flow\//) {
+                    next
+                }
+                print path
+            }
+        ')" ]; then
+            printf '%s\n' "$repo_id"
+        fi
+    done
+}
+
+list_workspace_change_summary() {
+    local i
+    for i in "${!WORKSPACE_REPO_PATHS[@]}"; do
+        local repo_id="${WORKSPACE_REPO_IDS[$i]}"
+        local repo_path="${WORKSPACE_REPO_PATHS[$i]}"
+        local changes
+        changes="$(collect_repo_changes "$WORKSPACE_ROOT" "$repo_path" 2>/dev/null || true)"
+        if [ -z "$changes" ]; then
+            continue
+        fi
+        printf '[repo=%s]\n' "$repo_id"
+        printf '%s\n' "$changes" | awk -v prefix="${repo_id}/" '
+            {
+                path = substr($0, 4)
+                if (path ~ /^\.ai-flow\//) {
+                    next
+                }
+                print substr($0, 1, 3) prefix path
+            }
+        '
+    done
+}
+
+workspace_report_validation_error() {
+    local dirty_repo_file
+    dirty_repo_file="$(mktemp)"
+    cat > "$dirty_repo_file"
+    python3 - "$REPORT_FILE" "$dirty_repo_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+dirty_repos = [line.strip() for line in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines() if line.strip()]
+errors = []
+
+match_context = re.search(r"(?ms)^### 1\.1 .*?(?=^### 1\.2 |\Z)", text)
+match_verification = re.search(r"(?ms)^### 1\.2 .*?(?=^## 2\. |\Z)", text)
+context = match_context.group(0) if match_context else ""
+verification = match_verification.group(0) if match_verification else ""
+
+for repo_id in dirty_repos:
+    if repo_id not in context:
+        errors.append(f"workspace 报告缺少 dirty repo 上下文: {repo_id}")
+    repo_prefix = f"{repo_id}/"
+    if repo_prefix not in text:
+        errors.append(f"workspace 报告缺少 repo 前缀文件路径: {repo_prefix}")
+    if repo_id not in verification:
+        errors.append(f"workspace 报告缺少 per-repo 验证证据: {repo_id}")
+
+if errors:
+    sys.stderr.write("\n".join(errors) + "\n")
+    sys.exit(1)
+PY
+    local rc=$?
+    rm -f "$dirty_repo_file"
+    return "$rc"
+}
+
 review_reasoning() {
     local reasoning="$REASONING"
     if [ -n "${AI_FLOW_CODEX_DEFAULT_REASONING:-}" ]; then
@@ -355,18 +496,25 @@ review_reasoning() {
 
 ensure_reviewable_git_changes() {
     if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
-        # Workspace mode: check each declared repo for changes
         local any_changes=0
         local i
         for i in "${!WORKSPACE_REPO_PATHS[@]}"; do
             local repo_path="${WORKSPACE_REPO_PATHS[$i]}"
             local repo_id="${WORKSPACE_REPO_IDS[$i]}"
-            if ! git -C "$WORKSPACE_ROOT/$repo_path" rev-parse --show-toplevel >/dev/null 2>&1; then
+            if ! validate_scope_repo_git "$WORKSPACE_ROOT" "$repo_path"; then
                 fail_protocol "声明的仓库 '${repo_id}' ($repo_path) 不是有效的 Git 仓库"
             fi
             local changes
-            changes=$(git -C "$WORKSPACE_ROOT/$repo_path" status --porcelain --untracked-files=all 2>/dev/null || true)
-            if [ -n "$changes" ]; then
+            changes="$(collect_repo_changes "$WORKSPACE_ROOT" "$repo_path" 2>/dev/null || true)"
+            if [ -n "$(printf '%s\n' "$changes" | awk '
+                {
+                    path = substr($0, 4)
+                    if (path ~ /^\.ai-flow\//) {
+                        next
+                    }
+                    print path
+                }
+            ')" ]; then
                 any_changes=1
             fi
         done
@@ -426,20 +574,28 @@ extract_family_coverage_section() {
 }
 
 list_reviewable_git_paths() {
-    git status --porcelain --untracked-files=all | awk '
-        {
-            path = substr($0, 4)
-            if (path ~ /^\.ai-flow\//) {
-                next
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
+        list_workspace_reviewable_git_paths
+    else
+        git status --porcelain --untracked-files=all | awk '
+            {
+                path = substr($0, 4)
+                if (path ~ /^\.ai-flow\//) {
+                    next
+                }
+                print path
             }
-            print path
-        }
-    '
+        '
+    fi
 }
 
 is_documentation_path() {
     local path="$1"
-    case "$path" in
+    local normalized_path="$path"
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ] && [[ "$normalized_path" == */* ]]; then
+        normalized_path="${normalized_path#*/}"
+    fi
+    case "$normalized_path" in
         docs/*|doc/*|README|README.*|CHANGELOG|CHANGELOG.*|*.md|*.markdown|*.rst|*.adoc)
             return 0
             ;;
@@ -546,7 +702,7 @@ require_root_cause_review_loop_record() {
     fi
 
     local gate_error=""
-    if ! gate_error=$(python3 - "$STATE_FILE" "$PLAN_FILE" 2>&1 <<'PY'
+    if ! gate_error=$(python3 - "$STATE_FILE_ABS" "$PLAN_FILE_ABS" 2>&1 <<'PY'
 import json
 import re
 import sys
@@ -614,10 +770,10 @@ PY
 }
 
 validate_previous_family_coverage() {
-    [ -n "$PREV_REVIEW" ] || return 0
-    [ -f "$PREV_REVIEW" ] || return 0
+    [ -n "$PREV_REVIEW_ABS" ] || return 0
+    [ -f "$PREV_REVIEW_ABS" ] || return 0
 
-    python3 - "$PREV_REVIEW" "$REPORT_FILE" <<'PY'
+    python3 - "$PREV_REVIEW_ABS" "$REPORT_FILE" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -671,6 +827,9 @@ IS_ADHOC=0
 ADHOC_DATE=""
 ADHOC_REPORT_DIR=""
 ADHOC_SEQ_NUM=""
+PLAN_FILE_ABS="none"
+PREV_REVIEW_ABS=""
+STATE_FILE_ABS=""
 if [ -z "${1:-}" ]; then
     IS_ADHOC=1
     ADHOC_DATE="$(date +%Y%m%d)"
@@ -699,6 +858,7 @@ if [ "$IS_ADHOC" -eq 0 ]; then
         fail_protocol "slug '$REQUEST_KEY' 匹配到多个状态文件，请使用精确 slug"
     else
         STATE_FILE="${MATCHED_STATES[0]}"
+        STATE_FILE_ABS="$(resolve_project_path "$STATE_FILE")"
         apply_review_arg_compat "$ARG2" "$ARG3" "$ARG4"
     fi
 fi
@@ -713,11 +873,13 @@ if [ "$IS_ADHOC" -eq 1 ]; then
     CURRENT_ROUND=1
     REVIEW_MODE="adhoc"
     PLAN_FILE="none"
+    PLAN_FILE_ABS="none"
     PLAN_TITLE="adhoc review"
     PREV_REVIEW=""
+    PREV_REVIEW_ABS=""
 else
     SLUG=$(basename "$STATE_FILE" .json)
-    state_context=$(load_state_context "$STATE_FILE")
+    state_context=$(load_state_context "$STATE_FILE_ABS")
     PLAN_STATUS=$(printf '%s\n' "$state_context" | sed -n '1p')
     PLAN_FILE=$(printf '%s\n' "$state_context" | sed -n '2p')
     PLAN_TITLE=$(printf '%s\n' "$state_context" | sed -n '3p')
@@ -727,6 +889,7 @@ else
     LATEST_RECHECK_REVIEW=$(printf '%s\n' "$state_context" | sed -n '7p')
     LAST_REVIEW_RESULT=$(printf '%s\n' "$state_context" | sed -n '8p')
     LAST_REVIEW_FILE=$(printf '%s\n' "$state_context" | sed -n '9p')
+    PLAN_FILE_ABS="$(resolve_project_path "$PLAN_FILE")"
 
     case "$PLAN_STATUS" in
         AWAITING_REVIEW)
@@ -784,6 +947,7 @@ if [ "$IS_ADHOC" -eq 0 ]; then
     else
         PREV_REVIEW="${LATEST_REGULAR_REVIEW:-}"
     fi
+    PREV_REVIEW_ABS="$(resolve_project_path "$PREV_REVIEW")"
 fi
 
 mkdir -p "$(dirname "$REPORT_FILE")"
@@ -791,8 +955,8 @@ ensure_reviewable_git_changes
 require_root_cause_review_loop_record
 
 if [ "$IS_ADHOC" -eq 0 ]; then
-    PLAN_CONTENT=$(cat "$PLAN_FILE")
-    REASONING=$(review_reasoning "$(count_reviewable_git_paths)" "$(printf '%s\n' "$PLAN_CONTENT" | wc -l | tr -d ' ')" "$CURRENT_ROUND" "$( [ -n "$PREV_REVIEW" ] && echo 1 || echo 0 )")
+    PLAN_CONTENT=$(cat "$PLAN_FILE_ABS")
+    REASONING=$(review_reasoning "$(count_reviewable_git_paths)" "$(printf '%s\n' "$PLAN_CONTENT" | wc -l | tr -d ' ')" "$CURRENT_ROUND" "$( [ -n "$PREV_REVIEW_ABS" ] && echo 1 || echo 0 )")
 else
     REASONING=$(review_reasoning "$(count_reviewable_git_paths)" 0 "$CURRENT_ROUND" 0)
 fi
@@ -855,9 +1019,9 @@ HISTORY_RULES=""
 if [ "$IS_ADHOC" -eq 0 ]; then
     HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入"4. 缺陷清单"，并同步更新"6. 缺陷修复追踪"。\n6. "3.6 缺陷族覆盖度"至少要覆盖 plan 中与本次变更相关的缺陷族，并说明已覆盖 / 未覆盖 / 需人工验证。'
 fi
-if [ -n "$PREV_REVIEW" ] && [ -f "$PREV_REVIEW" ]; then
-    PREV_DEFECTS=$(extract_defect_section "$PREV_REVIEW")
-    PREV_TRACKING=$(extract_tracking_section "$PREV_REVIEW")
+if [ -n "$PREV_REVIEW_ABS" ] && [ -f "$PREV_REVIEW_ABS" ]; then
+    PREV_DEFECTS=$(extract_defect_section "$PREV_REVIEW_ABS")
+    PREV_TRACKING=$(extract_tracking_section "$PREV_REVIEW_ABS")
     [ -z "$PREV_DEFECTS" ] && PREV_DEFECTS=$'## 4. 缺陷清单\n\n（上一轮报告缺少该章节，请按空缺陷清单处理）'
     [ -z "$PREV_TRACKING" ] && PREV_TRACKING=$'## 6. 缺陷修复追踪\n\n（上一轮报告缺少该章节，请按空追踪表处理）'
     HISTORY_CONTEXT=$(cat <<EOF
@@ -882,6 +1046,15 @@ fi
 
 if [ "$IS_ADHOC" -eq 1 ]; then
     ADHOC_TODAY="$(date +%Y-%m-%d)"
+    ADHOC_CHANGE_SUMMARY="$(list_workspace_change_summary 2>/dev/null || true)"
+    if [ "$IS_WORKSPACE_MODE" -eq 0 ]; then
+        ADHOC_CHANGE_SUMMARY=$(
+            cat <<EOF
+$(git diff --staged --name-only 2>/dev/null || true)
+$(git diff --name-only 2>/dev/null || true)
+EOF
+        )
+    fi
     REVIEW_PROMPT=$(cat <<PROMPT
 # 审查报告：adhoc review
 
@@ -895,8 +1068,7 @@ if [ "$IS_ADHOC" -eq 1 ]; then
 请审查当前未提交的 Git 变更，使用简化 adhoc 模式生成审查报告。
 
 当前变更摘要（git diff --staged + git diff）：
-$(git diff --staged --name-only 2>/dev/null || true)
-$(git diff --name-only 2>/dev/null || true)
+$ADHOC_CHANGE_SUMMARY
 
 请使用 adhoc-review-template.md 模板生成审查报告。
 要求：
@@ -1110,6 +1282,11 @@ if [ "$IS_ADHOC" -eq 0 ]; then
     if ! optional_marker_error=$(validate_optional_markers 2>&1); then
         ERRORS="${ERRORS}${optional_marker_error}\n"
     fi
+    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
+        if ! workspace_validation_error=$(list_workspace_dirty_repo_ids | workspace_report_validation_error 2>&1); then
+            ERRORS="${ERRORS}${workspace_validation_error}\n"
+        fi
+    fi
 fi
 
 if [ "$META_RESULT" = "passed" ]; then
@@ -1211,7 +1388,7 @@ else
         --report-file "$REPORT_FILE" \
         --engine "$ACTIVE_ENGINE" \
         --model "$ACTIVE_MODEL"
-    UPDATED_STATUS=$(state_current_status "$STATE_FILE")
+    UPDATED_STATUS=$(state_current_status "$STATE_FILE_ABS")
     echo "    状态已验证为 [$UPDATED_STATUS]"
     PROTOCOL_STATE="$UPDATED_STATUS"
     PROTOCOL_REVIEW_RESULT="$RESULT"

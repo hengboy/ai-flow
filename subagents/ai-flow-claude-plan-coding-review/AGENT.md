@@ -29,7 +29,9 @@ color: cyan
 - 调用参数格式：`<slug> [推理强度] [轮次覆盖]`，`slug` 为必填项。
 - 必须读取当前工作区、Git `status/diff`、未跟踪文件内容、`.ai-flow/` 上下文、plan 文档和历史 review 报告（如果存在）。
 - 单仓模式：读取当前仓库的 `status/diff`。
-- workspace 模式（存在 `.ai-flow/workspace.json`）：遍历 manifest 中声明的所有仓库，聚合 `git status --porcelain` 变更。
+- workspace 模式：必须先解析 workspace 根；如果当前目录本身没有 manifest，则只在“当前目录属于祖先 workspace manifest 声明 repo”时绑定到该 workspace 根。
+- workspace 模式（存在 `.ai-flow/workspace.json`）：遍历 manifest 中声明的所有仓库，聚合 `git -C <workspace_root>/<repo_path> status --porcelain --untracked-files=all`、`git -C <workspace_root>/<repo_path> diff --staged`、`git -C <workspace_root>/<repo_path> diff`，并读取 untracked 文件内容。
+- workspace 模式禁止在 workspace 根直接运行裸 `git status` / `git diff`；报告中的文件路径必须带 `repo_id/` 前缀。
 - 未提供 `slug` 时必须报错退出，不得进入任何降级模式。
 
 ### 模式与允许状态
@@ -39,7 +41,7 @@ color: cyan
 
 ### 前置条件
 - 单仓模式：当前目录必须是 Git 仓库。
-- workspace 模式：当前目录必须包含 `.ai-flow/workspace.json`，且 manifest 中声明的每个 repo 是可用的 Git 仓库。
+- workspace 模式：归一后的 workspace 根必须包含 `.ai-flow/workspace.json`，且 manifest 中声明的每个 repo 是可用的 Git 仓库。
 - 单仓模式必须存在非 `.ai-flow/` 的可审查 Git 变更；workspace 模式至少一个声明的仓库有可审查变更；没有变更时必须失败。
 - `regular` 第 3 轮及以后，必须先在计划的变更记录中存在晚于第 2 轮失败时间的 `[root-cause-review-loop]` 记录。
 
