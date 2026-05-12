@@ -568,6 +568,69 @@ validate_plan_structure() {
         if ! grep -q '\*\*阻塞条件\*\*' "$plan_file"; then
             errors="${errors}缺少 Step 级别的阻塞条件\n"
         fi
+        # Per-step sub-field validation: each Step must have all 9 required fields
+        if ! python3 - "$plan_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+# Split into sections between ### Step headers and the next ### Step or ##
+step_sections = re.split(r'(?=^### Step )', text, flags=re.M)
+step_sections = [s for s in step_sections if s.startswith('### Step ')]
+
+required_fields = [
+    '**目标**',
+    '**文件边界**',
+    '**本轮 review 预期关注面**',
+    '**执行动作**',
+    '**本步验收**',
+    '**本步关闭条件**',
+    '**阻塞条件**',
+]
+
+all_ok = True
+for section in step_sections:
+    title_match = re.match(r'### Step (\d+): (.+)', section)
+    title = title_match.group(0) if title_match else 'unknown step'
+    # Check for Create/Modify/Test in file boundary area
+    if '**文件边界**' in section:
+        boundary_part = section.split('**文件边界**')[1].split('**')[0] if '**文件边界**' in section else ''
+        if not re.search(r'(Create|Modify|Test):', section):
+            print(f"Step 缺少 Create/Modify/Test 文件边界行")
+            all_ok = False
+    for field in required_fields:
+        if field not in section:
+            print(f"{title} 缺少字段: {field}")
+            all_ok = False
+    # 前置阅读 is optional (整段删除是允许的)
+
+sys.exit(0 if all_ok else 1)
+PY
+        then
+            local step_errors
+            step_errors=$(python3 - "$plan_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+step_sections = re.split(r'(?=^### Step )', text, flags=re.M)
+step_sections = [s for s in step_sections if s.startswith('### Step ')]
+required_fields = ['**目标**', '**文件边界**', '**本轮 review 预期关注面**', '**执行动作**', '**本步验收**', '**本步关闭条件**', '**阻塞条件**']
+msgs = []
+for section in step_sections:
+    title_match = re.match(r'### Step (\d+): (.+)', section)
+    title = title_match.group(0) if title_match else 'unknown step'
+    if '**文件边界**' in section and not re.search(r'(Create|Modify|Test):', section):
+        msgs.append(f"{title}: 文件边界缺少 Create/Modify/Test")
+    for field in required_fields:
+        if field not in section:
+            msgs.append(f"{title}: 缺少 {field}")
+print("; ".join(msgs))
+PY
+)
+            errors="${errors}Step 子字段校验失败: ${step_errors}\n"
+        fi
         if ! awk '
             /^### 2\.6 高风险路径与缺陷族/ {in_section=1; next}
             /^## / && in_section {exit}
