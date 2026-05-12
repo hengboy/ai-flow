@@ -167,6 +167,13 @@ sync_claude_md() {
 
 # --- Phase 1: Remove all previously installed AI Flow files ---
 
+# Backup existing setting.json before wiping AI_FLOW_HOME
+_ai_flow_setting_backup=""
+if [ -f "$AI_FLOW_HOME/setting.json" ]; then
+    _ai_flow_setting_backup="$(mktemp)"
+    cp "$AI_FLOW_HOME/setting.json" "$_ai_flow_setting_backup"
+fi
+
 remove_legacy_claude_layout
 
 # Remove all AI Flow skills from all target roots
@@ -216,6 +223,17 @@ echo "Synced AI Flow skills to $ONSPACE_SKILLS_DIR"
 
 install_runtime_root "$ROOT_DIR/runtime" "$AI_FLOW_HOME"
 echo "Installed AI Flow runtime to $AI_FLOW_HOME"
+
+# Restore or create setting.json
+if [ -n "$_ai_flow_setting_backup" ] && [ -f "$_ai_flow_setting_backup" ]; then
+    cp "$_ai_flow_setting_backup" "$AI_FLOW_HOME/setting.json"
+    rm -f "$_ai_flow_setting_backup"
+    echo "Restored setting.json to $AI_FLOW_HOME"
+elif [ ! -f "$AI_FLOW_HOME/setting.json" ]; then
+    mkdir -p "$AI_FLOW_HOME"
+    cp "$ROOT_DIR/subagents/shared/setting.json.template" "$AI_FLOW_HOME/setting.json"
+    echo "Created default setting.json at $AI_FLOW_HOME"
+fi
 
 for agent_dir in "$ROOT_DIR"/subagents/*; do
     [ -d "$agent_dir" ] || continue

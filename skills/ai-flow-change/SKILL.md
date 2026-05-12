@@ -30,7 +30,7 @@ description: 处理需求变更，更新实施计划各章节（步骤/文件边
 运行：
 
 ```bash
-${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
+$HOME/.config/ai-flow/scripts/flow-status.sh
 ```
 
 确认上一步确定的 slug 状态可变更。所有状态均允许变更，但处理方式不同。
@@ -63,7 +63,7 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
 仅在 `AWAITING_REVIEW` / `DONE` / `REVIEW_FAILED` / `FIXING_REVIEW` 状态时执行：
 
 ```bash
-${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh repair \
+$HOME/.config/ai-flow/scripts/flow-state.sh repair \
   --slug {YYYYMMDD}-{slug} \
   --status IMPLEMENTING \
   --clear-active-fix \
@@ -73,7 +73,7 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh repair \
 转换后确认：
 
 ```bash
-${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh show {YYYYMMDD}-{slug} --field current_status
+$HOME/.config/ai-flow/scripts/flow-state.sh show {YYYYMMDD}-{slug} --field current_status
 ```
 
 预期输出：`IMPLEMENTING`
@@ -83,7 +83,7 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh show {YYYYMMDD}-{sl
 需求变动后必须重新审核方案。在 `PLANNED` 或 `IMPLEMENTING` 状态时执行：
 
 ```bash
-${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh revert-plan \
+$HOME/.config/ai-flow/scripts/flow-state.sh revert-plan \
   --slug {YYYYMMDD}-{slug} \
   --note "需求变更：{一句话描述变更内容}"
 ```
@@ -91,7 +91,7 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh revert-plan \
 转换后确认：
 
 ```bash
-${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh show {YYYYMMDD}-{slug} --field current_status
+$HOME/.config/ai-flow/scripts/flow-state.sh show {YYYYMMDD}-{slug} --field current_status
 ```
 
 预期输出：`AWAITING_PLAN_REVIEW`
@@ -155,7 +155,7 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-state.sh show {YYYYMMDD}-{sl
 运行：
 
 ```bash
-${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-change.sh {YYYYMMDD}-{slug} "变更描述"
+$HOME/.config/ai-flow/scripts/flow-change.sh {YYYYMMDD}-{slug} "变更描述"
 ```
 
 变更描述格式建议：`[新增/修改/删除] {具体内容} — 影响步骤: Step N, M`
@@ -163,7 +163,7 @@ ${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-change.sh {YYYYMMDD}-{slug} 
 如果是 regular 第 2 轮失败后的根因补录，必须使用：
 
 ```bash
-${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-change.sh {YYYYMMDD}-{slug} "[root-cause-review-loop] 根因：...；受影响缺陷族：...；前两轮遗漏原因：...；补充验证：..."
+$HOME/.config/ai-flow/scripts/flow-change.sh {YYYYMMDD}-{slug} "[root-cause-review-loop] 根因：...；受影响缺陷族：...；前两轮遗漏原因：...；补充验证：..."
 ```
 
 该记录是进入 regular 第 3 轮 review 的硬门禁，不能只改代码不补录。

@@ -269,7 +269,7 @@ test_plan_missing_runtime_fails_deterministically() {
 }
 
 test_plan_codex_mode_fails_when_codex_unavailable() {
-    local temp_root project executor
+    local temp_root project executor setting_json
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     write_fake_plan_agents "$temp_root"
@@ -278,13 +278,24 @@ test_plan_codex_mode_fails_when_codex_unavailable() {
     setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
 
+    # Override engine_mode via setting.json
+    setting_json="$temp_root/home/.config/ai-flow/setting.json"
+    python3 -c "
+import json
+from pathlib import Path
+p = Path('$setting_json')
+c = json.loads(p.read_text())
+c['engine_mode'] = 'codex'
+p.write_text(json.dumps(c, indent=2, ensure_ascii=False))
+"
+
     (
         cd "$project"
-        AI_FLOW_ENGINE_MODE=codex FAKE_PLAN_CODEX_MODE=unavailable run_with_fake_plan_agents "$temp_root" bash "$executor" "codex only" codex-only >"$temp_root/codex-mode.out"
+        FAKE_PLAN_CODEX_MODE=unavailable run_with_fake_plan_agents "$temp_root" bash "$executor" "codex only" codex-only >"$temp_root/codex-mode.out"
     ) || true
 
     assert_protocol_field "$temp_root/codex-mode.out" "RESULT" "failed"
-    assert_contains "$temp_root/codex-mode.out" "AI_FLOW_ENGINE_MODE=codex"
+    assert_contains "$temp_root/codex-mode.out" "PLAN_ENGINE_MODE=codex"
     rm -rf "$temp_root"
 }
 

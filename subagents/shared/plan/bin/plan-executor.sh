@@ -8,8 +8,6 @@ AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$AGENT_DIR/lib/agent-common.sh"
 exec 3>&1 1>&2
 
-AI_FLOW_ENGINE_MODE="${AI_FLOW_ENGINE_MODE:-auto}"
-
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
 ORIGINAL_PROJECT_DIR="$(pwd)"
@@ -36,10 +34,11 @@ REPO_SCOPE_JSON=""
 PLAN_REPO_IDS=()
 TEMPLATE="$AGENT_DIR/templates/plan-template.md"
 PLAN_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-generation.md"
-PLAN_REVIEW_PROMPT_TEMPLATE="${AI_FLOW_PLAN_REVIEW_PROMPT_TEMPLATE:-$AGENT_DIR/prompts/plan-review.md}"
+PLAN_REVIEW_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-review.md"
 PLAN_REVISION_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-revision.md"
-PLAN_REASONING="${AI_FLOW_PLAN_REASONING:-high}"
-PLAN_REVIEW_REASONING="${AI_FLOW_PLAN_REVIEW_REASONING:-high}"
+PLAN_REASONING="$(default_reasoning_for_engine "$AGENT_ENGINE")"
+PLAN_REVIEW_REASONING="$(get_setting "plan_review.$AGENT_ENGINE.reasoning" "high")"
+PLAN_ENGINE_MODE="${ENGINE_MODE_OVERRIDE:-auto}"
 PLAN_ENGINE_NAME=""
 PLAN_ENGINE_MODEL=""
 REQUIREMENT=""
@@ -353,10 +352,6 @@ file_line_count() {
 
 plan_authoring_reasoning() {
     local reasoning="$PLAN_REASONING"
-    if [ -n "${AI_FLOW_PLAN_REASONING:-}" ]; then
-        echo "$reasoning"
-        return 0
-    fi
 
     local requirement_length stack_count
     requirement_length=$(printf '%s' "$REQUIREMENT" | wc -m | tr -d ' ')
@@ -373,10 +368,6 @@ plan_authoring_reasoning() {
 
 plan_review_reasoning() {
     local reasoning="$PLAN_REVIEW_REASONING"
-    if [ -n "${AI_FLOW_PLAN_REVIEW_REASONING:-}" ]; then
-        echo "$reasoning"
-        return 0
-    fi
 
     local plan_lines="${1:-0}"
     local review_round="${2:-1}"
@@ -993,9 +984,9 @@ run_review_phase_prompt() {
     local reasoning="${4:-$PLAN_REVIEW_REASONING}"
 
     if ! command -v codex >/dev/null 2>&1; then
-        if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
-            echo "错误: AI_FLOW_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
-            fail_protocol "AI_FLOW_ENGINE_MODE=codex 模式下 Codex 不可用" "failed"
+        if [ "$PLAN_ENGINE_MODE" = "codex" ]; then
+            echo "错误: PLAN_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
+            fail_protocol "PLAN_ENGINE_MODE=codex 模式下 Codex 不可用" "failed"
         fi
         PLAN_ENGINE_NAME="Codex(unavailable)"
         echo ">>> 计划审核阶段 Codex 不可用，将输出 degraded 协议"
@@ -1018,9 +1009,9 @@ run_review_phase_prompt() {
     if is_codex_unavailable_error "$rc" "$stderr_file"; then
         emit_captured_stderr "$stderr_file" "Codex 计划审核 stderr"
         rm -f "$stderr_file"
-        if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
-            echo "错误: AI_FLOW_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
-            fail_protocol "AI_FLOW_ENGINE_MODE=codex 模式下 Codex 执行失败" "failed"
+        if [ "$PLAN_ENGINE_MODE" = "codex" ]; then
+            echo "错误: PLAN_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
+            fail_protocol "PLAN_ENGINE_MODE=codex 模式下 Codex 执行失败" "failed"
         fi
         PLAN_ENGINE_NAME="Codex(unavailable)"
         echo ">>> 计划审核阶段 Codex 不可用，将输出 degraded 协议"
@@ -1069,9 +1060,9 @@ run_plan_authoring_prompt() {
     local reasoning="${4:-$PLAN_REASONING}"
 
     if ! command -v codex >/dev/null 2>&1; then
-        if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
-            echo "错误: AI_FLOW_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
-            fail_protocol "AI_FLOW_ENGINE_MODE=codex 模式下 Codex 不可用"
+        if [ "$PLAN_ENGINE_MODE" = "codex" ]; then
+            echo "错误: PLAN_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
+            fail_protocol "PLAN_ENGINE_MODE=codex 模式下 Codex 不可用"
         fi
         PLAN_ENGINE_NAME="Codex(unavailable)"
         echo ">>> Plan 阶段 Codex 不可用，将输出 degraded 协议"
@@ -1094,9 +1085,9 @@ run_plan_authoring_prompt() {
     if is_codex_unavailable_error "$rc" "$stderr_file"; then
         emit_captured_stderr "$stderr_file" "Codex plan 生成 stderr"
         rm -f "$stderr_file"
-        if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
-            echo "错误: AI_FLOW_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
-            fail_protocol "AI_FLOW_ENGINE_MODE=codex 模式下 Codex 执行失败"
+        if [ "$PLAN_ENGINE_MODE" = "codex" ]; then
+            echo "错误: PLAN_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
+            fail_protocol "PLAN_ENGINE_MODE=codex 模式下 Codex 执行失败"
         fi
         PLAN_ENGINE_NAME="Codex(unavailable)"
         echo ">>> Plan 阶段 Codex 不可用，将输出 degraded 协议"
@@ -1422,8 +1413,8 @@ PY
     echo "    推理强度: $REVIEW_REASONING_EFFECTIVE"
     if ! run_review_phase_prompt "$REVIEW_PROMPT" "$local_review_output" "RESULT:" "$REVIEW_REASONING_EFFECTIVE"; then
         if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
-            if [ "$AI_FLOW_ENGINE_MODE" = "claude" ]; then
-                fail_protocol "AI_FLOW_ENGINE_MODE=claude 模式下不应进入 codex 执行路径" "failed"
+            if [ "$PLAN_ENGINE_MODE" = "claude" ]; then
+                fail_protocol "PLAN_ENGINE_MODE=claude 模式下不应进入 codex 执行路径" "failed"
             fi
             PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
             PROTOCOL_STATE="$PLAN_STATUS"
@@ -1487,7 +1478,7 @@ PY
         PROTOCOL_NEXT="ai-flow-plan"
         PROTOCOL_SUMMARY="计划审核未通过，状态进入 [$CURRENT_STATUS]，请先修订 draft plan。"
     fi
-    if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ] && [ "$AI_FLOW_ENGINE_MODE" = "auto" ]; then
+    if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ] && [ "$PLAN_ENGINE_MODE" = "auto" ]; then
         PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 ai-flow-claude-plan-review。"
     fi
     emit_current_protocol "$REVIEW_RESULT"
@@ -1623,8 +1614,8 @@ if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
     echo "    计划文件: $PLAN_FILE"
     if ! revise_plan_from_failed_review "1" "$local_review_items"; then
         if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
-            if [ "$AI_FLOW_ENGINE_MODE" = "claude" ]; then
-                fail_protocol "AI_FLOW_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
+            if [ "$PLAN_ENGINE_MODE" = "claude" ]; then
+                fail_protocol "PLAN_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
             fi
             rm -f "$local_review_items"
             PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
@@ -1649,8 +1640,8 @@ else
     PLAN_PROMPT=$(render_prompt_template "$PLAN_PROMPT_TEMPLATE")
     if ! run_plan_authoring_prompt "$PLAN_PROMPT" "$PLAN_FILE" "# 实施计划：" "$AUTHORING_REASONING"; then
         if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
-            if [ "$AI_FLOW_ENGINE_MODE" = "claude" ]; then
-                fail_protocol "AI_FLOW_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
+            if [ "$PLAN_ENGINE_MODE" = "claude" ]; then
+                fail_protocol "PLAN_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
             fi
             PROTOCOL_ARTIFACT="none"
             PROTOCOL_STATE="none"
@@ -1678,7 +1669,7 @@ else
     PROTOCOL_SUMMARY="draft plan 生成完成，状态进入 [$PLAN_STATUS]。"
 fi
 
-if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ] && [ "$AI_FLOW_ENGINE_MODE" = "auto" ]; then
+if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ] && [ "$PLAN_ENGINE_MODE" = "auto" ]; then
     PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 ai-flow-claude-plan。"
 fi
 emit_current_protocol

@@ -75,11 +75,24 @@ def resolve_project_dir() -> Path:
     return cwd
 
 
+def _load_setting_actor_default():
+    """从 setting.json 读取 state.actor 默认值"""
+    home = Path(os.environ.get("AI_FLOW_HOME", Path.home() / ".config/ai-flow"))
+    setting = home / "setting.json"
+    if setting.is_file():
+        try:
+            config = json.loads(setting.read_text(encoding="utf-8"))
+            return config.get("state", {}).get("actor", "flow-state.sh")
+        except (json.JSONDecodeError, OSError):
+            pass
+    return "flow-state.sh"
+
+
 PROJECT_DIR = resolve_project_dir()
 FLOW_DIR = PROJECT_DIR / ".ai-flow"
 STATE_DIR = FLOW_DIR / "state"
 LOCKS_DIR = STATE_DIR / ".locks"
-ACTOR = os.environ.get("AI_FLOW_ACTOR", "flow-state.sh")
+ACTOR = os.environ.get("AI_FLOW_ACTOR", _load_setting_actor_default())
 
 
 def now_iso() -> str:

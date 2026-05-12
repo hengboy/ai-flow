@@ -8,7 +8,7 @@ AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$AGENT_DIR/lib/agent-common.sh"
 exec 3>&1 1>&2
 
-AI_FLOW_ENGINE_MODE="${AI_FLOW_ENGINE_MODE:-auto}"
+REVIEW_ENGINE_MODE="${ENGINE_MODE_OVERRIDE:-auto}"
 
 ORIGINAL_PROJECT_DIR="$(pwd)"
 PROJECT_DIR="$ORIGINAL_PROJECT_DIR"
@@ -17,7 +17,7 @@ REPORTS_DIR="$FLOW_DIR/reports"
 TEMPLATE="$AGENT_DIR/templates/review-template.md"
 PROMPT_TEMPLATE="$AGENT_DIR/prompts/review-generation.md"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
-CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+CLAUDE_HOME="$HOME/.claude"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
 IS_PLAN_REPOS_MODE=0
 PLAN_REPO_IDS=()
@@ -208,10 +208,6 @@ has_issue_status_marker() {
     local report_file="$1"
     local marker="$2"
     [ "$(count_issue_status_marker "$report_file" "$marker")" -gt 0 ]
-}
-
-default_reasoning_for_engine() {
-    echo "${AI_FLOW_CODEX_DEFAULT_REASONING:-high}"
 }
 
 run_codex_review_prompt() {
@@ -548,10 +544,6 @@ PY
 
 review_reasoning() {
     local reasoning="$REASONING"
-    if [ -n "${AI_FLOW_CODEX_DEFAULT_REASONING:-}" ]; then
-        echo "$reasoning"
-        return 0
-    fi
 
     local reviewable_paths="${1:-0}"
     local plan_lines="${2:-0}"
@@ -1059,9 +1051,9 @@ ACTIVE_ENGINE="Codex"
 ACTIVE_MODEL="$MODEL"
 ACTIVE_REASONING="$REASONING"
 if ! command -v codex >/dev/null 2>&1; then
-    if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
-        echo "错误: AI_FLOW_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
-        fail_protocol "AI_FLOW_ENGINE_MODE=codex 模式下 Codex 不可用"
+    if [ "$REVIEW_ENGINE_MODE" = "codex" ]; then
+        echo "错误: REVIEW_ENGINE_MODE=codex，Codex 不可用，拒绝降级"
+        fail_protocol "REVIEW_ENGINE_MODE=codex 模式下 Codex 不可用"
     fi
     ACTIVE_ENGINE="Codex(unavailable)"
 fi
@@ -1180,8 +1172,8 @@ else
 fi
 
 if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ]; then
-    if [ "$AI_FLOW_ENGINE_MODE" = "claude" ]; then
-        fail_protocol "AI_FLOW_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
+    if [ "$REVIEW_ENGINE_MODE" = "claude" ]; then
+        fail_protocol "REVIEW_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
     fi
     PROTOCOL_ARTIFACT="none"
     PROTOCOL_STATE="$PLAN_STATUS"
@@ -1201,8 +1193,8 @@ if [ "$rc" -ne 0 ]; then
     if is_codex_unavailable_error "$rc" "$stderr_file"; then
         emit_captured_stderr "$stderr_file" "Codex 审查 stderr"
         rm -f "$stderr_file"
-        if [ "$AI_FLOW_ENGINE_MODE" = "codex" ]; then
-            fail_protocol "AI_FLOW_ENGINE_MODE=codex 模式下 Codex 执行失败"
+        if [ "$REVIEW_ENGINE_MODE" = "codex" ]; then
+            fail_protocol "REVIEW_ENGINE_MODE=codex 模式下 Codex 执行失败"
         fi
         PROTOCOL_ARTIFACT="none"
         PROTOCOL_STATE="$PLAN_STATUS"
@@ -1522,7 +1514,7 @@ else
     esac
 fi
 
-if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ] && [ "$AI_FLOW_ENGINE_MODE" = "auto" ]; then
+if [ "$ACTIVE_ENGINE" = "Codex(unavailable)" ] && [ "$REVIEW_ENGINE_MODE" = "auto" ]; then
     PROTOCOL_SUMMARY="${PROTOCOL_SUMMARY%?} 已降级到 ai-flow-claude-plan-coding-review。"
 fi
 emit_current_protocol

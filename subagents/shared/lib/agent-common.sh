@@ -1,4 +1,10 @@
 #!/bin/bash
+# agent-common.sh — shared functions for all AI Flow subagents.
+
+# Load configuration from setting.json
+SCRIPT_DIR_FOR_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR_FOR_CONFIG/config-loader.sh"
+load_all_settings
 
 agent_frontmatter_value() {
     local key="$1"
@@ -54,13 +60,14 @@ derive_fallback_agent_from_name() {
 }
 
 resolve_engine_mode() {
-    local mode="${AI_FLOW_ENGINE_MODE:-auto}"
+    local mode
+    mode="$(get_setting "engine_mode" "auto")"
     case "$mode" in
         auto|"") echo "" ;;
         claude) echo "claude" ;;
         codex) echo "codex" ;;
         *)
-            echo "警告: AI_FLOW_ENGINE_MODE=\"$mode\" 无效，已回退到 auto" >&2
+            echo "警告: engine_mode=\"$mode\" 无效，已回退到 auto" >&2
             echo ""
             ;;
     esac
@@ -100,11 +107,15 @@ require_file() {
 }
 
 default_model_for_engine() {
-    case "$1" in
-        codex) echo "${AI_FLOW_CODEX_DEFAULT_MODEL:-gpt-5.4}" ;;
-        claude) echo "${AI_FLOW_CLAUDE_DEFAULT_MODEL:-opus}" ;;
-        *) echo "${AI_FLOW_DEFAULT_MODEL:-gpt-5.4}" ;;
-    esac
+    local engine="$1"
+    local role="${FLOW_ROLE:-plan}"
+    get_setting "${role}.${engine}.model" "gpt-5.4"
+}
+
+default_reasoning_for_engine() {
+    local engine="$1"
+    local role="${FLOW_ROLE:-plan}"
+    get_setting "${role}.${engine}.reasoning" "high"
 }
 
 emit_protocol() {
@@ -143,7 +154,7 @@ if [ -n "${AGENT_DIR:-}" ] && [ -f "$AGENT_DIR/AGENT.md" ]; then
     [ -n "$FALLBACK_AGENT" ] || FALLBACK_AGENT="$(derive_fallback_agent_from_name "$AGENT_NAME")"
 fi
 
-# Apply AI_FLOW_ENGINE_MODE override after name-based derivation.
+# Apply engine mode override after name-based derivation.
 ENGINE_MODE_OVERRIDE="$(resolve_engine_mode)"
 case "$ENGINE_MODE_OVERRIDE" in
     claude)

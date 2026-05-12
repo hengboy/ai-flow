@@ -124,7 +124,7 @@ test_plan_review_degraded_when_codex_unavailable() {
 }
 
 test_plan_review_codex_mode_fails_when_codex_unavailable() {
-    local temp_root project runtime_script executor plan_file
+    local temp_root project runtime_script executor plan_file setting_json
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     write_fake_plan_agents "$temp_root"
@@ -135,13 +135,24 @@ test_plan_review_codex_mode_fails_when_codex_unavailable() {
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
     plan_file="$project/.ai-flow/plans/20260503-demo.md"
 
+    # Override engine_mode via setting.json
+    setting_json="$temp_root/home/.config/ai-flow/setting.json"
+    python3 -c "
+import json
+from pathlib import Path
+p = Path('$setting_json')
+c = json.loads(p.read_text())
+c['engine_mode'] = 'codex'
+p.write_text(json.dumps(c, indent=2, ensure_ascii=False))
+"
+
     (
         cd "$project"
-        AI_FLOW_ENGINE_MODE=codex FAKE_PLAN_CODEX_MODE=unavailable run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-codex-mode.out"
+        FAKE_PLAN_CODEX_MODE=unavailable run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-codex-mode.out"
     ) || true
 
     assert_protocol_field "$temp_root/review-codex-mode.out" "RESULT" "failed"
-    assert_contains "$temp_root/review-codex-mode.out" "AI_FLOW_ENGINE_MODE=codex"
+    assert_contains "$temp_root/review-codex-mode.out" "PLAN_ENGINE_MODE=codex"
     rm -rf "$temp_root"
 }
 

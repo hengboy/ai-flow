@@ -21,7 +21,7 @@ description: 查看当前项目 .ai-flow/state/ 下所有流程状态，并按 J
 运行：
 
 ```bash
-${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-status.sh
+$HOME/.config/ai-flow/scripts/flow-status.sh
 ```
 
 ### 2. 读取分类

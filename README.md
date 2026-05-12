@@ -250,15 +250,42 @@ CLAUDE_AGENTS_DIR=/opt/ai-flow/agents \
 bash install.sh
 ```
 
-运行期环境变量（影响执行行为，非安装期）：
+### 配置
 
-| 变量 | 用途 | 默认值 | 说明 |
-|------|------|--------|------|
-| `AI_FLOW_ENGINE_MODE` | 强制指定执行引擎 | `auto` | 有效值：`auto`（默认，根据运行环境自动选择）、`claude`（强制使用 Claude 引擎）、`codex`（强制使用 Codex 引擎）。当指定引擎不可用时，执行器只进行一次 fallback |
-| `AI_FLOW_ACTOR` | 状态变更操作者标识 | `flow-state.sh` | 记录在状态 JSON 的 transitions 条目中，用于审计追踪 |
-| `AI_FLOW_CODEX_DEFAULT_MODEL` | Codex 引擎默认模型 | `gpt-5.4` | 执行器选择 Codex 引擎时的默认模型 |
-| `AI_FLOW_CLAUDE_DEFAULT_MODEL` | Claude 引擎默认模型 | `opus` | 执行器选择 Claude 引擎时的默认模型 |
-| `AI_FLOW_DEFAULT_MODEL` | 通用默认模型 | `gpt-5.4` | 引擎推导失败时的兜底模型 |
+所有运行时配置统一在 `~/.config/ai-flow/setting.json` 中管理。安装脚本会在首次安装时自动创建默认配置。
+
+```json
+{
+  "version": 1,
+  "engine_mode": "auto",
+  "plan": {
+    "codex": { "model": "gpt-5.4", "reasoning": "high" },
+    "claude": { "model": "opus", "reasoning": "high" }
+  },
+  "plan_review": {
+    "codex": { "model": "gpt-5.4", "reasoning": "high" },
+    "claude": { "model": "opus", "reasoning": "high" }
+  },
+  "coding_review": {
+    "codex": { "model": "gpt-5.4", "reasoning": "high" },
+    "claude": { "model": "opus", "reasoning": "high" }
+  },
+  "state": {
+    "actor": "flow-state.sh"
+  }
+}
+```
+
+| 配置项 | 用途 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `engine_mode` | 强制指定执行引擎 | `auto` | 有效值：`auto`（自动选择）、`claude`（强制 Claude）、`codex`（强制 Codex） |
+| `plan.codex.model` | Plan 阶段 Codex 模型 | `gpt-5.4` | 按执行步骤独立配置 |
+| `plan.claude.model` | Plan 阶段 Claude 模型 | `opus` | 按执行步骤独立配置 |
+| `plan_review.*` | Plan 审核阶段配置 | 同上 | 按引擎分别配置模型和推理强度 |
+| `coding_review.*` | 代码审查阶段配置 | 同上 | 按引擎分别配置模型和推理强度 |
+| `state.actor` | 状态变更操作者 | `flow-state.sh` | 审计追踪用 |
+
+修改 `setting.json` 后立即生效，无需重启。
 
 ---
 
