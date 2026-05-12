@@ -100,7 +100,7 @@ WS
     rm -rf "$temp_root"
 }
 
-test_single_repo_state_normalize_adds_execution_scope() {
+test_single_repo_state_normalize_adds_unified_execution_scope() {
     local temp_root project state_script
     temp_root=$(make_temp_root)
     project="$temp_root/project"
@@ -116,11 +116,13 @@ test_single_repo_state_normalize_adds_execution_scope() {
     )
 
     assert_equals "2" "$(state_field "$project" "legacy" "schema_version")"
-    assert_equals "single_repo" "$(state_field "$project" "legacy" "execution_scope.mode")"
+    assert_equals "workspace" "$(state_field "$project" "legacy" "execution_scope.mode")"
+    assert_equals "root" "$(state_field "$project" "legacy" "execution_scope.repos.0.id")"
+    assert_equals "." "$(state_field "$project" "legacy" "execution_scope.repos.0.path")"
     rm -rf "$temp_root"
 }
 
-test_workspace_state_create_without_manifest_defaults_to_single_repo() {
+test_workspace_state_create_without_manifest_defaults_to_root_repo_scope() {
     local temp_root project state_script
     temp_root=$(make_temp_root)
     project="$temp_root/project"
@@ -133,8 +135,10 @@ test_workspace_state_create_without_manifest_defaults_to_single_repo() {
         bash "$state_script" create --slug default-scope --title "default scope" --plan-file .ai-flow/plans/20260503-default-scope.md >/dev/null
     )
 
-    assert_equals "single_repo" "$(state_field "$project" "default-scope" "execution_scope.mode")"
-    # workspace_file is null in single_repo mode
+    assert_equals "workspace" "$(state_field "$project" "default-scope" "execution_scope.mode")"
+    assert_equals "root" "$(state_field "$project" "default-scope" "execution_scope.repos.0.id")"
+    assert_equals "." "$(state_field "$project" "default-scope" "execution_scope.repos.0.path")"
+    # workspace_file is null for a single-repo root scope.
     python3 - "$project/.ai-flow/state/default-scope.json" <<'PY'
 import json, sys
 state = json.loads(open(sys.argv[1]).read())
@@ -143,8 +147,8 @@ PY
     rm -rf "$temp_root"
 }
 
-test_workspace_state_create_without_manifest_defaults_to_single_repo
+test_workspace_state_create_without_manifest_defaults_to_root_repo_scope
 test_workspace_state_create_with_manifest
 test_workspace_state_validate_rejects_missing_repo
 test_workspace_state_validate_rejects_duplicate_repo_id
-test_single_repo_state_normalize_adds_execution_scope
+test_single_repo_state_normalize_adds_unified_execution_scope

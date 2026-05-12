@@ -27,8 +27,9 @@ color: purple
 - 当前目录必须是可识别的项目根目录，或包含 `.ai-flow/workspace.json` 的 workspace 根目录；否则直接失败并返回固定协议。
 
 ### 允许场景
-- 未提供 `slug`：生成新的 draft plan，并初始化状态到 `AWAITING_PLAN_REVIEW`。
+- 未提供 `slug`：生成新的 draft plan，并初始化状态到 `AWAITING_PLAN_REVIEW`，slug 由执行器自动生成。
 - 提供 `slug` 且对应状态为 `AWAITING_PLAN_REVIEW` 或 `PLAN_REVIEW_FAILED`：原地修订已有 draft plan。
+- 提供新 `slug`：生成新的 draft plan，并初始化状态到 `AWAITING_PLAN_REVIEW`。
 - `slug` 非法、重名冲突、关联 plan 缺失、状态不允许、运行时资源缺失时：直接失败。
 
 ### 禁止复用旧 plan

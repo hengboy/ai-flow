@@ -26,13 +26,14 @@ color: purple
 ## 调用契约
 
 ### 输入与上下文
-- 调用参数格式：`"需求描述" [slug]`，第一参数必填；`slug` 可选，不提供时自动从需求描述生成。
+- 调用参数格式：`"需求描述" [slug]`，第一参数必填；`slug` 可选，不提供时由执行器自动从需求描述生成。
 - 必须读取当前工作区、`.ai-flow/` 上下文（若存在）。
 - 当前目录必须是可识别的项目根目录（`.git`、`pom.xml`、`package.json` 等），或包含 `.ai-flow/workspace.json` 的 workspace 根目录。
 
 ### 允许场景
-- 未提供 `slug`：生成新的 draft plan，并初始化状态到 `AWAITING_PLAN_REVIEW`。
+- 未提供 `slug`：生成新的 draft plan，并初始化状态到 `AWAITING_PLAN_REVIEW`，slug 由执行器自动生成。
 - 提供 `slug` 且对应状态为 `AWAITING_PLAN_REVIEW` 或 `PLAN_REVIEW_FAILED`：原地修订已有 draft plan。
+- 提供新 `slug`：生成新的 draft plan，并初始化状态到 `AWAITING_PLAN_REVIEW`。
 - `slug` 非法、重名冲突、关联 plan 缺失、状态不允许时：直接失败。
 
 ### 禁止复用旧 plan

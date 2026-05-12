@@ -57,7 +57,49 @@ class FlowError(Exception):
     pass
 
 
-PROJECT_DIR = Path.cwd().resolve()
+def find_ancestor_workspace_file(start: Path):
+    current = start.resolve()
+    while True:
+        candidate = current / ".ai-flow" / "workspace.json"
+        if candidate.is_file():
+            return candidate
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+
+
+def is_path_in_declared_workspace_repo(workspace_file: Path, target: Path) -> bool:
+    workspace_root = workspace_file.parent.parent
+    try:
+        manifest = json.loads(workspace_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    target = target.resolve()
+    for repo in manifest.get("repos", []):
+        repo_path = repo.get("path")
+        if not isinstance(repo_path, str) or not repo_path.strip():
+            continue
+        try:
+            target.relative_to((workspace_root / repo_path).resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def resolve_project_dir() -> Path:
+    cwd = Path.cwd().resolve()
+    local_workspace = cwd / ".ai-flow" / "workspace.json"
+    if local_workspace.is_file():
+        return cwd
+    workspace_file = find_ancestor_workspace_file(cwd)
+    if workspace_file and is_path_in_declared_workspace_repo(workspace_file, cwd):
+        return workspace_file.parent.parent.resolve()
+    return cwd
+
+
+PROJECT_DIR = resolve_project_dir()
 FLOW_DIR = PROJECT_DIR / ".ai-flow"
 STATE_DIR = FLOW_DIR / "state"
 LOCKS_DIR = STATE_DIR / ".locks"
@@ -315,7 +357,7 @@ def build_execution_scope(*, mode, workspace_file=None):
             "repos": validated_repos,
         }
 
-    # single_repo mode — derive from current repo root
+    # single_repo mode is represented as a one-repo workspace-compatible scope.
     import subprocess
     try:
         result = subprocess.run(
@@ -336,7 +378,7 @@ def build_execution_scope(*, mode, workspace_file=None):
         rel_git_root = git_root
 
     return {
-        "mode": "single_repo",
+        "mode": "workspace",
         "workspace_file": None,
         "repos": [{
             "id": "root",
@@ -352,7 +394,7 @@ def normalize_execution_scope(state: dict) -> None:
         return
 
     import subprocess
-    # Derive single_repo scope
+    # Derive single-repo scope using the unified workspace-compatible shape.
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -372,7 +414,7 @@ def normalize_execution_scope(state: dict) -> None:
         rel_git_root = git_root
 
     state["execution_scope"] = {
-        "mode": "single_repo",
+        "mode": "workspace",
         "workspace_file": None,
         "repos": [{
             "id": "root",
@@ -556,7 +598,15 @@ def validate_state(state: dict, *, expected_slug: str = None) -> None:
     if exec_scope["mode"] not in {"single_repo", "workspace"}:
         raise FlowError(f"execution_scope.mode 必须是 single_repo 或 workspace，实际: {exec_scope['mode']!r}")
     if exec_scope["mode"] == "workspace" and not exec_scope["workspace_file"]:
-        raise FlowError("workspace 模式必须存在 execution_scope.workspace_file")
+        repos_for_scope = exec_scope.get("repos")
+        if not (
+            isinstance(repos_for_scope, list)
+            and len(repos_for_scope) == 1
+            and isinstance(repos_for_scope[0], dict)
+            and repos_for_scope[0].get("id") == "root"
+            and repos_for_scope[0].get("path") == "."
+        ):
+            raise FlowError("多仓 workspace 模式必须存在 execution_scope.workspace_file")
     if not isinstance(exec_scope["repos"], list) or not exec_scope["repos"]:
         raise FlowError("execution_scope.repos 必须是非空数组")
     seen_repo_ids: set[str] = set()

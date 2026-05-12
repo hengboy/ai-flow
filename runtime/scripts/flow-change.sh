@@ -9,7 +9,63 @@ if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
     exit 1
 fi
 
-PROJECT_DIR="$(pwd)"
+resolve_flow_root() {
+    local start
+    local candidate
+    start="$(pwd)"
+    candidate="$start"
+
+    if [ -f "$candidate/.ai-flow/workspace.json" ]; then
+        printf '%s' "$candidate"
+        return 0
+    fi
+
+    while true; do
+        local workspace_file="$candidate/.ai-flow/workspace.json"
+        if [ -f "$workspace_file" ]; then
+            if python3 - "$workspace_file" "$start" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+workspace_file = Path(sys.argv[1]).resolve()
+target = Path(sys.argv[2]).resolve()
+workspace_root = workspace_file.parent.parent
+try:
+    data = json.loads(workspace_file.read_text(encoding="utf-8"))
+except json.JSONDecodeError:
+    sys.exit(1)
+for repo in data.get("repos", []):
+    repo_path = repo.get("path")
+    if not isinstance(repo_path, str) or not repo_path.strip():
+        continue
+    try:
+        target.relative_to((workspace_root / repo_path).resolve())
+        sys.exit(0)
+    except ValueError:
+        continue
+sys.exit(1)
+PY
+            then
+                printf '%s' "$candidate"
+                return 0
+            fi
+        fi
+        if [ "$candidate" = "/" ] || [ "$candidate" = "//" ]; then
+            break
+        fi
+        local parent
+        parent="$(cd "$candidate/.." 2>/dev/null && pwd)" || break
+        if [ -z "$parent" ] || [ "$parent" = "$candidate" ]; then
+            break
+        fi
+        candidate="$parent"
+    done
+
+    printf '%s' "$start"
+}
+
+PROJECT_DIR="$(resolve_flow_root)"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 CHANGE_TEXT="$2"
 
@@ -64,6 +120,10 @@ else
 fi
 
 PLAN_FILE=$(state_field "$STATE_FILE" "plan_file")
+case "$PLAN_FILE" in
+    /*) ;;
+    *) PLAN_FILE="$PROJECT_DIR/$PLAN_FILE" ;;
+esac
 
 if ! grep -q '^## 7\. 需求变更记录' "$PLAN_FILE"; then
     {

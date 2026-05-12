@@ -26,6 +26,32 @@ test_plan_generation_protocol_and_state() {
     assert_protocol_field "$out" "NEXT" "ai-flow-plan-review"
     assert_file_exists "$project/.ai-flow/plans/${today}-user-permission.md"
     assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "${today}-user-permission" "current_status")"
+    assert_file_not_exists "$project/.ai-flow/workspace.json"
+    assert_equals "workspace" "$(state_field "$project" "${today}-user-permission" "execution_scope.mode")"
+    assert_equals "root" "$(state_field "$project" "${today}-user-permission" "execution_scope.repos.0.id")"
+    rm -rf "$temp_root"
+}
+
+test_plan_without_slug_auto_generates_new_plan() {
+    local temp_root project executor today out
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+    today="$(date +%Y%m%d)"
+
+    (
+        cd "$project"
+        run_with_fake_plan_agents "$temp_root" bash "$executor" "Build user permissions" >"$temp_root/no-slug.out"
+    )
+    out="$temp_root/no-slug.out"
+
+    assert_protocol_field "$out" "RESULT" "success"
+    assert_protocol_field "$out" "ARTIFACT" ".ai-flow/plans/${today}-build-user-permissions.md"
+    assert_file_exists "$project/.ai-flow/plans/${today}-build-user-permissions.md"
+    assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "${today}-build-user-permissions" "current_status")"
     rm -rf "$temp_root"
 }
 
@@ -195,6 +221,7 @@ test_plan_codex_mode_fails_when_codex_unavailable() {
 }
 
 test_plan_generation_protocol_and_state
+test_plan_without_slug_auto_generates_new_plan
 test_plan_revision_after_failed_review
 test_plan_degraded_when_codex_unavailable
 test_plan_codex_mode_fails_when_codex_unavailable

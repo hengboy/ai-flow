@@ -7,24 +7,64 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Resolve flow root: prefer workspace manifest, fall back to pwd/.ai-flow
 resolve_flow_root() {
+    local start
     local candidate
-    candidate="$(pwd)"
+    start="$(pwd)"
+    candidate="$start"
+    local local_flow_root=""
+
+    if [ -f "$candidate/.ai-flow/workspace.json" ]; then
+        printf '%s' "$candidate"
+        return 0
+    fi
+
     while true; do
         if [ -f "$candidate/.ai-flow/workspace.json" ]; then
-            printf '%s' "$candidate"
-            return 0
+            if python3 - "$candidate/.ai-flow/workspace.json" "$start" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+workspace_file = Path(sys.argv[1]).resolve()
+target = Path(sys.argv[2]).resolve()
+workspace_root = workspace_file.parent.parent
+try:
+    data = json.loads(workspace_file.read_text(encoding="utf-8"))
+except json.JSONDecodeError:
+    sys.exit(1)
+for repo in data.get("repos", []):
+    repo_path = repo.get("path")
+    if not isinstance(repo_path, str) or not repo_path.strip():
+        continue
+    try:
+        target.relative_to((workspace_root / repo_path).resolve())
+        sys.exit(0)
+    except ValueError:
+        continue
+sys.exit(1)
+PY
+            then
+                printf '%s' "$candidate"
+                return 0
+            fi
         fi
-        if [ -d "$candidate/.ai-flow" ]; then
-            printf '%s' "$candidate"
-            return 0
+        if [ -z "$local_flow_root" ] && [ -d "$candidate/.ai-flow" ]; then
+            local_flow_root="$candidate"
+        fi
+        if [ "$candidate" = "/" ] || [ "$candidate" = "//" ]; then
+            break
         fi
         local parent
         parent="$(cd "$candidate/.." 2>/dev/null && pwd)" || break
-        if [ "$parent" = "$candidate" ]; then
+        if [ -z "$parent" ] || [ "$parent" = "$candidate" ]; then
             break
         fi
         candidate="$parent"
     done
+    if [ -n "$local_flow_root" ]; then
+        printf '%s' "$local_flow_root"
+        return 0
+    fi
     printf '%s' "$(pwd)"
     return 1
 }
