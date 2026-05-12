@@ -1486,6 +1486,37 @@ else
         else
             echo "    未检测到 git-commit 技能：请按项目提交规范提交；若项目无明确规范，使用 Gitmoji + Conventional Commits"
         fi
+
+        if [ "$IS_PLAN_REPOS_MODE" -eq 1 ] && [ ${#PLAN_REPO_IDS[@]} -gt 0 ]; then
+            echo ""
+            echo ">>> 当前 plan 涉及以下代码仓库，请逐一提交变更："
+            local i
+            for i in "${!PLAN_REPO_IDS[@]}"; do
+                local repo_id="${PLAN_REPO_IDS[$i]}"
+                local git_root="${PLAN_REPO_GIT_ROOTS[$i]}"
+                local role="${PLAN_REPO_ROLES[$i]}"
+                local changes
+                changes="$(git -C "$git_root" status --porcelain --untracked-files=all 2>/dev/null | awk -v repo_path="${PLAN_REPO_PATHS[$i]}" -v repo_count="${#PLAN_REPO_IDS[@]}" '
+                    {
+                        path = substr($0, 4)
+                        if (path ~ /^\.ai-flow\//) {
+                            next
+                        }
+                        if (repo_count > 1 && repo_path == ".") {
+                            next
+                        }
+                        print path
+                    }
+                ')"
+                if [ -n "$changes" ]; then
+                    local change_count
+                    change_count="$(printf '%s\n' "$changes" | wc -l | tr -d ' ')"
+                    echo "    - [${repo_id}] (${role}) ${git_root} — 有 ${change_count} 个文件待提交"
+                else
+                    echo "    - [${repo_id}] (${role}) ${git_root} — 无未提交变更"
+                fi
+            done
+        fi
     }
 
     case "$UPDATED_STATUS" in
