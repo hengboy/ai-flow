@@ -337,7 +337,7 @@ bash install.sh
 
 ### 结果摘要协议
 
-所有 subagent 完成后返回统一协议：
+所有 subagent 完成后返回统一协议。该协议用于 skill/subagent 间解析、状态推进和自动化汇总，不是面向用户的主要阅读内容；最终给用户的回复应优先使用自然语言摘要和下一步提示，除非用户明确要求查看协议字段，否则不直接暴露协议块，或折叠/隐藏显示。
 
 ```text
 RESULT: success|failed|degraded|partial
