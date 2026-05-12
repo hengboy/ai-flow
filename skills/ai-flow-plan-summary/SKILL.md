@@ -18,7 +18,7 @@ description: 总结 AI Flow 流程的完整生命周期，含实施变动、Revi
 
 ## 输入约束与 Slug 解析
 
-1. 若用户提供了 slug，验证 `.ai-flow/state/{日期}-{slug}.json` 是否存在，存在则直接进入完整总结。
+1. 若用户提供了 slug，验证 `.ai-flow/state/{YYYYMMDD}-{slug}.json` 是否存在，存在则直接进入完整总结。
 2. 若未提供 slug，运行 `ls .ai-flow/state/*.json 2>/dev/null`：
    - 0 个：报错退出，提示先使用 `/ai-flow-plan` 创建计划。
    - **多个：进入"列表模式"，仅列出所有 slug（不带简介），然后要求用户明确选择其中一个。必须等待用户选择后才输出完整总结，不得自动选择或跳过。**
@@ -41,7 +41,7 @@ description: 总结 AI Flow 流程的完整生命周期，含实施变动、Revi
 ### 1. 流程概览（一行式）
 
 ```
-{日期}-{slug} | {需求标题} | 状态: {current_status} | {created_at} → {updated_at} | 范围: {execution_scope.mode}
+{YYYYMMDD}-{slug} | {需求标题} | 状态: {current_status} | {created_at} → {updated_at} | 范围: {execution_scope.mode}
 ```
 
 ### 2. 原始需求与实现目标

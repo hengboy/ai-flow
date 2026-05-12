@@ -65,7 +65,7 @@ Agent(
 - 读取工作区与 `.ai-flow` 上下文
 - 渲染 prompt / template
 - 生成或修订 `.ai-flow/plans/*`
-- 创建或保持 `.ai-flow/state/{日期}-{slug}.json`
+- 创建或保持 `.ai-flow/state/{YYYYMMDD}-{slug}.json`
 - 返回固定摘要协议，而不是回传 plan 正文
 
 ## 固定输出协议

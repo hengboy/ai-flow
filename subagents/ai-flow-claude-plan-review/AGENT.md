@@ -25,46 +25,15 @@ color: blue
 
 ## 调用契约
 
-### 输入与上下文
-- 调用参数格式：`{slug或唯一关键词}`
-- 必须读取当前工作区、目标 plan 文件、`.ai-flow/state/<slug>.json`。
-- 必须从 plan 中提取 `原始需求（原文）` 作为审核基线。
-
-### 允许场景
-- 只允许审核状态为 `AWAITING_PLAN_REVIEW` 或 `PLAN_REVIEW_FAILED` 的需求。
-- 关键词必须唯一匹配一个状态文件；匹配不到或匹配多个都必须失败。
-- 关联 plan 文件缺失时：直接失败。
-
-### 执行要求
-
-1. **读取提示词**
-   - 读取 `subagents/shared/plan/prompts/plan-review.md`
-
-2. **执行审核**
-   - 读取目标 plan 文件（路径从状态文件获取）
-   - 按照提示词中的审核规则检查：
-     - 范围偏差：plan 是否偏离原始需求
-     - 结构完整性：是否缺失成功标准、测试闭环、文件边界
-     - 可执行性：步骤是否具体、文件路径是否明确
-     - Workspace 模式合规性（如果适用）
-
-3. **推导审核结果**
-   - `passed`：无阻断偏差，可直接进入编码
-   - `passed_with_notes`：无阻断偏差，但有可选改进建议
-   - `failed`：存在阻断偏差，需要修订
-
-4. **写回 plan**
-   - 更新 plan 文件的 `## 8. 计划审核记录` 部分
-   - 包含：`8.1 当前审核结论`、`8.2 偏差与建议`、`8.3 审核历史`
-
-5. **推进状态**
-   - 运行 `$HOME/.config/ai-flow/scripts/flow-state.sh record-plan-review`
-   - `passed` / `passed_with_notes` → 状态推进到 `PLANNED`
-   - `failed` → 状态推进到 `PLAN_REVIEW_FAILED`
-
-### 引擎语义
-- 本代理不使用外部 CLI（`codex exec` / `opencode run`），直接使用内置能力完成工作。
-- 与 `ai-flow-codex-plan-review` 形成降级配对：当 codex 不可用时，SKILL 层自动委派到本代理。
+- 调用参数：`{slug或唯一关键词}`。关键词必须唯一匹配一个状态文件。
+- 只允许审核 `AWAITING_PLAN_REVIEW` 或 `PLAN_REVIEW_FAILED` 状态的需求；匹配不到、匹配多个或关联 plan 缺失时直接失败。
+- 审核基线必须来自 plan 内的 `原始需求（原文）`，不能依赖调用方口头说明。
+- 必须读取共享提示词 `subagents/shared/plan/prompts/plan-review.md`。
+- 审核范围包括原始需求一致性、结构完整性、可执行性、测试闭环、文件边界和 workspace 合规性。
+- 审核结果只能是 `passed`、`passed_with_notes` 或 `failed`。`passed_with_notes` 只用于无阻断偏差但有可选建议的场景。
+- 必须回写 plan 的 `## 8. 计划审核记录`，包含 `8.1 当前审核结论`、`8.2 偏差与建议`、`8.3 审核历史`。
+- 状态只能通过 `$HOME/.config/ai-flow/scripts/flow-state.sh record-plan-review` 推进：`passed*` 到 `PLANNED`，`failed` 到 `PLAN_REVIEW_FAILED`。
+- 本代理不使用外部 CLI（`codex exec` / `opencode run`），直接使用内置能力完成工作；与 `ai-flow-codex-plan-review` 形成降级配对。
 
 ### 固定输出协议
 ```text

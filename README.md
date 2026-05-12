@@ -300,7 +300,7 @@ bash install.sh
 /ai-flow-plan-coding-review <slug>
 ```
 
-其中 `<slug>` 是流程的唯一标识符，格式为小写字母 + 数字 + 连字符（如 `user-auth-refactor`），会作为 `.ai-flow/state/<日期>-<slug>.json` 文件名。`/ai-flow-plan` 不传 slug 时会自动生成；其他流程步骤不传 slug 时会列出现有流程供选择，最终调用 subagent 时必须带明确 slug。
+其中 `<slug>` 是流程的唯一标识符，格式为小写字母 + 数字 + 连字符（如 `user-auth-refactor`），会作为 `.ai-flow/state/{YYYYMMDD}-{slug}.json` 文件名。`/ai-flow-plan` 不传 slug 时会自动生成；其他流程步骤不传 slug 时会列出现有流程供选择，最终调用 subagent 时必须带明确 slug。
 
 ### 查看状态
 
@@ -545,10 +545,10 @@ ai-flow/
 
 ```
 .ai-flow/
-├── plans/{日期}-{slug}.md              # 实施计划（8 章模板）
-├── reports/YYYYMMDD/<slug>-review*.md  # 审查报告（6 章模板）
-├── reports/adhoc/YYYYMMDD/*.md         # Adhoc 审查报告
-├── state/<slug>.json                   # 流程状态（schema v2）
+├── plans/{YYYYMMDD}-{slug}.md              # 实施计划（8 章模板）
+├── reports/{YYYYMMDD}-{slug}-review*.md  # 审查报告（6 章模板）
+├── reports/adhoc/{YYYYMMDD}-*.md         # Adhoc 审查报告
+├── state/{YYYYMMDD}-{slug}.json                   # 流程状态（schema v2）
 └── workspace.json                       # Workspace manifest（多仓模式）
 ```
 
