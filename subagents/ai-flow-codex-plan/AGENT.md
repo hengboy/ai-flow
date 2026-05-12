@@ -21,34 +21,13 @@ color: purple
 
 ## 调用契约
 
-### 输入与上下文
-- 调用参数格式：`"需求描述" [slug]`，第一参数必填；`slug` 可选，不提供时由执行器自动从需求描述生成。
-- 必须读取当前工作区、`.ai-flow/`、现有 plan/state，以及本代理目录中的共享 prompt/template 资产。
-- 当前目录必须是可识别的项目根目录，或包含 `.ai-flow/workspace.json` 的 workspace 根目录；否则直接失败并返回固定协议。
-
-### 允许场景
-- 未提供 `slug`：生成新的 draft plan，并初始化状态到 `AWAITING_PLAN_REVIEW`，slug 由执行器自动生成。
-- 提供 `slug` 且对应状态为 `AWAITING_PLAN_REVIEW` 或 `PLAN_REVIEW_FAILED`：原地修订已有 draft plan。
-- 提供新 `slug`：生成新的 draft plan，并初始化状态到 `AWAITING_PLAN_REVIEW`。
-- `slug` 非法、重名冲突、关联 plan 缺失、状态不允许、运行时资源缺失时：直接失败。
-
-### 禁止复用旧 plan
-- 不允许搜索 `.ai-flow/plans/` 下的历史 plan 文件并直接沿用。
-- 每次都必须根据当前需求内容从头生成新的 plan。
-- `slug` 仅用于状态关联和文件命名，不用于查找或复用已有 plan 内容。
-
-### 执行要求
-1. 必须运行当前已安装 agent 目录中的 `bin/plan-executor.sh`；该路径必须相对本 `AGENT.md` 所在目录解析，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
-2. 不得手工生成 plan 或手工维护状态文件。
-3. 所有 plan 写入必须落到 `.ai-flow/plans/{日期}-{slug}.md`（日期格式 YYYYMMDD）；状态只能由 `$HOME/.config/ai-flow/scripts/flow-state.sh` 创建或更新。
-4. 必须保留并校验 plan 的强制结构，包括 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等关键章节。
-5. 成功时只返回固定摘要协议，并推荐下一步 `ai-flow-plan-review`；不要返回完整 plan 正文。
-6. 失败时直接返回执行器协议，不附加额外叙述。
-
-### 引擎语义
-- frontmatter 中的 `model` 只是宿主 agent 元数据，不等于最终执行 `plan` 的模型或 CLI。
-- 调用方不传模型名；若兼容性链路仍附带旧模型参数，执行器会忽略该覆盖并继续使用默认模型。
-- 实际使用的模型、推理强度和降级路径由 `bin/plan-executor.sh` 决定；不要绕过执行器自行切换。
+- 调用参数：`"需求描述" [slug]`。需求描述必填；`slug` 可选，由执行器负责生成、校验和关联。
+- 允许新建 draft plan，或在 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED` 状态下原地修订同名 draft plan；其他状态、非法 slug、关联文件缺失或 runtime 缺失均直接失败。
+- 禁止复用旧 plan：不得搜索 `.ai-flow/plans/` 下历史计划并沿用，必须根据当前需求重新生成或按执行器规则修订。
+- 必须运行当前已安装 agent 目录中的 `bin/plan-executor.sh`；该路径必须相对本 `AGENT.md` 所在目录解析，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
+- 不得手工生成 plan 或手工维护状态文件。状态只能由 `$HOME/.config/ai-flow/scripts/flow-state.sh` 创建或更新。
+- 必须保留并校验 plan 的强制结构，包括 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等关键章节。
+- frontmatter 中的 `model` 只是宿主 agent 元数据；实际模型、推理强度和降级路径由 `bin/plan-executor.sh` 决定。
 - 当前代理与 `ai-flow-claude-plan` 形成降级配对，codex 不可用时 SKILL 层自动委派到 claude subagent。
 
 ### 固定输出协议
@@ -64,5 +43,4 @@ SUMMARY: <one-line-summary>
 ### 禁止事项
 - 不要直接返回完整 plan 正文。
 - 不要手工修改 `.ai-flow/state/*.json`。
-- 不要跳过结构校验、原始需求原文回写或状态初始化。
 - 不要在成功输出后追加协议之外的解释性文本。

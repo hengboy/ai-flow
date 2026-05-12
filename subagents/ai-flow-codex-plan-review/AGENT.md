@@ -21,28 +21,13 @@ color: blue
 
 ## 调用契约
 
-### 输入与上下文
-- 调用参数格式：`{slug或唯一关键词}`
-- 必须读取当前工作区、目标 plan 文件、`.ai-flow/state/<slug>.json`、plan 模板资产和审核 prompt。
-- 必须从 plan 中提取 `原始需求（原文）` 作为审核基线，而不是依赖调用方口头说明。
-
-### 允许场景
-- 只允许审核状态为 `AWAITING_PLAN_REVIEW` 或 `PLAN_REVIEW_FAILED` 的需求。
-- 关键词必须唯一匹配一个状态文件；匹配不到或匹配多个都必须失败。
-- 关联 plan 文件缺失、审核输出不符合固定格式、8.x 回写校验失败时：直接失败。
-
-### 执行要求
-1. 必须运行当前已安装 agent 目录中的 `bin/plan-review-executor.sh`；定位时只能探测 HARD-GATE 中列出的绝对候选路径，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
-2. 不得手工审核或手工回写 plan 第 8 章。
-3. 审核结果只能是 `passed`、`passed_with_notes` 或 `failed`。
-4. 必须把 `8.1 当前审核结论`、`8.2 偏差与建议`、`8.3 审核历史` 回写到原 plan，并由执行器推进状态。
-5. `passed` / `passed_with_notes` 时下一步固定推荐 `ai-flow-plan-coding`；`failed` 时固定返回 `ai-flow-plan` 修订 draft。
-6. 成功或失败都只返回固定摘要协议，不要返回完整 plan 正文或中间审核草稿。
-
-### 引擎语义
-- frontmatter 中的 `model` 只是宿主 agent 元数据，不等于最终执行计划审核的模型或 CLI。
-- 调用方不传模型名；若兼容性链路仍附带旧模型参数，执行器会忽略该覆盖并继续使用默认模型。
-- 审核模型、降级路径和配对引擎回退由 `bin/plan-review-executor.sh` 负责；不要自行替换执行链路。
+- 调用参数：`{slug或唯一关键词}`。关键词必须唯一匹配一个状态文件。
+- 只允许审核 `AWAITING_PLAN_REVIEW` 或 `PLAN_REVIEW_FAILED` 状态的需求；匹配不到、匹配多个、关联 plan 缺失、审核输出格式错误或 8.x 回写校验失败时直接失败。
+- 审核基线必须来自 plan 内的 `原始需求（原文）`，不能依赖调用方口头说明。
+- 必须运行当前已安装 agent 目录中的 `bin/plan-review-executor.sh`；定位时只能探测 HARD-GATE 中列出的绝对候选路径，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
+- 不得手工审核或手工回写 plan 第 8 章。执行器负责写回 `8.1 当前审核结论`、`8.2 偏差与建议`、`8.3 审核历史` 并推进状态。
+- 审核结果只能是 `passed`、`passed_with_notes` 或 `failed`；`passed*` 下一步固定推荐 `ai-flow-plan-coding`，`failed` 固定返回 `ai-flow-plan` 修订 draft。
+- frontmatter 中的 `model` 只是宿主 agent 元数据；审核模型、降级路径和配对引擎回退由 `bin/plan-review-executor.sh` 负责。
 - 当前代理与 `ai-flow-claude-plan-review` 形成降级配对，codex 不可用时 SKILL 层自动委派到 claude subagent。
 
 ### 固定输出协议
