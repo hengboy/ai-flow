@@ -114,7 +114,7 @@ setup_git_repo_clean() {
         git config user.email test@example.com
         git config user.name Test
         git add .
-        git commit -q -m init
+        git commit -q --allow-empty -m init
     )
 }
 
@@ -152,6 +152,39 @@ print(value)
 PY
 }
 
+repo_scope_json() {
+    local owner_root="$1"
+    shift || true
+    python3 - "$owner_root" "$@" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+owner = Path(sys.argv[1]).resolve()
+items = sys.argv[2:] or ["owner::."]
+repos = []
+for item in items:
+    repo_id, repo_path = item.split("::", 1)
+    abs_path = (owner / repo_path).resolve()
+    result = subprocess.run(
+        ["git", "-C", str(abs_path), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.stderr)
+    repos.append({
+        "id": repo_id,
+        "path": repo_path,
+        "git_root": str(Path(result.stdout.strip()).resolve()),
+        "role": "owner" if repo_id == "owner" else "participant",
+    })
+print(json.dumps({"mode": "plan_repos", "repos": repos}, ensure_ascii=False))
+PY
+}
+
 create_plan_file() {
     local project_dir="$1"
     local slug="$2"
@@ -165,6 +198,8 @@ create_plan_file() {
 > 创建日期：2026-05-03
 > 需求简称：$slug
 > 需求来源：测试
+> 执行范围：plan_repos
+> Plan 参与仓库：owner (path: ., role: owner)
 > 状态文件：\`.ai-flow/state/$slug.json\`
 > 文档角色：本文件仅记录实施证据与执行步骤；流程状态以 JSON 状态文件为准。
 > 执行约定：使用 \`/ai-flow-plan-coding\` 按 Step 顺序执行；每个 Step 内的动作使用 \`- [ ]\` 复选框追踪进度。
@@ -184,9 +219,9 @@ $requirement
 
 ### 2.1 涉及模块
 
-| 模块 | 职责 | 变更类型 |
-|------|------|----------|
-| \`src/review-target.txt\` | 提供 review 目标文件 | 修改 |
+| 模块 | 仓库 | 职责 | 变更类型 |
+|------|------|------|----------|
+| \`src/review-target.txt\` | owner | 提供 review 目标文件 | 修改 |
 
 ### 2.2 数据模型变更
 
@@ -202,9 +237,9 @@ $requirement
 
 ### 2.5 文件边界总览
 
-| 文件 | 操作 | 职责 | 对应步骤 |
-|------|------|------|----------|
-| \`src/review-target.txt\` | Modify | 提供最小变更面 | Step 1 |
+| 文件 | 仓库 | 操作 | 职责 | 对应步骤 |
+|------|------|------|------|----------|
+| \`src/review-target.txt\` | owner | Modify | 提供最小变更面 | Step 1 |
 
 ### 2.6 高风险路径与缺陷族
 
@@ -445,6 +480,13 @@ create_state_with_status() {
     create_plan_file "$project_dir" "$slug" "$date_dir" "$title"
     (
         cd "$project_dir" || exit 1
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git init -q
+            git config user.email test@example.com
+            git config user.name Test
+            git add .
+            git commit -q -m init
+        fi
         bash "$flow_state_script" create --slug "$slug" --title "$title" --plan-file "$plan_file" >/dev/null
         case "$target_status" in
             AWAITING_PLAN_REVIEW)
@@ -565,9 +607,9 @@ $requirement
 
 ### 2.1 涉及模块
 
-| 模块 | 职责 | 变更类型 |
-|------|------|----------|
-| \`src/review-target.txt\` | fixture | 修改 |
+| 模块 | 仓库 | 职责 | 变更类型 |
+|------|------|------|----------|
+| \`src/review-target.txt\` | owner | fixture | 修改 |
 
 ### 2.2 数据模型变更
 
@@ -583,9 +625,9 @@ $requirement
 
 ### 2.5 文件边界总览
 
-| 文件 | 操作 | 职责 | 对应步骤 |
-|------|------|------|----------|
-| \`src/review-target.txt\` | Modify | fixture | Step 1 |
+| 文件 | 仓库 | 操作 | 职责 | 对应步骤 |
+|------|------|------|------|----------|
+| \`src/review-target.txt\` | owner | Modify | fixture | Step 1 |
 
 ### 2.6 高风险路径与缺陷族
 
@@ -789,17 +831,17 @@ tracking_note=""
 if [ "${FAKE_REVIEW_INCLUDE_STATUS_NOTE:-0}" = "1" ]; then
     tracking_note=$'> 每轮修复后，在此更新对应缺陷的状态。阻塞缺陷未修复时标记为 `[待修复]`，Minor 未处理时标记为 `[可选]`，已修复项标记为 `[已修复]`。\n'
 fi
-if grep -q 'workspace 模式' "$prompt_file" && [ -f "$workdir/.ai-flow/workspace.json" ]; then
+if grep -q 'plan_repos 模式' "$prompt_file"; then
     omitted_repo="${FAKE_WORKSPACE_REPORT_OMIT_REPO:-}"
     context_body='| 项目 | 内容 |
 |------|------|
 | Plan 文件 | `'"$plan_file"'` |'
     verification_rows=""
-    family_rows='| 测试/证据 | 已覆盖 | fake workspace review fixture |'
+    family_rows='| 测试/证据 | 已覆盖 | fake plan_repos review fixture |'
     issue_location=""
-    while IFS=$'\t' read -r repo_id repo_path; do
+    while IFS=$'\t' read -r repo_id repo_path git_root; do
         [ -n "$repo_id" ] || continue
-        repo_changes="$(git -C "$workdir/$repo_path" status --porcelain --untracked-files=all 2>/dev/null || true)"
+        repo_changes="$(git -C "$git_root" status --porcelain --untracked-files=all 2>/dev/null || true)"
         repo_reviewable_paths="$(printf '%s\n' "$repo_changes" | awk -v prefix="${repo_id}/" '
             {
                 path = substr($0, 4)
@@ -821,24 +863,15 @@ if grep -q 'workspace 模式' "$prompt_file" && [ -f "$workdir/.ai-flow/workspac
 | Dirty Repo | \`${repo_id}\` (\`${repo_path}\`) |"
         verification_target="${repo_first_path#${repo_id}/}"
         verification_rows="${verification_rows}
-| \`git -C ${repo_path} diff -- ${verification_target}\` | PASS | ${repo_id} 定向验证证据 |"
+| \`git -C ${git_root} diff -- ${verification_target}\` | PASS | ${repo_id} 定向验证证据 |"
         family_rows="${family_rows}
 | ${repo_id}/测试/证据 | 已覆盖 | 已检查 \`${repo_first_path}\` |"
-    done < <(python3 - "$workdir/.ai-flow/workspace.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-for repo in data.get("repos", []):
-    print(f"{repo['id']}\t{repo['path']}")
-PY
-    )
+    done < <(grep -E 'repo=`[^`]+` path=`[^`]+` git_root=`[^`]+`' "$prompt_file" | sed -E 's/.*repo=`([^`]+)` path=`([^`]+)` git_root=`([^`]+)`.*/\1\t\2\t\3/')
     context_body="${context_body}
 | 上一轮报告 | 无 |
-| 验证证据 | fake workspace review fixture |"
+| 验证证据 | fake plan_repos review fixture |"
     if [ -z "$verification_rows" ]; then
-        verification_rows='| `git status --porcelain` | PASS | fake workspace review fixture |'
+        verification_rows='| `git status --porcelain` | PASS | fake plan_repos review fixture |'
     fi
     if [ -z "$issue_location" ]; then
         issue_location='repo-alpha/src/review-target.txt'
@@ -978,7 +1011,7 @@ run_with_fake_coding_review_agents() {
         "$@"
 }
 
-# ─── Workspace fixture helpers ───
+# ─── Plan-scoped multi-repo fixture helpers ───
 
 setup_workspace_root() {
     local workspace_root="$1"
@@ -987,22 +1020,21 @@ setup_workspace_root() {
     mkdir -p "$workspace_root/.ai-flow/state/.locks" \
              "$workspace_root/.ai-flow/plans/$date_dir" \
              "$workspace_root/.ai-flow/reports/$date_dir"
-
-    cat > "$workspace_root/.ai-flow/workspace.json" <<WS
-{
-  "schema_version": 1,
-  "name": "$workspace_name",
-  "repos": [
-    { "id": "repo-alpha", "path": "repo-alpha" },
-    { "id": "repo-beta", "path": "repo-beta" }
-  ]
-}
-WS
 }
 
 setup_workspace_git_repos() {
     local workspace_root="$1"
     local repo
+    if ! git -C "$workspace_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        (
+            cd "$workspace_root" || exit 1
+            git init -q
+            git config user.email test@example.com
+            git config user.name Test
+            git add .ai-flow
+            git commit -q --allow-empty -m "init owner"
+        )
+    fi
     for repo in repo-alpha repo-beta; do
         mkdir -p "$workspace_root/$repo/src"
         printf '{ "name": "%s" }\n' "$repo" > "$workspace_root/$repo/package.json"
@@ -1036,22 +1068,16 @@ setup_workspace_root_with_repos() {
     mkdir -p "$workspace_root/.ai-flow/state/.locks" \
              "$workspace_root/.ai-flow/plans/$date_dir" \
              "$workspace_root/.ai-flow/reports/$date_dir"
-
-    local repos_json="["
-    local i
-    for i in "${!repo_ids[@]}"; do
-        [ "$i" -gt 0 ] && repos_json+=", "
-        repos_json+="{ \"id\": \"${repo_ids[$i]}\", \"path\": \"${repo_paths[$i]}\" }"
-    done
-    repos_json+="]"
-
-    cat > "$workspace_root/.ai-flow/workspace.json" <<WS
-{
-  "schema_version": 1,
-  "name": "$workspace_name",
-  "repos": $repos_json
-}
-WS
+    if ! git -C "$workspace_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        (
+            cd "$workspace_root" || exit 1
+            git init -q
+            git config user.email test@example.com
+            git config user.name Test
+            git add .ai-flow
+            git commit -q --allow-empty -m "init owner"
+        )
+    fi
 }
 
 setup_workspace_single_git_repo() {
@@ -1084,12 +1110,14 @@ create_workspace_state_fixture() {
     local date_dir="${5:-20260503}"
     local title="${6:-$slug}"
     local plan_file=".ai-flow/plans/${date_dir}-${slug}.md"
+    local repo_scope
     create_plan_file "$workspace_root" "$slug" "$date_dir" "$title"
+    repo_scope="$(repo_scope_json "$workspace_root" "owner::." "repo-alpha::repo-alpha" "repo-beta::repo-beta")"
 
     (
         cd "$workspace_root" || exit 1
         bash "$flow_state_script" create --slug "$slug" --title "$title" --plan-file "$plan_file" \
-            --scope-mode workspace --workspace-file .ai-flow/workspace.json >/dev/null
+            --repo-scope-json "$repo_scope" >/dev/null
         case "$target_status" in
             AWAITING_PLAN_REVIEW) ;;
             PLANNED)

@@ -142,7 +142,7 @@ test_workspace_coding_review_from_declared_subrepo_uses_workspace_root() {
     assert_equals ".ai-flow/reports/ws-subrepo-review.md" "$report_file"
     assert_file_exists "$workspace/$report_file"
     assert_file_not_exists "$workspace/repo-alpha/.ai-flow/reports/20260503-ws-subrepo-review.md"
-    assert_contains "$temp_root/codex.review.argv" "-C $workspace"
+    assert_contains "$temp_root/codex.review.argv" "-C $(cd "$workspace" && pwd -P)"
     rm -rf "$temp_root"
 }
 
@@ -209,7 +209,7 @@ test_workspace_coding_review_from_undeclared_repo_keeps_single_repo_mode() {
     )
 
     assert_protocol_field "$temp_root/solo.out" "RESULT" "success"
-    assert_contains "$temp_root/codex.review.argv" "-C $workspace/standalone"
+    assert_contains "$temp_root/codex.review.argv" "-C $(cd "$workspace/standalone" && pwd -P)"
     rm -rf "$temp_root"
 }
 
@@ -234,9 +234,9 @@ test_workspace_coding_review_prompt_includes_workspace_contract() {
 
     prompt_file="$(ls -1t "$temp_root"/codex-review-prompt-*.txt | head -1)"
     assert_file_exists "$prompt_file"
-    assert_contains "$prompt_file" 'git -C <workspace_root>/<repo_path> status --porcelain --untracked-files=all'
-    assert_contains "$prompt_file" 'git -C <workspace_root>/<repo_path> diff --staged'
-    assert_contains "$prompt_file" 'git -C <workspace_root>/<repo_path> diff'
+    assert_contains "$prompt_file" 'git -C <git_root> status --porcelain --untracked-files=all'
+    assert_contains "$prompt_file" 'git -C <git_root> diff --staged'
+    assert_contains "$prompt_file" 'git -C <git_root> diff'
     assert_contains "$prompt_file" '文件路径必须写成 `repo_id/path/to/file`'
     assert_contains "$prompt_file" '`1.2 定向验证执行证据` 必须每个 dirty repo 至少一条验证命令'
     rm -rf "$temp_root"
@@ -267,7 +267,7 @@ test_workspace_coding_review_rejects_report_missing_dirty_repo() {
 
     [ "$rc" -ne 0 ] || fail "Expected workspace review to fail when report omits a dirty repo"
     assert_protocol_field "$temp_root/missing-repo.out" "RESULT" "failed"
-    assert_contains "$temp_root/missing-repo.out" "workspace 报告缺少 dirty repo 上下文: repo-beta"
+    assert_contains "$temp_root/missing-repo.out" "plan_repos 报告缺少 dirty repo 上下文: repo-beta"
     rm -rf "$temp_root"
 }
 

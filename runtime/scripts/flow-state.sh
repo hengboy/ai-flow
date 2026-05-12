@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 STATUS_VALUES = {
     "AWAITING_PLAN_REVIEW",
     "PLAN_REVIEW_FAILED",
@@ -57,45 +57,21 @@ class FlowError(Exception):
     pass
 
 
-def find_ancestor_workspace_file(start: Path):
-    current = start.resolve()
-    while True:
-        candidate = current / ".ai-flow" / "workspace.json"
-        if candidate.is_file():
-            return candidate
-        parent = current.parent
-        if parent == current:
-            return None
-        current = parent
-
-
-def is_path_in_declared_workspace_repo(workspace_file: Path, target: Path) -> bool:
-    workspace_root = workspace_file.parent.parent
-    try:
-        manifest = json.loads(workspace_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return False
-    target = target.resolve()
-    for repo in manifest.get("repos", []):
-        repo_path = repo.get("path")
-        if not isinstance(repo_path, str) or not repo_path.strip():
-            continue
-        try:
-            target.relative_to((workspace_root / repo_path).resolve())
-            return True
-        except ValueError:
-            continue
-    return False
-
-
 def resolve_project_dir() -> Path:
+    import subprocess
     cwd = Path.cwd().resolve()
-    local_workspace = cwd / ".ai-flow" / "workspace.json"
-    if local_workspace.is_file():
-        return cwd
-    workspace_file = find_ancestor_workspace_file(cwd)
-    if workspace_file and is_path_in_declared_workspace_repo(workspace_file, cwd):
-        return workspace_file.parent.parent.resolve()
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(cwd),
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return Path(result.stdout.strip()).resolve()
+    except FileNotFoundError:
+        pass
     return cwd
 
 
@@ -290,74 +266,7 @@ def synchronize_derived_fields(state: dict) -> dict:
     return state
 
 
-def build_execution_scope(*, mode, workspace_file=None):
-    """Build execution_scope from explicit parameters or auto-detect."""
-    if mode == "workspace":
-        if not workspace_file:
-            raise FlowError("workspace 模式必须提供 workspace_file")
-        ws_path = Path(workspace_file)
-        if ws_path.is_absolute():
-            abs_ws = ws_path.resolve()
-        else:
-            abs_ws = (PROJECT_DIR / ws_path).resolve()
-        try:
-            rel_ws = abs_ws.relative_to(PROJECT_DIR).as_posix()
-        except ValueError:
-            rel_ws = abs_ws.as_posix()
-
-        # Load manifest to get repo list
-        if not abs_ws.is_file():
-            raise FlowError(f"workspace manifest 不存在: {abs_ws}")
-        manifest = json.loads(abs_ws.read_text(encoding="utf-8"))
-        repos = manifest.get("repos")
-        if not isinstance(repos, list) or not repos:
-            raise FlowError("workspace manifest repos 必须是非空数组")
-
-        # Validate each repo is a valid git repo
-        import subprocess
-        validated_repos = []
-        seen_ids: set[str] = set()
-        for idx, repo in enumerate(repos):
-            repo_id = repo.get("id")
-            repo_path = repo.get("path")
-            if not isinstance(repo_id, str) or not repo_id.strip():
-                raise FlowError(f"manifest repos[{idx}].id 无效")
-            if not isinstance(repo_path, str) or not repo_path.strip():
-                raise FlowError(f"manifest repos[{idx}].path 无效")
-            if repo_id in seen_ids:
-                raise FlowError(f"manifest repos[{idx}].id 重复: {repo_id!r}")
-            seen_ids.add(repo_id)
-
-            abs_repo = (PROJECT_DIR / repo_path).resolve()
-            try:
-                result = subprocess.run(
-                    ["git", "-C", str(abs_repo), "rev-parse", "--show-toplevel"],
-                    capture_output=True, text=True, timeout=10,
-                )
-                if result.returncode != 0:
-                    raise FlowError(f"manifest repos[{idx}].path={repo_path!r} 不是有效的 Git 仓库")
-                git_root = result.stdout.strip()
-            except FileNotFoundError:
-                raise FlowError("git 命令不可用")
-
-            try:
-                rel_git_root = Path(git_root).relative_to(PROJECT_DIR).as_posix()
-            except ValueError:
-                rel_git_root = git_root
-
-            validated_repos.append({
-                "id": repo_id,
-                "path": (abs_repo.relative_to(PROJECT_DIR)).as_posix(),
-                "git_root": rel_git_root,
-            })
-
-        return {
-            "mode": "workspace",
-            "workspace_file": rel_ws,
-            "repos": validated_repos,
-        }
-
-    # single_repo mode is represented as a one-repo workspace-compatible scope.
+def default_repo_scope() -> dict:
     import subprocess
     try:
         result = subprocess.run(
@@ -378,69 +287,103 @@ def build_execution_scope(*, mode, workspace_file=None):
         rel_git_root = git_root
 
     return {
-        "mode": "workspace",
-        "workspace_file": None,
+        "mode": "plan_repos",
         "repos": [{
-            "id": "root",
+            "id": "owner",
             "path": ".",
-            "git_root": rel_git_root,
+            "git_root": str(Path(git_root).resolve()),
+            "role": "owner",
         }],
     }
 
 
-def normalize_execution_scope(state: dict) -> None:
-    """Inject execution_scope into states that lack it (schema_version 1)."""
-    if "execution_scope" in state:
-        return
+def build_execution_scope(*, repo_scope_json=None):
+    """Build plan-level execution_scope from JSON or default owner repo."""
+    if not repo_scope_json:
+        scope = default_repo_scope()
+        validate_execution_scope(scope)
+        return scope
+    try:
+        scope = json.loads(repo_scope_json)
+    except json.JSONDecodeError as exc:
+        raise FlowError("--repo-scope-json 不是合法 JSON") from exc
+    validate_execution_scope(scope)
+    return scope
 
+
+def resolve_repo_git_root(path_value: str) -> Path:
     import subprocess
-    # Derive single-repo scope using the unified workspace-compatible shape.
+
+    path = Path(path_value)
+    abs_repo = path.resolve() if path.is_absolute() else (PROJECT_DIR / path).resolve()
+    if not abs_repo.exists():
+        raise FlowError(f"execution_scope repo path 不存在: {path_value}")
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "-C", str(abs_repo), "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, timeout=10,
-            cwd=str(PROJECT_DIR),
         )
-        if result.returncode == 0:
-            git_root = result.stdout.strip()
-        else:
-            git_root = PROJECT_DIR.as_posix()
     except FileNotFoundError:
-        git_root = PROJECT_DIR.as_posix()
+        raise FlowError("git 命令不可用")
+    if result.returncode != 0 or not result.stdout.strip():
+        raise FlowError(f"execution_scope repo path 不是有效 Git 仓库: {path_value}")
+    return Path(result.stdout.strip()).resolve()
 
-    try:
-        rel_git_root = Path(git_root).relative_to(PROJECT_DIR).as_posix()
-    except ValueError:
-        rel_git_root = git_root
 
-    state["execution_scope"] = {
-        "mode": "workspace",
-        "workspace_file": None,
-        "repos": [{
-            "id": "root",
-            "path": ".",
-            "git_root": rel_git_root,
-        }],
-    }
+def validate_execution_scope(exec_scope: dict) -> None:
+    if not isinstance(exec_scope, dict):
+        raise FlowError("execution_scope 必须是对象")
+    if exec_scope.get("mode") != "plan_repos":
+        raise FlowError("execution_scope.mode 必须是 plan_repos")
+    if "workspace_file" in exec_scope:
+        raise FlowError("execution_scope.workspace_file 已废弃，请重新生成 plan")
+    repos = exec_scope.get("repos")
+    if not isinstance(repos, list) or not repos:
+        raise FlowError("execution_scope.repos 必须是非空数组")
+
+    seen_repo_ids: set[str] = set()
+    owner_count = 0
+    for r_idx, r_item in enumerate(repos):
+        if not isinstance(r_item, dict):
+            raise FlowError(f"execution_scope.repos[{r_idx}] 必须是对象")
+        for r_key in ("id", "path", "git_root", "role"):
+            if r_key not in r_item:
+                raise FlowError(f"execution_scope.repos[{r_idx}] 缺少字段: {r_key}")
+        repo_id = r_item["id"]
+        repo_path = r_item["path"]
+        git_root = r_item["git_root"]
+        role = r_item["role"]
+        if not isinstance(repo_id, str) or not SLUG_RE.match(repo_id):
+            raise FlowError(f"execution_scope.repos[{r_idx}].id 无效: {repo_id!r}")
+        if repo_id in seen_repo_ids:
+            raise FlowError(f"execution_scope.repos[{r_idx}].id 重复: {repo_id!r}")
+        seen_repo_ids.add(repo_id)
+        if role not in {"owner", "participant"}:
+            raise FlowError(f"execution_scope.repos[{r_idx}].role 必须是 owner 或 participant")
+        if role == "owner":
+            owner_count += 1
+        if not isinstance(repo_path, str) or not repo_path.strip() or Path(repo_path).is_absolute():
+            raise FlowError(f"execution_scope.repos[{r_idx}].path 必须是相对 owner repo 的路径")
+        if not isinstance(git_root, str) or not Path(git_root).is_absolute():
+            raise FlowError(f"execution_scope.repos[{r_idx}].git_root 必须是绝对路径")
+        resolved_git_root = resolve_repo_git_root(repo_path)
+        if resolved_git_root != Path(git_root).resolve():
+            raise FlowError(
+                f"execution_scope.repos[{r_idx}].git_root 与 path 解析结果不一致: {git_root} != {resolved_git_root}"
+            )
+
+    if owner_count != 1:
+        raise FlowError("execution_scope.repos 必须且只能包含一个 role=owner")
 
 
 def normalize_legacy_state(state: dict) -> list[str]:
     transitions = state.get("transitions")
     if not isinstance(transitions, list) or not transitions:
         raise FlowError("transitions 不能为空，无法执行 normalize")
+    if state.get("schema_version") != SCHEMA_VERSION:
+        raise FlowError("workspace/state 旧格式已废弃，请重新生成 plan")
 
     changes = []
-
-    # Bump schema_version to 2
-    if state.get("schema_version", 1) < SCHEMA_VERSION:
-        old_sv = state.get("schema_version", 1)
-        state["schema_version"] = SCHEMA_VERSION
-        changes.append(f"schema_version: {old_sv} -> {SCHEMA_VERSION}")
-
-    # Inject execution_scope if missing
-    if "execution_scope" not in state:
-        normalize_execution_scope(state)
-        changes.append("execution_scope: <missing> -> injected")
 
     review_events = {"review_passed", "review_failed", "recheck_passed", "recheck_failed"}
     for index, item in enumerate(transitions):
@@ -589,36 +532,7 @@ def validate_state(state: dict, *, expected_slug: str = None) -> None:
     if not isinstance(state["plan_file"], str) or not state["plan_file"]:
         raise FlowError("plan_file 不能为空")
 
-    exec_scope = state.get("execution_scope")
-    if not isinstance(exec_scope, dict):
-        raise FlowError("execution_scope 必须是对象")
-    for key in ("mode", "workspace_file", "repos"):
-        if key not in exec_scope:
-            raise FlowError(f"execution_scope 缺少字段: {key}")
-    if exec_scope["mode"] not in {"single_repo", "workspace"}:
-        raise FlowError(f"execution_scope.mode 必须是 single_repo 或 workspace，实际: {exec_scope['mode']!r}")
-    if exec_scope["mode"] == "workspace" and not exec_scope["workspace_file"]:
-        repos_for_scope = exec_scope.get("repos")
-        if not (
-            isinstance(repos_for_scope, list)
-            and len(repos_for_scope) == 1
-            and isinstance(repos_for_scope[0], dict)
-            and repos_for_scope[0].get("id") == "root"
-            and repos_for_scope[0].get("path") == "."
-        ):
-            raise FlowError("多仓 workspace 模式必须存在 execution_scope.workspace_file")
-    if not isinstance(exec_scope["repos"], list) or not exec_scope["repos"]:
-        raise FlowError("execution_scope.repos 必须是非空数组")
-    seen_repo_ids: set[str] = set()
-    for r_idx, r_item in enumerate(exec_scope["repos"]):
-        if not isinstance(r_item, dict):
-            raise FlowError(f"execution_scope.repos[{r_idx}] 必须是对象")
-        for r_key in ("id", "path", "git_root"):
-            if r_key not in r_item:
-                raise FlowError(f"execution_scope.repos[{r_idx}] 缺少字段: {r_key}")
-        if r_item["id"] in seen_repo_ids:
-            raise FlowError(f"execution_scope.repos[{r_idx}].id 重复: {r_item['id']!r}")
-        seen_repo_ids.add(r_item["id"])
+    validate_execution_scope(state.get("execution_scope"))
 
     rounds = state["review_rounds"]
     if not isinstance(rounds, dict) or set(rounds.keys()) != {"regular", "recheck"}:
@@ -719,10 +633,7 @@ def cmd_create(args):
     if not title:
         raise FlowError("title 不能为空")
 
-    # Derive execution_scope
-    scope_mode = getattr(args, "scope_mode", None) or "single_repo"
-    workspace_file = getattr(args, "workspace_file", None)
-    exec_scope = build_execution_scope(mode=scope_mode, workspace_file=workspace_file)
+    exec_scope = build_execution_scope(repo_scope_json=getattr(args, "repo_scope_json", None))
 
     def mutator(state):
         if state is not None:
@@ -1117,8 +1028,7 @@ def build_parser():
     create.add_argument("--slug", required=True)
     create.add_argument("--title", required=True)
     create.add_argument("--plan-file", required=True)
-    create.add_argument("--scope-mode", choices=["single_repo", "workspace"])
-    create.add_argument("--workspace-file")
+    create.add_argument("--repo-scope-json")
     create.add_argument("--engine")
     create.add_argument("--model")
     create.set_defaults(func=cmd_create)

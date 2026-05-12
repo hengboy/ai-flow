@@ -19,11 +19,11 @@ PROMPT_TEMPLATE="$AGENT_DIR/prompts/review-generation.md"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
-WORKSPACE_ROOT=""
-IS_WORKSPACE_MODE=0
-WORKSPACE_REPOS=()    # parallel arrays: _IDS and _PATHS
-WORKSPACE_REPO_IDS=()
-WORKSPACE_REPO_PATHS=()
+IS_PLAN_REPOS_MODE=0
+PLAN_REPO_IDS=()
+PLAN_REPO_PATHS=()
+PLAN_REPO_GIT_ROOTS=()
+PLAN_REPO_ROLES=()
 PROTOCOL_ARTIFACT="none"
 PROTOCOL_STATE="none"
 PROTOCOL_NEXT="none"
@@ -31,39 +31,6 @@ PROTOCOL_REVIEW_RESULT="failed"
 PROTOCOL_SUMMARY=""
 PROTOCOL_EMITTED=0
 
-detect_workspace_context() {
-    local workspace_root=""
-    local membership=""
-
-    if [ -f "$PROJECT_DIR/.ai-flow/workspace.json" ]; then
-        workspace_root="$PROJECT_DIR"
-    else
-        workspace_root="$(resolve_workspace_root "$PROJECT_DIR" 2>/dev/null || true)"
-        if [ -z "$workspace_root" ]; then
-            return 1
-        fi
-        membership="$(resolve_workspace_repo_membership "$workspace_root" "$ORIGINAL_PROJECT_DIR" 2>/dev/null || true)"
-        if [ -z "$membership" ]; then
-            return 1
-        fi
-        PROJECT_DIR="$workspace_root"
-        FLOW_DIR="$PROJECT_DIR/.ai-flow"
-        REPORTS_DIR="$FLOW_DIR/reports"
-    fi
-
-    if [ ! -f "$PROJECT_DIR/.ai-flow/workspace.json" ]; then
-        return 1
-    fi
-    IS_WORKSPACE_MODE=1
-    WORKSPACE_ROOT="$PROJECT_DIR"
-    while IFS=$'\t' read -r repo_id repo_path; do
-        [ -n "$repo_id" ] || continue
-        WORKSPACE_REPO_IDS+=("$repo_id")
-        WORKSPACE_REPO_PATHS+=("$repo_path")
-    done < <(list_scope_repos "$PROJECT_DIR")
-    return 0
-}
-detect_workspace_context || true
 cd "$PROJECT_DIR"
 
 emit_current_protocol() {
@@ -277,22 +244,22 @@ is_codex_unavailable_error() {
 
 render_prompt_template() {
     local prompt_template="$1"
-    local workspace_ctx=""
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
-        workspace_ctx=$(cat <<EOF
-4. 当前为 workspace 模式。workspace 根目录：\`$PROJECT_DIR\`
-5. 声明仓库清单（仅以下 repo 属于本次审查范围）：
+    local repo_ctx=""
+    if [ "$IS_PLAN_REPOS_MODE" -eq 1 ]; then
+        repo_ctx=$(cat <<EOF
+4. 当前为 plan_repos 模式。owner repo 根目录：\`$PROJECT_DIR\`
+5. Plan 参与仓库清单（仅以下 repo 属于本次审查范围）：
 EOF
 )
         local i
-        for i in "${!WORKSPACE_REPO_IDS[@]}"; do
-            workspace_ctx="${workspace_ctx}
-   - repo=\`${WORKSPACE_REPO_IDS[$i]}\` path=\`${WORKSPACE_REPO_PATHS[$i]}\`"
+        for i in "${!PLAN_REPO_IDS[@]}"; do
+            repo_ctx="${repo_ctx}
+   - repo=\`${PLAN_REPO_IDS[$i]}\` path=\`${PLAN_REPO_PATHS[$i]}\` git_root=\`${PLAN_REPO_GIT_ROOTS[$i]}\` role=\`${PLAN_REPO_ROLES[$i]}\`"
         done
-        workspace_ctx="${workspace_ctx}
-6. Workspace 操作要求：
-   - 必须逐仓运行 \`git -C <workspace_root>/<repo_path> status --porcelain --untracked-files=all\`，禁止在 workspace 根直接运行裸 \`git status\`
-   - 必须逐仓运行 \`git -C <workspace_root>/<repo_path> diff --staged\` 与 \`git -C <workspace_root>/<repo_path> diff\`，禁止在 workspace 根直接运行裸 \`git diff\`
+        repo_ctx="${repo_ctx}
+6. Plan repo 操作要求：
+   - 必须逐仓运行 \`git -C <git_root> status --porcelain --untracked-files=all\`
+   - 必须逐仓运行 \`git -C <git_root> diff --staged\` 与 \`git -C <git_root> diff\`
    - 对 untracked 文件必须直接读取文件内容，不能只看 diff
    - 报告中的文件路径必须写成 \`repo_id/path/to/file\`
    - \`1.1 审查上下文\` 必须列出全部 dirty repo，\`1.2 定向验证执行证据\` 必须每个 dirty repo 至少一条验证命令"
@@ -306,7 +273,7 @@ EOF
     AI_FLOW_REVIEW_MODE="$REVIEW_MODE" \
     AI_FLOW_CURRENT_ROUND="$CURRENT_ROUND" \
     AI_FLOW_PLAN_TITLE="$PLAN_TITLE" \
-    AI_FLOW_WORKSPACE_CONTEXT="$workspace_ctx" \
+    AI_FLOW_WORKSPACE_CONTEXT="$repo_ctx" \
     python3 - "$prompt_template" <<'PY'
 import os
 import sys
@@ -357,6 +324,106 @@ for value in fields:
 PY
 }
 
+load_plan_repo_scope() {
+    local state_file="$1"
+    local scope_file scope_error
+    scope_file="$(mktemp)"
+    scope_error="$(mktemp)"
+    PLAN_REPO_IDS=()
+    PLAN_REPO_PATHS=()
+    PLAN_REPO_GIT_ROOTS=()
+    PLAN_REPO_ROLES=()
+    if ! python3 - "$state_file" "$PROJECT_DIR" >"$scope_file" 2>"$scope_error" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+owner = Path(sys.argv[2]).resolve()
+scope = state.get("execution_scope") or {}
+if scope.get("mode") != "plan_repos":
+    raise SystemExit("state execution_scope.mode 必须是 plan_repos")
+repos = scope.get("repos") or []
+if not repos:
+    raise SystemExit("state execution_scope.repos 不能为空")
+owner_count = sum(1 for repo in repos if repo.get("role") == "owner")
+if owner_count != 1:
+    raise SystemExit("state 必须且只能包含一个 role=owner 仓库")
+seen = set()
+for repo in repos:
+    repo_id = repo.get("id")
+    repo_path = repo.get("path")
+    git_root = repo.get("git_root")
+    role = repo.get("role")
+    if not repo_id or repo_id in seen:
+        raise SystemExit(f"state repo id 无效或重复: {repo_id}")
+    seen.add(repo_id)
+    if role not in {"owner", "participant"}:
+        raise SystemExit(f"state repo {repo_id} role 非法")
+    path = (owner / repo_path).resolve()
+    if not path.exists():
+        raise SystemExit(f"state repo {repo_id} 路径不存在: {repo_path}")
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise SystemExit(f"state repo {repo_id} 不是有效 Git 仓库: {repo_path}")
+    resolved = Path(result.stdout.strip()).resolve()
+    if resolved != Path(git_root).resolve():
+        raise SystemExit(f"state repo {repo_id} git_root 与 path 解析结果不一致")
+    print(json.dumps(dict(id=repo_id, path=repo_path, git_root=str(Path(git_root).resolve()), role=role), ensure_ascii=False))
+PY
+    then
+        local error_text
+        error_text="$(cat "$scope_error")"
+        rm -f "$scope_file" "$scope_error"
+        fail_protocol "${error_text:-读取 state execution_scope.repos 失败}"
+    fi
+    rm -f "$scope_error"
+
+    while IFS= read -r repo_json; do
+        [ -n "$repo_json" ] || continue
+        local repo_id repo_path git_root role
+        repo_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$repo_json")"
+        repo_path="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["path"])' "$repo_json")"
+        git_root="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["git_root"])' "$repo_json")"
+        role="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["role"])' "$repo_json")"
+        PLAN_REPO_IDS+=("$repo_id")
+        PLAN_REPO_PATHS+=("$repo_path")
+        PLAN_REPO_GIT_ROOTS+=("$git_root")
+        PLAN_REPO_ROLES+=("$role")
+    done < "$scope_file"
+    rm -f "$scope_file"
+    IS_PLAN_REPOS_MODE=1
+}
+
+find_owner_dir_for_state_keyword() {
+    local keyword="$1"
+    python3 - "$ORIGINAL_PROJECT_DIR" "$keyword" <<'PY'
+import sys
+from pathlib import Path
+
+start = Path(sys.argv[1]).resolve()
+keyword = sys.argv[2]
+matches = []
+for current in [start, *start.parents]:
+    state_dir = current / ".ai-flow" / "state"
+    if not state_dir.is_dir():
+        continue
+    matches.extend(state_dir.glob(f"*{keyword}*.json"))
+if not matches:
+    raise SystemExit(1)
+owners = sorted({str(path.parent.parent.parent.resolve()) for path in matches})
+if len(owners) > 1:
+    raise SystemExit("slug 匹配到多个 owner repo，请从 owner repo 运行或使用更精确 slug")
+print(owners[0])
+PY
+}
+
 state_current_status() {
     local state_file="$1"
     python3 - "$state_file" <<'PY'
@@ -373,15 +440,18 @@ count_reviewable_git_paths() {
     list_reviewable_git_paths | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' '
 }
 
-list_workspace_reviewable_git_paths() {
+list_plan_repo_reviewable_git_paths() {
     local i
-    for i in "${!WORKSPACE_REPO_PATHS[@]}"; do
-        local repo_id="${WORKSPACE_REPO_IDS[$i]}"
-        local repo_path="${WORKSPACE_REPO_PATHS[$i]}"
-        collect_repo_changes "$WORKSPACE_ROOT" "$repo_path" 2>/dev/null | awk -v prefix="${repo_id}/" '
+    for i in "${!PLAN_REPO_GIT_ROOTS[@]}"; do
+        local repo_id="${PLAN_REPO_IDS[$i]}"
+        local git_root="${PLAN_REPO_GIT_ROOTS[$i]}"
+        git -C "$git_root" status --porcelain --untracked-files=all 2>/dev/null | awk -v prefix="${repo_id}/" -v repo_path="${PLAN_REPO_PATHS[$i]}" -v repo_count="${#PLAN_REPO_IDS[@]}" '
             {
                 path = substr($0, 4)
                 if (path ~ /^\.ai-flow\//) {
+                    next
+                }
+                if (repo_count > 1 && repo_path == ".") {
                     next
                 }
                 print prefix path
@@ -390,17 +460,20 @@ list_workspace_reviewable_git_paths() {
     done
 }
 
-list_workspace_dirty_repo_ids() {
+list_plan_repo_dirty_repo_ids() {
     local i
-    for i in "${!WORKSPACE_REPO_PATHS[@]}"; do
-        local repo_id="${WORKSPACE_REPO_IDS[$i]}"
-        local repo_path="${WORKSPACE_REPO_PATHS[$i]}"
+    for i in "${!PLAN_REPO_GIT_ROOTS[@]}"; do
+        local repo_id="${PLAN_REPO_IDS[$i]}"
+        local git_root="${PLAN_REPO_GIT_ROOTS[$i]}"
         local changes
-        changes="$(collect_repo_changes "$WORKSPACE_ROOT" "$repo_path" 2>/dev/null || true)"
-        if [ -n "$(printf '%s\n' "$changes" | awk '
+        changes="$(git -C "$git_root" status --porcelain --untracked-files=all 2>/dev/null || true)"
+        if [ -n "$(printf '%s\n' "$changes" | awk -v repo_path="${PLAN_REPO_PATHS[$i]}" -v repo_count="${#PLAN_REPO_IDS[@]}" '
             {
                 path = substr($0, 4)
                 if (path ~ /^\.ai-flow\//) {
+                    next
+                }
+                if (repo_count > 1 && repo_path == ".") {
                     next
                 }
                 print path
@@ -411,21 +484,24 @@ list_workspace_dirty_repo_ids() {
     done
 }
 
-list_workspace_change_summary() {
+list_plan_repo_change_summary() {
     local i
-    for i in "${!WORKSPACE_REPO_PATHS[@]}"; do
-        local repo_id="${WORKSPACE_REPO_IDS[$i]}"
-        local repo_path="${WORKSPACE_REPO_PATHS[$i]}"
+    for i in "${!PLAN_REPO_GIT_ROOTS[@]}"; do
+        local repo_id="${PLAN_REPO_IDS[$i]}"
+        local git_root="${PLAN_REPO_GIT_ROOTS[$i]}"
         local changes
-        changes="$(collect_repo_changes "$WORKSPACE_ROOT" "$repo_path" 2>/dev/null || true)"
+        changes="$(git -C "$git_root" status --porcelain --untracked-files=all 2>/dev/null || true)"
         if [ -z "$changes" ]; then
             continue
         fi
         printf '[repo=%s]\n' "$repo_id"
-        printf '%s\n' "$changes" | awk -v prefix="${repo_id}/" '
+        printf '%s\n' "$changes" | awk -v prefix="${repo_id}/" -v repo_path="${PLAN_REPO_PATHS[$i]}" -v repo_count="${#PLAN_REPO_IDS[@]}" '
             {
                 path = substr($0, 4)
                 if (path ~ /^\.ai-flow\//) {
+                    next
+                }
+                if (repo_count > 1 && repo_path == ".") {
                     next
                 }
                 print substr($0, 1, 3) prefix path
@@ -434,7 +510,7 @@ list_workspace_change_summary() {
     done
 }
 
-workspace_report_validation_error() {
+plan_repo_report_validation_error() {
     local dirty_repo_file
     dirty_repo_file="$(mktemp)"
     cat > "$dirty_repo_file"
@@ -454,12 +530,12 @@ verification = match_verification.group(0) if match_verification else ""
 
 for repo_id in dirty_repos:
     if repo_id not in context:
-        errors.append(f"workspace 报告缺少 dirty repo 上下文: {repo_id}")
+        errors.append(f"plan_repos 报告缺少 dirty repo 上下文: {repo_id}")
     repo_prefix = f"{repo_id}/"
     if repo_prefix not in text:
-        errors.append(f"workspace 报告缺少 repo 前缀文件路径: {repo_prefix}")
+        errors.append(f"plan_repos 报告缺少 repo 前缀文件路径: {repo_prefix}")
     if repo_id not in verification:
-        errors.append(f"workspace 报告缺少 per-repo 验证证据: {repo_id}")
+        errors.append(f"plan_repos 报告缺少 per-repo 验证证据: {repo_id}")
 
 if errors:
     sys.stderr.write("\n".join(errors) + "\n")
@@ -482,7 +558,7 @@ review_reasoning() {
     local current_round="${3:-1}"
     local prev_review_present="${4:-0}"
 
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ] \
+    if [ "$IS_PLAN_REPOS_MODE" -eq 1 ] \
         || [ "$REVIEW_MODE" = "recheck" ] \
         || [ "$current_round" -ge 2 ] \
         || [ "$prev_review_present" -eq 1 ] \
@@ -495,21 +571,25 @@ review_reasoning() {
 }
 
 ensure_reviewable_git_changes() {
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
+    if [ "$IS_PLAN_REPOS_MODE" -eq 1 ]; then
         local any_changes=0
         local i
-        for i in "${!WORKSPACE_REPO_PATHS[@]}"; do
-            local repo_path="${WORKSPACE_REPO_PATHS[$i]}"
-            local repo_id="${WORKSPACE_REPO_IDS[$i]}"
-            if ! validate_scope_repo_git "$WORKSPACE_ROOT" "$repo_path"; then
+        for i in "${!PLAN_REPO_GIT_ROOTS[@]}"; do
+            local repo_path="${PLAN_REPO_PATHS[$i]}"
+            local repo_id="${PLAN_REPO_IDS[$i]}"
+            local git_root="${PLAN_REPO_GIT_ROOTS[$i]}"
+            if ! git -C "$git_root" rev-parse --show-toplevel >/dev/null 2>&1; then
                 fail_protocol "声明的仓库 '${repo_id}' ($repo_path) 不是有效的 Git 仓库"
             fi
             local changes
-            changes="$(collect_repo_changes "$WORKSPACE_ROOT" "$repo_path" 2>/dev/null || true)"
-            if [ -n "$(printf '%s\n' "$changes" | awk '
+            changes="$(git -C "$git_root" status --porcelain --untracked-files=all 2>/dev/null || true)"
+            if [ -n "$(printf '%s\n' "$changes" | awk -v repo_path="$repo_path" -v repo_count="${#PLAN_REPO_IDS[@]}" '
                 {
                     path = substr($0, 4)
                     if (path ~ /^\.ai-flow\//) {
+                        next
+                    }
+                    if (repo_count > 1 && repo_path == "." && path !~ /^\.ai-flow\//) {
                         next
                     }
                     print path
@@ -519,7 +599,7 @@ ensure_reviewable_git_changes() {
             fi
         done
         if [ "$any_changes" -eq 0 ]; then
-            fail_protocol "所有声明的仓库均无可审查的 Git 变更"
+            fail_protocol "所有参与仓库均无可审查的 Git 变更"
         fi
     else
         if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -574,8 +654,8 @@ extract_family_coverage_section() {
 }
 
 list_reviewable_git_paths() {
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
-        list_workspace_reviewable_git_paths
+    if [ "$IS_PLAN_REPOS_MODE" -eq 1 ]; then
+        list_plan_repo_reviewable_git_paths
     else
         git status --porcelain --untracked-files=all | awk '
             {
@@ -592,7 +672,7 @@ list_reviewable_git_paths() {
 is_documentation_path() {
     local path="$1"
     local normalized_path="$path"
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ] && [[ "$normalized_path" == */* ]]; then
+    if [ "$IS_PLAN_REPOS_MODE" -eq 1 ] && [[ "$normalized_path" == */* ]]; then
         normalized_path="${normalized_path#*/}"
     fi
     case "$normalized_path" in
@@ -847,6 +927,19 @@ ARG4="${4:-}"
 STATE_FILE=""
 
 if [ "$IS_ADHOC" -eq 0 ]; then
+    find_owner_err="$(mktemp)"
+    owner_dir="$(find_owner_dir_for_state_keyword "$REQUEST_KEY" 2>"$find_owner_err" || true)"
+    if [ -z "${owner_dir:-}" ]; then
+        if [ -s "$find_owner_err" ]; then
+            fail_protocol "$(cat "$find_owner_err")"
+        fi
+        fail_protocol "找不到匹配 slug '$REQUEST_KEY' 的状态文件"
+    fi
+    rm -f "$find_owner_err"
+    PROJECT_DIR="$owner_dir"
+    FLOW_DIR="$PROJECT_DIR/.ai-flow"
+    REPORTS_DIR="$FLOW_DIR/reports"
+    cd "$PROJECT_DIR"
     MATCHED_STATES=()
     while IFS= read -r -d '' f; do
         MATCHED_STATES+=("$f")
@@ -860,6 +953,7 @@ if [ "$IS_ADHOC" -eq 0 ]; then
         STATE_FILE="${MATCHED_STATES[0]}"
         STATE_FILE_ABS="$(resolve_project_path "$STATE_FILE")"
         apply_review_arg_compat "$ARG2" "$ARG3" "$ARG4"
+        load_plan_repo_scope "$STATE_FILE_ABS"
     fi
 fi
 
@@ -1046,8 +1140,8 @@ fi
 
 if [ "$IS_ADHOC" -eq 1 ]; then
     ADHOC_TODAY="$(date +%Y-%m-%d)"
-    ADHOC_CHANGE_SUMMARY="$(list_workspace_change_summary 2>/dev/null || true)"
-    if [ "$IS_WORKSPACE_MODE" -eq 0 ]; then
+    ADHOC_CHANGE_SUMMARY="$(list_plan_repo_change_summary 2>/dev/null || true)"
+    if [ "$IS_PLAN_REPOS_MODE" -eq 0 ]; then
         ADHOC_CHANGE_SUMMARY=$(
             cat <<EOF
 $(git diff --staged --name-only 2>/dev/null || true)
@@ -1282,9 +1376,9 @@ if [ "$IS_ADHOC" -eq 0 ]; then
     if ! optional_marker_error=$(validate_optional_markers 2>&1); then
         ERRORS="${ERRORS}${optional_marker_error}\n"
     fi
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
-        if ! workspace_validation_error=$(list_workspace_dirty_repo_ids | workspace_report_validation_error 2>&1); then
-            ERRORS="${ERRORS}${workspace_validation_error}\n"
+    if [ "$IS_PLAN_REPOS_MODE" -eq 1 ]; then
+        if ! plan_repo_validation_error=$(list_plan_repo_dirty_repo_ids | plan_repo_report_validation_error 2>&1); then
+            ERRORS="${ERRORS}${plan_repo_validation_error}\n"
         fi
     fi
 fi

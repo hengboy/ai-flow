@@ -23,11 +23,12 @@ __AI_FLOW_PLAN_CONTENT__
    - 禁止创建模板中不存在的顶级章节（如"实施时间线""附录""配置变更汇总"等）
    - 不得包含未替换的占位符（`{...}` 形式的大括号标记）
 
-Workspace 模式额外检查（若 plan 顶部 `执行范围` 为 workspace）：
-- 每个"涉及模块"和"文件边界总览"表格的 `仓库` 列必须填写，且 repo id 必须存在于 `.ai-flow/workspace.json` 的 repos 声明中
-- 文件路径必须相对于 workspace 根目录
-- 所有 Git 自检验证命令必须使用 `git -C <repo_path>` 前缀
-- 计划应体现跨仓库依赖和步骤顺序
+Plan 参与仓库额外检查：
+- 每个"涉及模块"和"文件边界总览"表格的 `仓库` 列必须填写；单仓 plan 填 `owner`
+- 如果 plan 出现非 `owner` repo id，该 repo 必须已经写入对应 state 的 `execution_scope.repos`
+- 跨仓文件路径必须使用 `repo_id/path/to/file`
+- 所有 Git 自检验证命令必须使用对应仓库的 `git -C <repo_path>` 前缀；owner repo 使用 `git -C .`
+- 跨仓 plan 应体现仓库依赖和步骤顺序
 
 严重级别判定：
 - `Critical`：目标、范围、优先级、验收标准、关键 tradeoff 与原始需求不一致，或存在高误改风险，继续执行会明显偏航

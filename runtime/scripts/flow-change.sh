@@ -15,41 +15,10 @@ resolve_flow_root() {
     start="$(pwd)"
     candidate="$start"
 
-    if [ -f "$candidate/.ai-flow/workspace.json" ]; then
-        printf '%s' "$candidate"
-        return 0
-    fi
-
     while true; do
-        local workspace_file="$candidate/.ai-flow/workspace.json"
-        if [ -f "$workspace_file" ]; then
-            if python3 - "$workspace_file" "$start" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-workspace_file = Path(sys.argv[1]).resolve()
-target = Path(sys.argv[2]).resolve()
-workspace_root = workspace_file.parent.parent
-try:
-    data = json.loads(workspace_file.read_text(encoding="utf-8"))
-except json.JSONDecodeError:
-    sys.exit(1)
-for repo in data.get("repos", []):
-    repo_path = repo.get("path")
-    if not isinstance(repo_path, str) or not repo_path.strip():
-        continue
-    try:
-        target.relative_to((workspace_root / repo_path).resolve())
-        sys.exit(0)
-    except ValueError:
-        continue
-sys.exit(1)
-PY
-            then
-                printf '%s' "$candidate"
-                return 0
-            fi
+        if [ -d "$candidate/.ai-flow/state" ]; then
+            printf '%s' "$candidate"
+            return 0
         fi
         if [ "$candidate" = "/" ] || [ "$candidate" = "//" ]; then
             break

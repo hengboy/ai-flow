@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Resolve flow root: prefer workspace manifest, fall back to pwd/.ai-flow
+# Resolve flow root: find nearest .ai-flow/state/ directory
 resolve_flow_root() {
     local start
     local candidate
@@ -13,40 +13,10 @@ resolve_flow_root() {
     candidate="$start"
     local local_flow_root=""
 
-    if [ -f "$candidate/.ai-flow/workspace.json" ]; then
-        printf '%s' "$candidate"
-        return 0
-    fi
-
     while true; do
-        if [ -f "$candidate/.ai-flow/workspace.json" ]; then
-            if python3 - "$candidate/.ai-flow/workspace.json" "$start" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-workspace_file = Path(sys.argv[1]).resolve()
-target = Path(sys.argv[2]).resolve()
-workspace_root = workspace_file.parent.parent
-try:
-    data = json.loads(workspace_file.read_text(encoding="utf-8"))
-except json.JSONDecodeError:
-    sys.exit(1)
-for repo in data.get("repos", []):
-    repo_path = repo.get("path")
-    if not isinstance(repo_path, str) or not repo_path.strip():
-        continue
-    try:
-        target.relative_to((workspace_root / repo_path).resolve())
-        sys.exit(0)
-    except ValueError:
-        continue
-sys.exit(1)
-PY
-            then
-                printf '%s' "$candidate"
-                return 0
-            fi
+        if [ -d "$candidate/.ai-flow/state" ]; then
+            printf '%s' "$candidate"
+            return 0
         fi
         if [ -z "$local_flow_root" ] && [ -d "$candidate/.ai-flow" ]; then
             local_flow_root="$candidate"
@@ -81,15 +51,6 @@ if [ ! -d "$FLOW_DIR" ]; then
     exit 0
 fi
 
-# Detect workspace mode
-WORKSPACE_MODE=0
-WORKSPACE_NAME=""
-WORKSPACE_REPO_COUNT=0
-if [ -f "$FLOW_DIR/workspace.json" ]; then
-    WORKSPACE_MODE=1
-    WORKSPACE_NAME="$(python3 -c "import json; d=json.load(open('$FLOW_DIR/workspace.json')); print(d.get('name',''))")"
-    WORKSPACE_REPO_COUNT="$(python3 -c "import json; d=json.load(open('$FLOW_DIR/workspace.json')); print(len(d.get('repos',[])))")"
-fi
 
 VALID_LIST="$(mktemp)"
 INVALID_LIST="$(mktemp)"
@@ -119,7 +80,7 @@ PY
     shopt -u nullglob
 fi
 
-python3 - "$PROJECT_DIR" "$VALID_LIST" "$INVALID_LIST" "$FLOW_STATE_SH" "$WORKSPACE_MODE" "$WORKSPACE_NAME" "$WORKSPACE_REPO_COUNT" "$FLOW_DIR" <<'PY'
+python3 - "$PROJECT_DIR" "$VALID_LIST" "$INVALID_LIST" "$FLOW_STATE_SH" "$FLOW_DIR" <<'PY'
 import json
 import sys
 import base64
@@ -130,10 +91,7 @@ project_dir = Path(sys.argv[1]).resolve()
 valid_list = Path(sys.argv[2])
 invalid_list = Path(sys.argv[3])
 flow_state_sh = Path(sys.argv[4])
-workspace_mode = sys.argv[5] == "1"
-workspace_name = sys.argv[6]
-workspace_repo_count = int(sys.argv[7]) if sys.argv[7].isdigit() else 0
-flow_dir = Path(sys.argv[8])
+flow_dir = Path(sys.argv[5])
 state_dir = flow_dir / "state"
 
 def rel(path_value):
@@ -164,11 +122,7 @@ if invalid_list.exists():
         invalid_states.append((Path(path_value), error))
 
 print("===============================")
-if workspace_mode:
-    print(f"  AI Flow 工作区: {workspace_name}")
-    print(f"  范围: workspace ({workspace_repo_count} repos)")
-else:
-    print(f"  AI Flow 状态: {project_dir.name}")
+print(f"  AI Flow 状态: {project_dir.name}")
 print("===============================")
 print()
 
@@ -198,9 +152,9 @@ else:
         exec_scope = state.get("execution_scope", {})
         if isinstance(exec_scope, dict):
             mode = exec_scope.get("mode", "")
-            if mode == "workspace":
+            if mode == "plan_repos":
                 repos = exec_scope.get("repos", [])
-                scope_info = f" [scope:workspace repos:{len(repos)}]"
+                scope_info = f" [scope:plan_repos repos:{len(repos)}]"
             elif mode == "single_repo":
                 scope_info = " [scope:single_repo]"
         print(

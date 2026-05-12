@@ -14,7 +14,7 @@ description: 总结 AI Flow 流程的完整生命周期，含实施变动、Revi
 ## 运行目录
 
 - 单仓模式：在目标 Git 仓库根目录运行。
-- 多仓模式（workspace）：在包含 `.ai-flow/workspace.json` 的 workspace 根目录运行。
+- 多仓模式（plan_repos）：在 owner repo 的 Git 根目录运行。
 
 ## 输入约束与 Slug 解析
 

@@ -12,7 +12,8 @@ AI_FLOW_ENGINE_MODE="${AI_FLOW_ENGINE_MODE:-auto}"
 
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
-PROJECT_DIR="$(pwd)"
+ORIGINAL_PROJECT_DIR="$(pwd)"
+PROJECT_DIR="$ORIGINAL_PROJECT_DIR"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"
 
@@ -30,8 +31,9 @@ fi
 
 DATE_PREFIX="$(date +%Y%m%d)"
 PLANS_DIR="$FLOW_DIR/plans"
-WORKSPACE_ROOT=""
-IS_WORKSPACE_MODE=0
+OWNER_GIT_ROOT=""
+REPO_SCOPE_JSON=""
+PLAN_REPO_IDS=()
 TEMPLATE="$AGENT_DIR/templates/plan-template.md"
 PLAN_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-generation.md"
 PLAN_REVIEW_PROMPT_TEMPLATE="${AI_FLOW_PLAN_REVIEW_PROMPT_TEMPLATE:-$AGENT_DIR/prompts/plan-review.md}"
@@ -155,37 +157,33 @@ discover_scope_repos() {
 }
 
 ensure_project_root_context() {
+    local git_root
+    git_root="$(git -C "$ORIGINAL_PROJECT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -n "$git_root" ]; then
+        OWNER_GIT_ROOT="$git_root"
+        PROJECT_DIR="$OWNER_GIT_ROOT"
+        FLOW_DIR="$PROJECT_DIR/.ai-flow"
+        STATE_DIR="$FLOW_DIR/state"
+        PLANS_DIR="$FLOW_DIR/plans"
+        cd "$PROJECT_DIR"
+        return 0
+    fi
+
     local candidate
     local -a candidates=()
 
-    if has_project_root_marker "$PROJECT_DIR"; then
-        if has_workspace_manifest "$PROJECT_DIR"; then
-            WORKSPACE_ROOT="$PROJECT_DIR"
-            IS_WORKSPACE_MODE=1
-        fi
-        return 0
-    fi
-
-    # Workspace manifest is also a valid root (even without traditional project markers)
-    if has_workspace_manifest "$PROJECT_DIR"; then
-        # Export workspace context for downstream use
-        WORKSPACE_ROOT="$PROJECT_DIR"
-        IS_WORKSPACE_MODE=1
-        return 0
-    fi
-
     while IFS= read -r candidate; do
         [ -n "$candidate" ] && candidates+=("$candidate")
-    done < <(discover_project_root_candidates "$PROJECT_DIR")
+    done < <(discover_project_root_candidates "$ORIGINAL_PROJECT_DIR")
 
     local message
-    message="当前目录不是可识别的项目根目录: $PROJECT_DIR"
+    message="当前目录不在 Git 仓库内，无法确定 owner repo: $ORIGINAL_PROJECT_DIR"
     if [ "${#candidates[@]}" -eq 1 ]; then
-        message="$message；检测到候选项目根目录: $PROJECT_DIR/${candidates[0]}"
+        message="${message}；检测到候选项目根目录: $ORIGINAL_PROJECT_DIR/${candidates[0]}"
     elif [ "${#candidates[@]}" -gt 1 ]; then
-        message="$message；检测到多个候选项目根目录，请进入目标模块根目录后重新运行 /ai-flow-plan"
+        message="${message}；检测到多个候选项目根目录，请进入目标 Git 仓库后重新运行 /ai-flow-plan"
     else
-        message="$message；请在包含 .git、pom.xml、package.json、go.mod、src 等根标记的目录中运行"
+        message="${message}；请在 owner Git 仓库内运行 /ai-flow-plan"
     fi
     fail_protocol "$message" "${PROTOCOL_REVIEW_RESULT:-}"
 }
@@ -195,18 +193,15 @@ validate_installed_resources
 render_plan_template_content() {
     local requirement_name="$1"
     local requirement_text="$2"
-    local exec_scope_label="workspace"
-    local workspace_list="root (path: .)"
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
-        workspace_list=".ai-flow/workspace.json"
-    fi
+    local exec_scope_label="plan_repos"
+    local repo_list="owner (path: ., role: owner)"
     AI_FLOW_TEMPLATE_REQUIREMENT_NAME="$requirement_name" \
     AI_FLOW_TEMPLATE_SLUG="$SLUG" \
     AI_FLOW_TEMPLATE_DATE="$(date +%Y-%m-%d)" \
     AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL="需求描述" \
     AI_FLOW_TEMPLATE_REQUIREMENT_TEXT="$requirement_text" \
     AI_FLOW_TEMPLATE_EXEC_SCOPE="$exec_scope_label" \
-    AI_FLOW_TEMPLATE_WORKSPACE_LIST="$workspace_list" \
+    AI_FLOW_TEMPLATE_REPO_LIST="$repo_list" \
     python3 - "$TEMPLATE" <<'PY'
 import os
 import sys
@@ -220,7 +215,7 @@ replacements = {
     "{需求文档/口头描述/Jira 等}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL"],
     "{原始需求原文}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_TEXT"],
     "执行范围：single_repo": f"执行范围：{os.environ['AI_FLOW_TEMPLATE_EXEC_SCOPE']}",
-    "工作区清单：无（单仓模式；若为 workspace 模式，请写 `.ai-flow/workspace.json`）": f"工作区清单：{os.environ['AI_FLOW_TEMPLATE_WORKSPACE_LIST']}",
+    "Plan 参与仓库：owner (path: ., role: owner)": f"Plan 参与仓库：{os.environ['AI_FLOW_TEMPLATE_REPO_LIST']}",
 }
 for needle, value in replacements.items():
     text = text.replace(needle, value)
@@ -230,28 +225,14 @@ PY
 
 render_prompt_template() {
     local prompt_template="$1"
-    local workspace_ctx=""
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
-        local ws_name
-        ws_name=$(python3 -c "import json; d=json.load(open('$WORKSPACE_ROOT/.ai-flow/workspace.json')); print(d.get('name',''))" 2>/dev/null || true)
-        workspace_ctx="当前为 workspace 模式（工作区：${ws_name:-unknown}），文件路径必须相对于 workspace 根目录。"
-        while IFS=$'\t' read -r repo_id repo_path; do
-            workspace_ctx="${workspace_ctx} 仓库：${repo_id} (路径: ${repo_path})。"
-        done < <(python3 -c "
-import json
-data = json.load(open('$WORKSPACE_ROOT/.ai-flow/workspace.json'))
-for r in data.get('repos', []):
-    print(f\"{r['id']}\t{r['path']}\")
-")
-        workspace_ctx="${workspace_ctx} Git 验证命令必须使用 git -C <repo_path>。"
-    fi
+    local repo_ctx="当前 owner repo 根目录：${PROJECT_DIR}。默认 Plan 参与仓库为 owner (path: ., role: owner)。如需求明确涉及其他本地 Git 仓库，请在 2.1 和 2.5 的 仓库 列使用稳定 repo id；跨仓文件路径写成 repo_id/path/to/file，owner 仓库可写 owner/path/to/file 或项目内相对路径。"
     AI_FLOW_TEMPLATE_CONTENT="${TEMPLATE_CONTENT:-}" \
     AI_FLOW_DETECT_STACK="${DETECT_STACK:-}" \
     AI_FLOW_REQUIREMENT="$REQUIREMENT" \
     AI_FLOW_SLUG="$SLUG" \
     AI_FLOW_PLAN_CONTENT="${PLAN_CONTENT_FOR_PROMPT:-}" \
     AI_FLOW_REVIEW_ITEMS="${PLAN_REVIEW_ITEMS_FOR_PROMPT:-}" \
-    AI_FLOW_WORKSPACE_CONTEXT="$workspace_ctx" \
+    AI_FLOW_REPO_SCOPE_CONTEXT="$repo_ctx" \
     python3 - "$prompt_template" <<'PY'
 import os
 import sys
@@ -265,7 +246,7 @@ replacements = {
     "__AI_FLOW_SLUG__": os.environ["AI_FLOW_SLUG"],
     "__AI_FLOW_PLAN_CONTENT__": os.environ.get("AI_FLOW_PLAN_CONTENT", ""),
     "__AI_FLOW_REVIEW_ITEMS__": os.environ.get("AI_FLOW_REVIEW_ITEMS", ""),
-    "__AI_FLOW_WORKSPACE_CONTEXT__": os.environ.get("AI_FLOW_WORKSPACE_CONTEXT", ""),
+    "__AI_FLOW_REPO_SCOPE_CONTEXT__": os.environ.get("AI_FLOW_REPO_SCOPE_CONTEXT", ""),
 }
 for needle, value in replacements.items():
     text = text.replace(needle, value)
@@ -381,8 +362,7 @@ plan_authoring_reasoning() {
     requirement_length=$(printf '%s' "$REQUIREMENT" | wc -m | tr -d ' ')
     stack_count=$(printf '%s' "$DETECT_STACK" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
 
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ] \
-        || [ "$requirement_length" -ge 120 ] \
+    if [ "$requirement_length" -ge 120 ] \
         || [ "$stack_count" -ge 4 ] \
         || { [ "${SLUG_EXPLICIT:-false}" = true ] && [ -f "${EXISTING_STATE_FILE:-}" ]; }; then
         reasoning="xhigh"
@@ -400,7 +380,7 @@ plan_review_reasoning() {
 
     local plan_lines="${1:-0}"
     local review_round="${2:-1}"
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ] || [ "$plan_lines" -ge 220 ] || [ "$review_round" -ge 2 ]; then
+    if [ "$plan_lines" -ge 220 ] || [ "$review_round" -ge 2 ]; then
         reasoning="xhigh"
     fi
 
@@ -680,7 +660,8 @@ validate_plan_structure() {
             "{YYYY-MM-DD HH:MM}"
             "{执行过程中新增或调整的需求；无则保留空表}"
             "{用户确认/文档同步/其他}"
-            '{repo_id，单仓模式写 -}'
+            '{repo_id，单仓 plan 写 owner}'
+            '{repo_id，单仓 plan 写 `owner`}'
         )
         local -a disallowed_state_schema_fields=(
             '`requirement_key`:'
@@ -1219,6 +1200,158 @@ print(items or "- 待审核")
 PY
 }
 
+extract_plan_repo_ids() {
+    local plan_file="$1"
+    python3 - "$plan_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+repo_ids = []
+for line in text.splitlines():
+    if not line.startswith("|"):
+        continue
+    cells = [cell.strip().strip("`") for cell in line.strip().split("|")[1:-1]]
+    if len(cells) < 2:
+        continue
+    if cells[0] in {"模块", "文件"}:
+        continue
+    if set(cells[0]) <= {"-"}:
+        continue
+    for candidate in cells[1:2]:
+        if candidate in {"", "-", "仓库"}:
+            continue
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate) and candidate not in repo_ids:
+            repo_ids.append(candidate)
+for repo_id in repo_ids:
+    print(repo_id)
+PY
+}
+
+build_repo_scope_json() {
+    local plan_file="$1"
+    python3 - "$PROJECT_DIR" "$plan_file" <<'PY'
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+owner = Path(sys.argv[1]).resolve()
+plan = Path(sys.argv[2])
+text = plan.read_text(encoding="utf-8")
+repo_ids = []
+for line in text.splitlines():
+    if not line.startswith("|"):
+        continue
+    cells = [cell.strip().strip("`") for cell in line.strip().split("|")[1:-1]]
+    if len(cells) < 2 or cells[0] in {"模块", "文件"} or set(cells[0]) <= {"-"}:
+        continue
+    candidate = cells[1]
+    if candidate in {"", "-", "仓库"}:
+        continue
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate) and candidate not in repo_ids:
+        repo_ids.append(candidate)
+
+if "owner" not in repo_ids:
+    repo_ids.insert(0, "owner")
+
+repos = []
+for repo_id in repo_ids:
+    repo_path = "." if repo_id == "owner" else f"../{repo_id}"
+    abs_path = (owner / repo_path).resolve()
+    if not abs_path.exists():
+        raise SystemExit(f"plan 声明仓库 {repo_id}，但路径不存在: {repo_path}")
+    result = subprocess.run(
+        ["git", "-C", str(abs_path), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise SystemExit(f"plan 声明仓库 {repo_id} 不是有效 Git 仓库: {repo_path}")
+    git_root = Path(result.stdout.strip()).resolve()
+    try:
+        rel_path = git_root.relative_to(owner).as_posix()
+    except ValueError:
+        rel_path = repo_path
+    if repo_id == "owner":
+        rel_path = "."
+    repos.append({
+        "id": repo_id,
+        "path": rel_path,
+        "git_root": str(git_root),
+        "role": "owner" if repo_id == "owner" else "participant",
+    })
+
+print(json.dumps({"mode": "plan_repos", "repos": repos}, ensure_ascii=False))
+PY
+}
+
+validate_plan_repos_match_state() {
+    local plan_file="$1"
+    local state_file="$2"
+    python3 - "$plan_file" "$state_file" "$PROJECT_DIR" <<'PY'
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+plan = Path(sys.argv[1])
+state = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+owner = Path(sys.argv[3]).resolve()
+text = plan.read_text(encoding="utf-8")
+plan_repos = set()
+for line in text.splitlines():
+    if not line.startswith("|"):
+        continue
+    cells = [cell.strip().strip("`") for cell in line.strip().split("|")[1:-1]]
+    if len(cells) < 2 or cells[0] in {"模块", "文件"} or set(cells[0]) <= {"-"}:
+        continue
+    candidate = cells[1]
+    if candidate in {"", "-", "仓库"}:
+        continue
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate):
+        plan_repos.add(candidate)
+if not plan_repos:
+    plan_repos.add("owner")
+
+scope = state.get("execution_scope") or {}
+repos = scope.get("repos") or []
+state_repos = {repo.get("id") for repo in repos}
+missing = sorted(plan_repos - state_repos)
+if missing:
+    raise SystemExit("plan 中出现未写入 state 的仓库: " + ", ".join(missing))
+if scope.get("mode") != "plan_repos":
+    raise SystemExit("state execution_scope.mode 必须是 plan_repos")
+
+owners = [repo for repo in repos if repo.get("role") == "owner"]
+if len(owners) != 1:
+    raise SystemExit("state 必须且只能包含一个 role=owner 仓库")
+
+for repo in repos:
+    repo_id = repo.get("id")
+    repo_path = repo.get("path")
+    git_root = repo.get("git_root")
+    if repo.get("role") != "owner":
+        path = owner / repo_path
+        if not path.exists():
+            raise SystemExit(f"state repo {repo_id} 路径不存在: {repo_path}")
+        result = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            raise SystemExit(f"state repo {repo_id} 不是有效 Git 仓库: {repo_path}")
+        if Path(result.stdout.strip()).resolve() != Path(git_root).resolve():
+            raise SystemExit(f"state repo {repo_id} git_root 与 path 解析结果不一致")
+PY
+}
+
 plan_contains_disallowed_text() {
     local plan_file="$1"
     python3 - "$plan_file" <<'PY'
@@ -1321,6 +1454,7 @@ PY
         "$PLAN_FILE" \
         "$REVIEW_RESULT" \
         "$( [ "$REVIEW_EXECUTE_READY" = "yes" ] && echo "是" || echo "否" )"
+    validate_plan_repos_match_state "$PLAN_FILE" "$STATE_FILE"
 
     AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" record-plan-review \
         --slug "$SLUG" \
@@ -1535,11 +1669,8 @@ else
     [ -z "$PLAN_TITLE" ] && PLAN_TITLE="$REQUIREMENT"
 
     echo ">>> 初始化状态文件..."
-    if [ "$IS_WORKSPACE_MODE" -eq 1 ]; then
-        AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "${DATE_PREFIX}-${SLUG}" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE" --scope-mode workspace --workspace-file .ai-flow/workspace.json
-    else
-        AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "${DATE_PREFIX}-${SLUG}" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE"
-    fi
+    REPO_SCOPE_JSON=$(build_repo_scope_json "$PLAN_FILE")
+    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "${DATE_PREFIX}-${SLUG}" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE" --repo-scope-json "$REPO_SCOPE_JSON"
     PLAN_STATUS=$("$FLOW_STATE_SH" show "${DATE_PREFIX}-${SLUG}" --field current_status)
     echo "    状态已验证为 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"

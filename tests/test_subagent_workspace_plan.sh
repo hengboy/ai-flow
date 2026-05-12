@@ -3,7 +3,7 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/testkit.bash"
 
-test_workspace_plan_accepts_manifest_root() {
+test_plan_scoped_multi_repo_accepts_owner_root() {
     local temp_root workspace runtime_script out today executor state_slug
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
@@ -14,7 +14,6 @@ test_workspace_plan_accepts_manifest_root() {
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
     today="$(date +%Y%m%d)"
 
-    # Run from workspace root (no top-level git repo)
     (
         cd "$workspace"
         run_with_fake_plan_agents "$temp_root" bash "$executor" "跨仓库权限扩展" workspace-perms >"$temp_root/plan.out"
@@ -26,14 +25,16 @@ test_workspace_plan_accepts_manifest_root() {
     assert_protocol_field "$out" "ARTIFACT" ".ai-flow/plans/${today}-workspace-perms.md"
     assert_file_exists "$workspace/.ai-flow/plans/${today}-workspace-perms.md"
 
-    # State should record workspace execution_scope
     state_slug="${today}-workspace-perms"
-    assert_equals "2" "$(state_field "$workspace" "$state_slug" "schema_version")"
-    assert_equals "workspace" "$(state_field "$workspace" "$state_slug" "execution_scope.mode")"
+    assert_equals "3" "$(state_field "$workspace" "$state_slug" "schema_version")"
+    assert_equals "plan_repos" "$(state_field "$workspace" "$state_slug" "execution_scope.mode")"
+    assert_equals "owner" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.0.id")"
+    assert_equals "." "$(state_field "$workspace" "$state_slug" "execution_scope.repos.0.path")"
+    assert_equals "owner" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.0.role")"
     rm -rf "$temp_root"
 }
 
-test_workspace_plan_writes_artifacts_at_workspace_root() {
+test_plan_scoped_artifacts_stay_at_owner_root() {
     local temp_root workspace runtime_script today executor
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
@@ -55,5 +56,5 @@ test_workspace_plan_writes_artifacts_at_workspace_root() {
     rm -rf "$temp_root"
 }
 
-test_workspace_plan_accepts_manifest_root
-test_workspace_plan_writes_artifacts_at_workspace_root
+test_plan_scoped_multi_repo_accepts_owner_root
+test_plan_scoped_artifacts_stay_at_owner_root

@@ -152,7 +152,7 @@ test_no_git_changes_rejected() {
 
     [ "$rc" -ne 0 ] || fail "Expected review without git changes to fail"
     assert_protocol_field "$temp_root/no-change.out" "RESULT" "failed"
-    assert_contains "$temp_root/no-change.out" "没有可审查的 Git 变更"
+    assert_contains "$temp_root/no-change.out" "无可审查的 Git 变更"
     rm -rf "$temp_root"
 }
 
@@ -228,11 +228,11 @@ test_coding_review_ignores_model_override_but_keeps_reasoning() {
     assert_protocol_field "$temp_root/review-model.out" "RESULT" "success"
     assert_contains "$temp_root/codex.review.argv" "-m gpt-5.4"
     assert_not_contains "$temp_root/codex.review.argv" "-m qwen3.6-plus"
-    assert_contains "$temp_root/codex.review.argv" "model_reasoning_effort=\"high\""
+    assert_contains "$temp_root/codex.review.argv" "model_reasoning_effort=\"xhigh\""
     rm -rf "$temp_root"
 }
 
-test_coding_review_defaults_to_high_reasoning() {
+test_coding_review_defaults_to_xhigh_reasoning_for_plan_repos() {
     local temp_root project runtime_script executor
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
@@ -250,7 +250,7 @@ test_coding_review_defaults_to_high_reasoning() {
     )
 
     assert_protocol_field "$temp_root/review-default-reasoning.out" "RESULT" "success"
-    assert_contains "$temp_root/codex.review.argv" "model_reasoning_effort=\"high\""
+    assert_contains "$temp_root/codex.review.argv" "model_reasoning_effort=\"xhigh\""
     rm -rf "$temp_root"
 }
 
@@ -276,16 +276,6 @@ test_coding_review_escalates_reasoning_on_recheck() {
     rm -rf "$temp_root"
 }
 
-test_regular_passed_with_notes_to_done
-test_regular_failed_to_review_failed
-test_recheck_pass_keeps_done
-test_passed_with_notes_ignores_status_guide_text
-test_adhoc_review_without_slug
-test_no_git_changes_rejected
-test_root_cause_gate_and_fallback
-test_coding_review_ignores_model_override_but_keeps_reasoning
-test_coding_review_defaults_to_high_reasoning
-test_coding_review_escalates_reasoning_on_recheck
 test_coding_review_codex_mode_fails_when_codex_unavailable() {
     local temp_root project runtime_script executor
     temp_root=$(make_temp_root)
@@ -307,3 +297,15 @@ test_coding_review_codex_mode_fails_when_codex_unavailable() {
     assert_contains "$temp_root/codex-mode.out" "AI_FLOW_ENGINE_MODE=codex"
     rm -rf "$temp_root"
 }
+
+test_regular_passed_with_notes_to_done
+test_regular_failed_to_review_failed
+test_recheck_pass_keeps_done
+test_passed_with_notes_ignores_status_guide_text
+test_adhoc_review_without_slug
+test_no_git_changes_rejected
+test_root_cause_gate_and_fallback
+test_coding_review_ignores_model_override_but_keeps_reasoning
+test_coding_review_defaults_to_xhigh_reasoning_for_plan_repos
+test_coding_review_escalates_reasoning_on_recheck
+test_coding_review_codex_mode_fails_when_codex_unavailable

@@ -4,8 +4,8 @@
 > 创建时间：{HH:MM:SS}
 > 需求简称：{需求简称}
 > 需求来源：{需求文档/口头描述/Jira 等}
-> 执行范围：single_repo
-> 工作区清单：无（单仓模式；若为 workspace 模式，请写 `.ai-flow/workspace.json`）
+> 执行范围：plan_repos
+> Plan 参与仓库：owner (path: ., role: owner)
 > 状态文件：`.ai-flow/state/{需求简称}.json`
 > 文档角色：本文件仅记录实施证据与执行步骤；流程状态以 JSON 状态文件为准。
 > 状态文件约束：`.ai-flow/state/{需求简称}.json` 只能使用 `flow-state.sh` 的固定 schema；不得在 plan 中设计 `requirement_key`、`status`、`steps`、`verification_results`、`change_register` 等自定义字段。
@@ -30,7 +30,7 @@
 
 | 模块 | 仓库 | 职责 | 变更类型 |
 |------|------|------|----------|
-| {module} | {repo_id，单仓模式写 -} | {做什么} | 新增/修改 |
+| {module} | {repo_id，单仓 plan 写 owner} | {做什么} | 新增/修改 |
 
 ### 2.2 数据模型变更
 
@@ -50,7 +50,7 @@
 
 | 文件 | 仓库 | 操作 | 职责 | 对应步骤 |
 |------|------|------|------|----------|
-| `{file_path}` | {repo_id，单仓模式写 `-`} | Create/Modify/Test | {这个文件负责什么} | Step N |
+| `{file_path}` | {repo_id，单仓 plan 写 `owner`} | Create/Modify/Test | {这个文件负责什么} | Step N |
 
 ### 2.6 高风险路径与缺陷族
 

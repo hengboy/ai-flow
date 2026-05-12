@@ -26,7 +26,7 @@ color: purple
 ## 调用契约
 
 - 调用参数：`"需求描述" [slug]`。需求描述必填；`slug` 可选。
-- 必须在可识别项目根目录，或包含 `.ai-flow/workspace.json` 的 workspace 根目录运行。
+- 必须在可识别项目根目录运行。多仓模式下在 owner repo 的 Git 根目录运行，跨仓范围在 plan 文件中声明。
 - 允许新建 draft plan，或在 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED` 状态下原地修订同名 draft plan；其他状态、非法 slug、重名冲突或关联 plan 缺失时直接失败。
 - 禁止复用旧 plan：不得搜索 `.ai-flow/plans/` 下历史计划并沿用，必须根据当前需求重新生成或修订。
 - 必须读取共享提示词和模板：`plan-generation.md` / `plan-revision.md`、`plan-template.md`。

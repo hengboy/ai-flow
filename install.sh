@@ -27,7 +27,6 @@ remove_legacy_root_entries() {
         "flow-change.sh" \
         "flow-state.sh" \
         "flow-status.sh" \
-        "flow-workspace.sh" \
         "plan-template.md" \
         "review-template.md"
     do

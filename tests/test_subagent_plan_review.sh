@@ -219,16 +219,7 @@ test_plan_review_executor_loads_workspace_helpers() {
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
-    mkdir -p "$project/.ai-flow"
-    cat > "$project/.ai-flow/workspace.json" <<'JSON'
-{
-  "schema_version": 1,
-  "name": "demo-workspace",
-  "repos": [
-    { "id": "root", "path": "." }
-  ]
-}
-JSON
+    mkdir -p "$project/.ai-flow/state"
     create_state_with_status "$(installed_runtime_script "$temp_root" "flow-state.sh")" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
 
     (

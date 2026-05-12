@@ -10,6 +10,7 @@ test_transitions_and_repair() {
     state_script="$SOURCE_FLOW_STATE_SCRIPT"
     setup_project_dirs "$project" "20260503"
     create_plan_file "$project" "demo" "20260503" "demo"
+    setup_git_repo_clean "$project"
 
     (
         cd "$project"
@@ -40,6 +41,7 @@ test_lock_conflict_rejected() {
     state_script="$SOURCE_FLOW_STATE_SCRIPT"
     setup_project_dirs "$project" "20260503"
     create_plan_file "$project" "demo" "20260503" "demo"
+    setup_git_repo_clean "$project"
 
     (
         cd "$project"
@@ -63,6 +65,7 @@ test_validation_failure_preserves_file() {
     state_script="$SOURCE_FLOW_STATE_SCRIPT"
     setup_project_dirs "$project" "20260503"
     create_plan_file "$project" "demo" "20260503" "demo"
+    setup_git_repo_clean "$project"
 
     (
         cd "$project"

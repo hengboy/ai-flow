@@ -10,6 +10,7 @@ test_plan_generation_protocol_and_state() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
     today="$(date +%Y%m%d)"
 
@@ -27,8 +28,8 @@ test_plan_generation_protocol_and_state() {
     assert_file_exists "$project/.ai-flow/plans/${today}-user-permission.md"
     assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "${today}-user-permission" "current_status")"
     assert_file_not_exists "$project/.ai-flow/workspace.json"
-    assert_equals "workspace" "$(state_field "$project" "${today}-user-permission" "execution_scope.mode")"
-    assert_equals "root" "$(state_field "$project" "${today}-user-permission" "execution_scope.repos.0.id")"
+    assert_equals "plan_repos" "$(state_field "$project" "${today}-user-permission" "execution_scope.mode")"
+    assert_equals "owner" "$(state_field "$project" "${today}-user-permission" "execution_scope.repos.0.id")"
     rm -rf "$temp_root"
 }
 
@@ -39,6 +40,7 @@ test_plan_without_slug_auto_generates_new_plan() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
     today="$(date +%Y%m%d)"
 
@@ -62,6 +64,7 @@ test_plan_revision_after_failed_review() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     plan_executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
     review_executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
     today="$(date +%Y%m%d)"
@@ -86,6 +89,7 @@ test_plan_degraded_when_codex_unavailable() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
 
     (
@@ -106,6 +110,7 @@ test_plan_generation_ignores_explicit_model_override() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
 
     (
@@ -126,6 +131,7 @@ test_plan_generation_defaults_to_high_reasoning() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
 
     (
@@ -145,6 +151,7 @@ test_plan_generation_escalates_reasoning_for_complex_requirements() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
     requirement="需要在 workspace 模式下同时覆盖前端、后端、数据库迁移、权限边界和回归验证，补齐失败回滚、跨模块协作、审计日志以及验收闭环，确保多技术栈改动可控且可复盘。还需要把跨仓库依赖、接口兼容、灰度发布、告警埋点、数据修复脚本、权限矩阵、回滚预案、验收证据、失败补救步骤、执行顺序、责任边界、测试覆盖矩阵、手工验证清单、发布窗口限制和风险处置策略全部写清楚，避免实现阶段反复返工。"
 
@@ -165,6 +172,7 @@ test_plan_generation_allows_negative_tbd_references() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
     today="$(date +%Y%m%d)"
 
@@ -182,6 +190,64 @@ test_plan_generation_allows_negative_tbd_references() {
     rm -rf "$temp_root"
 }
 
+test_plan_generation_rewrites_full_implementation_plan_input() {
+    local temp_root project out today executor requirement plan_file
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    setup_git_repo_clean "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+    today="$(date +%Y%m%d)"
+    requirement=$'完整实施方案：\n目标：增强 ai-flow-plan，使完整实施方案输入可生成标准 plan。\n文件边界：修改 subagents/shared/plan/prompts/plan-generation.md；新增 tests/test_subagent_plan.sh 覆盖。\n实施步骤：1. 增加输入类型处理规则。2. 验证 plan 仍符合 8 章模板。\n测试计划：运行 bash tests/test_subagent_plan.sh。\n验收标准：生成的 plan 保留原始方案，并只使用模板章节。'
+
+    (
+        cd "$project"
+        run_with_fake_plan_agents "$temp_root" bash "$executor" "$requirement" full-plan-input >"$temp_root/full-plan.out"
+    )
+    out="$temp_root/full-plan.out"
+    plan_file="$project/.ai-flow/plans/${today}-full-plan-input.md"
+
+    assert_protocol_field "$out" "RESULT" "success"
+    assert_file_exists "$plan_file"
+    assert_contains "$plan_file" "## 1. 需求概述"
+    assert_contains "$plan_file" "## 8. 计划审核记录"
+    assert_contains "$plan_file" "完整实施方案："
+    assert_contains "$plan_file" "验收标准：生成的 plan 保留原始方案"
+    assert_contains "$temp_root"/codex-plan-prompt-*.txt "如果”需求描述”是一份完整实施方案"
+    assert_contains "$temp_root"/codex-plan-prompt-*.txt "全部映射到下方"
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_allows_document_links_as_original_requirement() {
+    local temp_root project out today executor requirement plan_file
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    setup_git_repo_clean "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+    today="$(date +%Y%m%d)"
+    requirement=$'https://docs.example.com/specs/ai-flow-plan-input\n./docs/requirements/plan-input.md'
+
+    (
+        cd "$project"
+        run_with_fake_plan_agents "$temp_root" bash "$executor" "$requirement" doc-link-input >"$temp_root/doc-link.out"
+    )
+    out="$temp_root/doc-link.out"
+    plan_file="$project/.ai-flow/plans/${today}-doc-link-input.md"
+
+    assert_protocol_field "$out" "RESULT" "success"
+    assert_file_exists "$plan_file"
+    assert_contains "$plan_file" "https://docs.example.com/specs/ai-flow-plan-input"
+    assert_contains "$plan_file" "./docs/requirements/plan-input.md"
+    assert_contains "$temp_root"/codex-plan-prompt-*.txt "只包含一个或多个文档地址"
+    assert_contains "$temp_root"/codex-plan-prompt-*.txt "可以直接引用这些文档地址"
+    rm -rf "$temp_root"
+}
+
 test_plan_missing_runtime_fails_deterministically() {
     local temp_root project executor
     temp_root=$(make_temp_root)
@@ -189,6 +255,7 @@ test_plan_missing_runtime_fails_deterministically() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
 
     (
@@ -208,6 +275,7 @@ test_plan_codex_mode_fails_when_codex_unavailable() {
     write_fake_plan_agents "$temp_root"
     project="$temp_root/project"
     setup_project_root "$project"
+    setup_git_repo_clean "$project"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
 
     (
@@ -229,4 +297,6 @@ test_plan_generation_ignores_explicit_model_override
 test_plan_generation_defaults_to_high_reasoning
 test_plan_generation_escalates_reasoning_for_complex_requirements
 test_plan_generation_allows_negative_tbd_references
+test_plan_generation_rewrites_full_implementation_plan_input
+test_plan_generation_allows_document_links_as_original_requirement
 test_plan_missing_runtime_fails_deterministically

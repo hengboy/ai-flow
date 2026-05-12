@@ -155,12 +155,3 @@ case "$ENGINE_MODE_OVERRIDE" in
         FALLBACK_AGENT=""
         ;;
 esac
-
-# Source workspace helpers when available (kept separate for overlay safety).
-if [ -f "$SCRIPT_DIR/workspace-common.sh" ]; then
-    # shellcheck source=/dev/null
-    source "$SCRIPT_DIR/workspace-common.sh"
-elif [ -n "${AGENT_DIR:-}" ] && [ -f "$AGENT_DIR/lib/workspace-common.sh" ]; then
-    # shellcheck source=/dev/null
-    source "$AGENT_DIR/lib/workspace-common.sh"
-fi
