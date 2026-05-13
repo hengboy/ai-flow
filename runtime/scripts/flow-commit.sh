@@ -366,7 +366,10 @@ if "完成" in subject:
 if len(subject) > 50:
     raise SystemExit(f"{repo_id}/{group_id} 的 subject 超过 50 个字符")
 if not subject_pattern.match(subject):
-    raise SystemExit(f"{repo_id}/{group_id} 的 subject 格式不合法")
+    raise SystemExit(
+        f"{repo_id}/{group_id} 的 subject 格式不合法；动词只允许："
+        "添加/修复/更新/调整/重构/优化/补充/回滚"
+    )
 
 if isinstance(body, str):
     body = [line.strip() for line in body.splitlines() if line.strip()]

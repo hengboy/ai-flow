@@ -24,6 +24,13 @@ for item in groups:
     repo_bucket = payload.setdefault(repo_id, {})
     if mode == "missing" and group_id == groups[-1]["group_id"] and repo_id == groups[-1]["repo_id"]:
         continue
+    if mode == "invalid-verb" and group_id == groups[-1]["group_id"] and repo_id == groups[-1]["repo_id"]:
+        repo_bucket[group_id] = {
+            "subject": ":sparkles: 新增代码变更",
+            "body": ["同步提交本组改动"],
+            "footer": [],
+        }
+        continue
 
     if "refreshSession" in diff:
         repo_bucket[group_id] = {
@@ -129,6 +136,28 @@ EOF
     printf '%s\n' "$body_lines" | while IFS= read -r line; do
         [ "${#line}" -le 30 ] || fail "Expected concise commit body line, got: $line"
     done
+    rm -rf "$temp_root"
+}
+
+test_commit_rejects_subject_verb_outside_whitelist() {
+    local temp_root repo commit_script prepared_json message_map_json
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "invalid-verb")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        message_map_json="$(build_message_map_json "$prepared_json" invalid-verb)"
+        set +e
+        bash "$commit_script" --message-map-json "$message_map_json" >"$temp_root/invalid-verb.out" 2>&1
+        rc=$?
+        set -e
+        [ "$rc" -ne 0 ] || fail "Expected invalid subject verb to fail"
+    )
+
+    assert_contains "$temp_root/invalid-verb.out" "subject 格式不合法；动词只允许：添加/修复/更新/调整/重构/优化/补充/回滚"
     rm -rf "$temp_root"
 }
 
@@ -373,6 +402,7 @@ test_commit_rejects_missing_message_map_entry() {
 test_standalone_commit_single_group
 test_bound_done_rejects_non_done_status
 test_bound_done_single_repo_commit
+test_commit_rejects_subject_verb_outside_whitelist
 test_standalone_splits_multiple_business_groups
 test_plan_repos_commit_uses_dependency_order
 test_plan_repos_commit_falls_back_to_scope_order_without_dependency_table
