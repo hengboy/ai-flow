@@ -92,6 +92,13 @@ FOOTER:
 ...
 ```
 
+   同时必须把 runtime 当前的 message 校验规则原样同步给子代理，至少包括：
+   - emoji 白名单：`:sparkles:`、`:bug:`、`:memo:`、`:art:`、`:recycle:`、`:zap:`、`:white_check_mark:`、`:package:`、`:construction_worker:`、`:wrench:`、`:rewind:`
+   - subject 动词白名单：`添加`、`修复`、`更新`、`调整`、`重构`、`优化`、`补充`、`回滚`
+   - 禁止包含“完成”
+   - body 最多 2 行且每行不超过 30 个字符
+   - footer 只允许 `Refs #123`、`Fixes #123`
+
 4. 解析子代理输出并组装成：
 
 ```json
@@ -118,6 +125,7 @@ $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode ma
 
 - commit message 子代理固定使用 `ai-flow-claude-git-message`，不替换为 Codex CLI、Codex 内置 message 生成或其他外部脚本。
 - 传给子代理的信息必须以当前提交组为边界，不得把多个业务组混在一次调用里。
+- 传给子代理的规则必须与当前 `flow-commit.sh` 的校验规则保持同步；如果 runtime 白名单变了，这里的调用约束也必须一起更新。
 - footer 缺失时保持为空，不得臆造 issue 编号。
 - 子代理返回内容只用于组装 `--message-map-json`，不要把它原样展示给用户。
 - 如需临时文件承载 shell 参数，使用后必须立即删除；优先直接以内存中的 JSON 字符串传给 `--message-map-json`。
@@ -156,7 +164,7 @@ $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode ma
 
 - 必须以 Emoji 代码开头，Emoji 后跟一个空格
 - 必须使用中文
-- 必须以动词开头
+- 必须以动词开头，且动词只允许：`添加`、`修复`、`更新`、`调整`、`重构`、`优化`、`补充`、`回滚`
 - 不超过 50 个字符
 - 结尾不加句号
 - 可选在描述中携带业务范围，例如 `:sparkles: 添加订单同步能力`
