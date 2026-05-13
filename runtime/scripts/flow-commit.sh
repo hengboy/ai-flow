@@ -86,11 +86,6 @@ repo_has_rebase_in_progress() {
 }
 
 default_verify_command() {
-    local git_root="$1"
-    if [ -x "$git_root/tests/run.sh" ] || [ -f "$git_root/tests/run.sh" ]; then
-        printf 'bash tests/run.sh'
-        return 0
-    fi
     printf 'git diff --check'
 }
 
@@ -916,9 +911,7 @@ PY
         fi
         say "[$repo_id] 提交组 $group_id: $group_title"
         printf '%s\n' "$group_files" | sed 's/^/    file: /'
-        if [ -z "$verify_command" ]; then
-            verify_command="$(default_verify_command "$repo_git_root")"
-        fi
+        verify_command="$(default_verify_command "$repo_git_root")"
         echo "    verify: $verify_command"
 
         git -C "$repo_git_root" reset >/dev/null 2>&1 || true

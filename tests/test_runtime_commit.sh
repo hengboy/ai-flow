@@ -18,6 +18,7 @@ test_standalone_commit_single_group() {
     assert_protocol_field "$temp_root/standalone.out" "RESULT" "success"
     assert_protocol_field "$temp_root/standalone.out" "SCOPE" "standalone"
     assert_protocol_field "$temp_root/standalone.out" "COMMITS" "1"
+    assert_contains "$temp_root/standalone.out" "verify: git diff --check"
     assert_contains "$temp_root/standalone.out" "committed:"
     assert_contains "$temp_root/standalone.out" "本次提交结果"
     assert_contains "$temp_root/standalone.out" "[owner]"
@@ -141,6 +142,7 @@ test_plan_repos_commit_uses_dependency_order() {
 
     assert_protocol_field "$temp_root/multi.out" "RESULT" "success"
     assert_protocol_field "$temp_root/multi.out" "COMMITS" "2"
+    assert_contains "$temp_root/multi.out" "verify: git diff --check"
     first_beta="$(git -C "$workspace/repo-beta" rev-parse --short HEAD)"
     first_alpha="$(git -C "$workspace/repo-alpha" rev-parse --short HEAD)"
     assert_contains "$temp_root/multi.out" "repo-beta] (participant)"
