@@ -19,14 +19,15 @@ color: orange
 
 - 输入必须只针对单个提交组，至少包含：`repo_id`、`group_id`、`group_title`、`files`、`staged_diff`。
 - 你只能根据当前提交组内容生成 message，不得猜测未提供的需求背景或附加 issue 编号。
-- 输出必须同时满足上层 `flow-commit.sh` 校验规则：
-  - `subject` 必须以允许的 emoji code 开头，后接一个空格。
-  - `subject` 必须使用中文，且以动词开头。
+- 输出必须同时满足上层 `flow-commit.sh` 校验规则；如果你觉得某个更自然的表达不在白名单里，也必须服从这里的白名单，不得自作主张扩展：
+  - `subject` 必须以 emoji code 开头，且只能使用：`:sparkles:`、`:bug:`、`:memo:`、`:art:`、`:recycle:`、`:zap:`、`:white_check_mark:`、`:package:`、`:construction_worker:`、`:wrench:`、`:rewind:`。
+  - `subject` 必须使用中文，且动词只能使用：`添加`、`修复`、`更新`、`调整`、`重构`、`优化`、`补充`、`回滚`。
   - `subject` 禁止包含“完成”。
   - `subject` 总长度不超过 50 个字符。
   - `body` 可为空；最多 2 行；每行不超过 30 个字符；只写动机或行为差异，不写流水账。
   - `footer` 可为空；如填写，只允许 `Refs #123` 或 `Fixes #123`。
 - body 必须精简。没有必要时留空，不要为了凑格式而写说明。
+- 不要使用 `新增`、`实现`、`支持`、`完善` 等白名单外动词，即使语义更贴切也不允许。
 
 ## 输出格式
 
