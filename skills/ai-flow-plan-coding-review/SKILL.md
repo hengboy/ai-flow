@@ -54,7 +54,7 @@ Agent(
 )
 ```
 
-完成后读取 `REVIEW_RESULT`、`STATE`、`NEXT`、`SUMMARY`。`REVIEW_RESULT: failed` 时回到 `/ai-flow-plan-coding`；`REVIEW_RESULT: passed|passed_with_notes` 时状态进入或保持 `DONE`；任何非成功结果直接报告 `SUMMARY` 并停止。
+完成后读取 `REVIEW_RESULT`、`STATE`、`NEXT`、`SUMMARY`。`REVIEW_RESULT: failed` 时必须根据阻塞缺陷的“修复流向”决定回到 `/ai-flow-plan-coding` 还是 `/ai-flow-code-optimize`；`REVIEW_RESULT: passed|passed_with_notes` 时状态进入或保持 `DONE`；任何非成功结果直接报告 `SUMMARY` 并停止。
 
 ### subagent 职责
 
@@ -73,6 +73,8 @@ Agent(
 
 然后根据 `NEXT` 值追加下一步提示：
 
+- `NEXT: ai-flow-code-optimize` → 输出 `下一步：运行 /ai-flow-code-optimize 在既有架构内完成优化类修复。`
+- `NEXT: ai-flow-code-optimize` 后应继续补充一句：`优化完成后：重新运行 /ai-flow-plan-coding-review 复审最终代码变更。`
 - `NEXT: ai-flow-plan-coding` → 输出 `下一步：运行 /ai-flow-plan-coding 修复审查中发现的问题。`
 - `NEXT: none` 且状态进入 DONE → 输出 `⚠️ 请使用 /ai-flow-git-commit 按仓库依赖顺序和业务关联性提交当前 plan 所涉及的代码。`
 - `NEXT: none` 且非 DONE → 不输出下一步提示
@@ -86,12 +88,12 @@ RESULT: success|failed
 AGENT: ai-flow-plan-coding-review
 REVIEW_RESULT: passed|passed_with_notes|failed
 STATE: <status|none>
-NEXT: ai-flow-plan-coding|none
+NEXT: ai-flow-code-optimize|ai-flow-plan-coding|none
 SUMMARY: <one-line-summary>
 ```
 
 ## 完成后
 
-- `REVIEW_RESULT: failed` 且绑定 `slug`：下一步回到 `/ai-flow-plan-coding`
+- `REVIEW_RESULT: failed` 且绑定 `slug`：下一步根据阻塞缺陷流向回到 `/ai-flow-code-optimize` 或 `/ai-flow-plan-coding`
 - `REVIEW_RESULT: passed|passed_with_notes` 且绑定 `slug`：状态应进入或保持 `DONE`
 - `RESULT: failed`：直接报告 `SUMMARY` 并停止

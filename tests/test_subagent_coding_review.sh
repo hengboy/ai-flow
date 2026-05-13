@@ -58,6 +58,54 @@ test_regular_failed_to_review_failed() {
     rm -rf "$temp_root"
 }
 
+test_regular_failed_routes_to_optimize_when_all_blockers_are_optimize() {
+    local temp_root project runtime_script executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_coding_review_agents "$temp_root"
+    runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_REVIEW" "20260503" "demo"
+    setup_git_repo_with_change "$project"
+
+    (
+        cd "$project"
+        FAKE_CODE_REVIEW_RESULT=failed FAKE_CODE_REVIEW_FAILED_ROUTE_MODE=optimize \
+            run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/review-failed-optimize.out"
+    )
+
+    assert_equals "REVIEW_FAILED" "$(state_field "$project" "demo" "current_status")"
+    assert_protocol_field "$temp_root/review-failed-optimize.out" "REVIEW_RESULT" "failed"
+    assert_protocol_field "$temp_root/review-failed-optimize.out" "NEXT" "ai-flow-code-optimize"
+    rm -rf "$temp_root"
+}
+
+test_regular_failed_routes_to_coding_when_blockers_are_mixed() {
+    local temp_root project runtime_script executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_coding_review_agents "$temp_root"
+    runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_REVIEW" "20260503" "demo"
+    setup_git_repo_with_change "$project"
+
+    (
+        cd "$project"
+        FAKE_CODE_REVIEW_RESULT=failed FAKE_CODE_REVIEW_FAILED_ROUTE_MODE=mixed \
+            run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/review-failed-mixed.out"
+    )
+
+    assert_equals "REVIEW_FAILED" "$(state_field "$project" "demo" "current_status")"
+    assert_protocol_field "$temp_root/review-failed-mixed.out" "REVIEW_RESULT" "failed"
+    assert_protocol_field "$temp_root/review-failed-mixed.out" "NEXT" "ai-flow-plan-coding"
+    rm -rf "$temp_root"
+}
+
 test_recheck_pass_keeps_done() {
     local temp_root project runtime_script executor
     temp_root=$(make_temp_root)
@@ -333,6 +381,8 @@ p.write_text(json.dumps(c, indent=2, ensure_ascii=False))
 
 test_regular_passed_with_notes_to_done
 test_regular_failed_to_review_failed
+test_regular_failed_routes_to_optimize_when_all_blockers_are_optimize
+test_regular_failed_routes_to_coding_when_blockers_are_mixed
 test_recheck_pass_keeps_done
 test_passed_with_notes_ignores_status_guide_text
 test_done_commit_prompt_points_to_ai_flow_git_commit

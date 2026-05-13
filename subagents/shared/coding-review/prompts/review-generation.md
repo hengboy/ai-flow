@@ -10,6 +10,13 @@
 4. __AI_FLOW_REVIEW_SCOPE_GUIDANCE__
 __AI_FLOW_WORKSPACE_CONTEXT__
 __AI_FLOW_HISTORY_RULES__
+5. 在 "4.1 严重缺陷" 和 "4.2 建议改进" 中都必须填写 `修复流向` 列；允许值只有：
+   - `ai-flow-plan-coding`
+   - `ai-flow-code-optimize`
+6. 修复流向判定规则：
+   - 功能未实现、逻辑错误、数据/状态错误、接口契约问题、需求偏差、需要跨边界调整的问题 → `ai-flow-plan-coding`
+   - 可读性、安全性加固、局部结构整理、重复消除、维护性提升，且不改变既有架构的问题 → `ai-flow-code-optimize`
+   - 如果阻塞缺陷同时出现两类流向，最终审查结果仍写 `failed`，但 shell 执行器会优先回到 `ai-flow-plan-coding`
 7. 允许执行**有边界的定向验证**，优先使用 plan 的“4.4 定向验证矩阵”：
    - 允许：`test-compile`、单个测试类/测试用例、单个 Mapper/集成用例、轻量 build/check
    - 禁止：无边界全量回归，除非 plan 的“4.4 定向验证矩阵”明确要求
@@ -41,6 +48,7 @@ __AI_FLOW_TEMPLATE_CONTENT__
 3. 如果仍有 Critical/Important 或任何 `[待修复]` 项，`审查结果` 必须为 `failed`
 4. 如果仅剩 Minor 建议，`审查结果` 必须为 `passed_with_notes`，并在“4.2 建议改进”与“6. 缺陷修复追踪”中把未处理 Minor 标记为 `[可选]`
 5. 如果无任何缺陷或建议，`审查结果` 必须为 `passed`
-6. “3.6 缺陷族覆盖度”必须覆盖 plan 里相关缺陷族，以及上一轮严重缺陷涉及的缺陷族（如果存在）
-7. 首行必须保持 `# 审查报告：__AI_FLOW_PLAN_TITLE__`
-8. 直接输出完整的审查报告 Markdown 内容，不要包含其他解释文字
+6. 任何写入缺陷清单的条目都必须填写 `修复流向`，且只能使用上方两个允许值
+7. “3.6 缺陷族覆盖度”必须覆盖 plan 里相关缺陷族，以及上一轮严重缺陷涉及的缺陷族（如果存在）
+8. 首行必须保持 `# 审查报告：__AI_FLOW_PLAN_TITLE__`
+9. 直接输出完整的审查报告 Markdown 内容，不要包含其他解释文字

@@ -748,11 +748,18 @@ for cells in parse_rows(current):
         errors.append(f"{issue_id} 为阻塞缺陷，不能标记为 [可选]")
     if issue_id.startswith("SUG-"):
         severity = cells[1] if len(cells) > 1 else ""
+        route = cells[-2] if len(cells) > 2 else ""
         status = cells[-1] if cells else ""
         if severity != "Minor":
             errors.append(f"{issue_id} 作为建议项时严重级别必须是 Minor")
+        if route not in {"ai-flow-plan-coding", "ai-flow-code-optimize"}:
+            errors.append(f"{issue_id} 的修复流向非法: {route}")
         if status == "[待修复]":
             errors.append(f"{issue_id} 为 Minor 建议，未处理时必须标记为 [可选] 而不是 [待修复]")
+    if issue_id.startswith("DEF-"):
+        route = cells[-2] if len(cells) > 2 else ""
+        if route not in {"ai-flow-plan-coding", "ai-flow-code-optimize"}:
+            errors.append(f"{issue_id} 的修复流向非法: {route}")
 
 for cells in parse_rows(tracking):
     issue_id = cells[0]
@@ -765,6 +772,61 @@ for cells in parse_rows(tracking):
 if errors:
     sys.stderr.write("\n".join(errors) + "\n")
     sys.exit(1)
+PY
+}
+
+derive_next_from_blocking_routes() {
+    local report_file="$1"
+    python3 - "$report_file" <<'PY'
+import sys
+from pathlib import Path
+
+
+def parse_rows(lines):
+    rows = []
+    for line in lines:
+        if not line.startswith("|"):
+            continue
+        cells = [part.strip() for part in line.split("|")[1:-1]]
+        if not cells or cells[0] in {"#", "缺陷编号"}:
+            continue
+        if set(cells[0]) == {"-"}:
+            continue
+        rows.append(cells)
+    return rows
+
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+in_defect = False
+blocking_routes = set()
+
+for line in text:
+    if line.startswith("## 4. 缺陷清单"):
+        in_defect = True
+        continue
+    if line.startswith("## 5. ") and in_defect:
+        break
+    if not in_defect:
+        continue
+    for cells in parse_rows([line]):
+        issue_id = cells[0]
+        severity = cells[1] if len(cells) > 1 else ""
+        route = cells[-2] if len(cells) > 2 else ""
+        status = cells[-1] if cells else ""
+        is_blocking = severity in {"Critical", "Important"} or status == "[待修复]"
+        if not is_blocking:
+            continue
+        if route not in {"ai-flow-plan-coding", "ai-flow-code-optimize"}:
+            print("invalid")
+            raise SystemExit(0)
+        blocking_routes.add(route)
+
+if not blocking_routes:
+    print("none")
+elif "ai-flow-plan-coding" in blocking_routes:
+    print("ai-flow-plan-coding")
+else:
+    print("ai-flow-code-optimize")
 PY
 }
 
@@ -1451,6 +1513,16 @@ if [ "$META_RESULT" != "$DERIVED_RESULT" ]; then
 fi
 RESULT="$DERIVED_RESULT"
 
+NEXT_ON_FAILURE="none"
+if [ "$RESULT" = "failed" ]; then
+    NEXT_ON_FAILURE="$(derive_next_from_blocking_routes "$REPORT_FILE")"
+    if [ "$NEXT_ON_FAILURE" = "invalid" ]; then
+        fail_protocol "阻塞缺陷的修复流向必须是 ai-flow-plan-coding 或 ai-flow-code-optimize"
+    elif [ "$NEXT_ON_FAILURE" = "none" ]; then
+        fail_protocol "审查结果为 failed，但未能从阻塞缺陷中推导出修复流向"
+    fi
+fi
+
 if [ "$IS_ADHOC" -eq 1 ]; then
     echo ">>> Adhoc review 完成，不更新状态文件"
     case "$RESULT" in
@@ -1533,7 +1605,7 @@ else
         REVIEW_FAILED)
             echo ">>> 审查发现问题，状态已更新为 [REVIEW_FAILED]"
             PROTOCOL_SUMMARY="审查未通过，状态进入 [REVIEW_FAILED]。"
-            PROTOCOL_NEXT="ai-flow-plan-coding"
+            PROTOCOL_NEXT="$NEXT_ON_FAILURE"
             ;;
         *)
             fail_protocol "record-review 后出现意外状态 [$UPDATED_STATUS]"

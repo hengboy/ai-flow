@@ -358,7 +358,7 @@ write_review_report_fixture() {
         conclusion_pass="- [ ] **通过** — 所有步骤已实现，无严重缺陷"
         conclusion_notes="- [ ] **通过（附建议）** — 所有阻塞缺陷已关闭，仍有 Minor 建议可选处理"
         conclusion_fix="- [x] **需要修复** — 存在以下问题需要处理"
-        severe_rows='| DEF-1 | Important | src/review-target.txt | problem | impact | fix | [待修复] |'
+        severe_rows='| DEF-1 | Important | src/review-target.txt | problem | impact | fix | ai-flow-plan-coding | [待修复] |'
         tracking='| 缺陷编号 | 首次发现轮次 | 当前状态 | 修复说明 | 验证结果 |
 |----------|------------|----------|----------|----------|
 | DEF-1 | v1 | [待修复] | | |'
@@ -366,7 +366,7 @@ write_review_report_fixture() {
         overall="总体通过（附建议）"
         conclusion_pass="- [ ] **通过** — 所有步骤已实现，无严重缺陷"
         conclusion_notes="- [x] **通过（附建议）** — 所有阻塞缺陷已关闭，仍有 Minor 建议可选处理"
-        suggest_rows='| SUG-1 | Minor | src/review-target.txt | suggestion | refine | [可选] |'
+        suggest_rows='| SUG-1 | Minor | src/review-target.txt | suggestion | refine | ai-flow-code-optimize | [可选] |'
         tracking='| 缺陷编号 | 首次发现轮次 | 当前状态 | 修复说明 | 验证结果 |
 |----------|------------|----------|----------|----------|
 | SUG-1 | v1 | [可选] | deferred | noted |'
@@ -458,14 +458,14 @@ $overall
 
 ### 4.1 严重缺陷
 
-| # | 严重级别 | 位置 | 描述 | 证据/影响 | 修复建议 | 修复状态 |
-|---|----------|------|------|-----------|----------|----------|
+| # | 严重级别 | 位置 | 描述 | 证据/影响 | 修复建议 | 修复流向 | 修复状态 |
+|---|----------|------|------|-----------|----------|----------|----------|
 $severe_rows
 
 ### 4.2 建议改进
 
-| # | 严重级别 | 位置 | 描述 | 建议 | 修复状态 |
-|---|----------|------|------|------|----------|
+| # | 严重级别 | 位置 | 描述 | 建议 | 修复流向 | 修复状态 |
+|---|----------|------|------|------|----------|----------|
 $suggest_rows
 
 ## 5. 审查结论
@@ -820,6 +820,7 @@ round=$(sed -n 's/^> 审查轮次：//p' "$prompt_file" | tail -1)
 plan_file=$(sed -n 's/^> 对比计划：`//p' "$prompt_file" | tail -1 | sed 's/`$//')
 [ -n "$plan_file" ] || plan_file=.ai-flow/plans/20260503/demo.md
 result="${FAKE_CODE_REVIEW_RESULT:-passed}"
+failed_route_mode="${FAKE_CODE_REVIEW_FAILED_ROUTE_MODE:-coding}"
 overall="总体通过"
 conclusion_pass="- [x] **通过** — 所有步骤已实现，无严重缺陷"
 conclusion_notes="- [ ] **通过（附建议）** — 所有阻塞缺陷已关闭，仍有 Minor 建议可选处理"
@@ -893,7 +894,18 @@ if [ "$result" = "failed" ]; then
     conclusion_pass="- [ ] **通过** — 所有步骤已实现，无严重缺陷"
     conclusion_notes="- [ ] **通过（附建议）** — 所有阻塞缺陷已关闭，仍有 Minor 建议可选处理"
     conclusion_fix="- [x] **需要修复** — 存在以下问题需要处理"
-    severe_rows="| DEF-1 | Important | ${issue_location} | problem | impact | fix | [待修复] |"
+    case "$failed_route_mode" in
+        optimize)
+            severe_rows="| DEF-1 | Important | ${issue_location} | problem | impact | fix | ai-flow-code-optimize | [待修复] |"
+            ;;
+        mixed)
+            severe_rows="| DEF-1 | Important | ${issue_location} | problem | impact | fix | ai-flow-code-optimize | [待修复] |
+| DEF-2 | Important | ${issue_location} | another problem | impact | fix | ai-flow-plan-coding | [待修复] |"
+            ;;
+        coding|*)
+            severe_rows="| DEF-1 | Important | ${issue_location} | problem | impact | fix | ai-flow-plan-coding | [待修复] |"
+            ;;
+    esac
     tracking='| 缺陷编号 | 首次发现轮次 | 当前状态 | 修复说明 | 验证结果 |
 |----------|------------|----------|----------|----------|
 | DEF-1 | v1 | [待修复] | | |'
@@ -901,7 +913,7 @@ elif [ "$result" = "passed_with_notes" ]; then
     overall="总体通过（附建议）"
     conclusion_pass="- [ ] **通过** — 所有步骤已实现，无严重缺陷"
     conclusion_notes="- [x] **通过（附建议）** — 所有阻塞缺陷已关闭，仍有 Minor 建议可选处理"
-    suggest_rows="| SUG-1 | Minor | ${issue_location} | suggestion | refine | [可选] |"
+    suggest_rows="| SUG-1 | Minor | ${issue_location} | suggestion | refine | ai-flow-code-optimize | [可选] |"
     tracking='| 缺陷编号 | 首次发现轮次 | 当前状态 | 修复说明 | 验证结果 |
 |----------|------------|----------|----------|----------|
 | SUG-1 | v1 | [可选] | deferred | noted |'
@@ -987,14 +999,14 @@ $family_rows
 
 ### 4.1 严重缺陷
 
-| # | 严重级别 | 位置 | 描述 | 证据/影响 | 修复建议 | 修复状态 |
-|---|----------|------|------|-----------|----------|----------|
+| # | 严重级别 | 位置 | 描述 | 证据/影响 | 修复建议 | 修复流向 | 修复状态 |
+|---|----------|------|------|-----------|----------|----------|----------|
 $severe_rows
 
 ### 4.2 建议改进
 
-| # | 严重级别 | 位置 | 描述 | 建议 | 修复状态 |
-|---|----------|------|------|------|----------|
+| # | 严重级别 | 位置 | 描述 | 建议 | 修复流向 | 修复状态 |
+|---|----------|------|------|------|----------|----------|
 $suggest_rows
 
 ## 5. 审查结论

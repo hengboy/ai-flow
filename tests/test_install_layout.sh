@@ -17,6 +17,7 @@ test_default_install_layout() {
     install_ai_flow "$temp_root"
 
     assert_file_exists "$skills_root/ai-flow-plan/SKILL.md"
+    assert_file_exists "$skills_root/ai-flow-code-optimize/SKILL.md"
     assert_file_exists "$skills_root/ai-flow-git-commit/SKILL.md"
     assert_file_not_exists "$skills_root/ai-flow-plan/scripts"
     assert_file_not_exists "$skills_root/ai-flow-plan/prompts"
@@ -91,6 +92,7 @@ test_custom_roots_install() {
         bash "$TEST_ROOT/install.sh" >"$temp_root/install-custom.out"
 
     assert_file_exists "$onespace_skills/ai-flow-plan/SKILL.md"
+    assert_file_exists "$onespace_skills/ai-flow-code-optimize/SKILL.md"
     assert_file_exists "$onespace_skills/ai-flow-git-commit/SKILL.md"
     assert_file_exists "$runtime_root/scripts/flow-state.sh"
     assert_file_exists "$runtime_root/scripts/flow-commit.sh"
