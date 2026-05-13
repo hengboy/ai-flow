@@ -4,6 +4,7 @@ TEST_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SOURCE_FLOW_STATE_SCRIPT="$TEST_ROOT/runtime/scripts/flow-state.sh"
 SOURCE_FLOW_STATUS_SCRIPT="$TEST_ROOT/runtime/scripts/flow-status.sh"
 SOURCE_FLOW_CHANGE_SCRIPT="$TEST_ROOT/runtime/scripts/flow-change.sh"
+SOURCE_FLOW_COMMIT_SCRIPT="$TEST_ROOT/runtime/scripts/flow-commit.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -63,6 +64,16 @@ installed_runtime_script() {
     local temp_root="$1"
     local script="$2"
     printf '%s/home/.config/ai-flow/scripts/%s' "$temp_root" "$script"
+}
+
+git_head_subject() {
+    local git_root="$1"
+    git -C "$git_root" log -1 --pretty=%s
+}
+
+git_commit_count() {
+    local git_root="$1"
+    git -C "$git_root" rev-list --count HEAD
 }
 
 installed_subagent_executor() {
@@ -1140,4 +1151,246 @@ create_workspace_state_fixture() {
                 ;;
         esac
     )
+}
+
+write_simple_test_runner() {
+    local repo_root="$1"
+    mkdir -p "$repo_root/tests"
+    cat > "$repo_root/tests/run.sh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+if grep -R "<<<<<<< " src tests >/dev/null 2>&1; then
+    echo "merge conflict markers found" >&2
+    exit 1
+fi
+echo "ok"
+EOF
+    chmod +x "$repo_root/tests/run.sh"
+}
+
+setup_git_remote_pair() {
+    local base_dir="$1"
+    local name="$2"
+    local remote_dir="$base_dir/${name}-remote.git"
+    local seed_dir="$base_dir/${name}-seed"
+    local work_dir="$base_dir/${name}-work"
+
+    git init -q --bare "$remote_dir"
+    mkdir -p "$seed_dir"
+    printf '{ "name": "%s" }\n' "$name" > "$seed_dir/package.json"
+    mkdir -p "$seed_dir/src"
+    printf 'base\n' > "$seed_dir/src/app.txt"
+    (
+        cd "$seed_dir" || exit 1
+        git init -q
+        git config user.email test@example.com
+        git config user.name Test
+        git add .
+        git commit -q -m "init $name"
+        git branch -M main
+        git remote add origin "$remote_dir"
+        git push -q -u origin main
+    )
+    git clone -q "$remote_dir" "$work_dir"
+    (
+        cd "$work_dir" || exit 1
+        git config user.email test@example.com
+        git config user.name Test
+    )
+    write_simple_test_runner "$work_dir"
+    printf '%s\n' "$work_dir"
+}
+
+make_remote_change() {
+    local remote_dir="$1"
+    local target_file="$2"
+    local content="$3"
+    local temp_clone
+    temp_clone="$(mktemp -d)"
+    git clone -q "$remote_dir" "$temp_clone"
+    (
+        cd "$temp_clone" || exit 1
+        git config user.email test@example.com
+        git config user.name Test
+        mkdir -p "$(dirname "$target_file")"
+        printf '%s\n' "$content" > "$target_file"
+        git add "$target_file"
+        git commit -q -m "remote update"
+        git push -q
+    )
+    rm -rf "$temp_clone"
+}
+
+write_plan_repos_commit_plan() {
+    local workspace_root="$1"
+    local slug="$2"
+    local date_dir="${3:-20260503}"
+    local include_dependency_table="${4:-1}"
+    cat > "$workspace_root/.ai-flow/plans/${date_dir}-${slug}.md" <<PLAN
+# 实施计划：$slug
+
+> 创建日期：2026-05-03
+> 需求简称：$slug
+> 需求来源：测试
+> 执行范围：plan_repos
+> Plan 参与仓库：owner (path: ., role: owner), repo-alpha (path: repo-alpha, role: participant), repo-beta (path: repo-beta, role: participant)
+> 状态文件：\`.ai-flow/state/$slug.json\`
+
+## 1. 需求概述
+
+**目标**：测试提交流程。
+
+**背景**：用于验证 ai-flow-git-commit。
+
+**原始需求（原文）**：
+测试。
+
+**非目标**：无。
+
+## 2. 技术分析
+
+### 2.1 涉及模块
+
+| 模块 | 仓库 | 职责 | 变更类型 |
+|------|------|------|----------|
+| \`src/alpha.txt\` | repo-alpha | alpha 业务 | 修改 |
+| \`src/beta.txt\` | repo-beta | beta 业务 | 修改 |
+
+### 2.2 数据模型变更
+
+无。
+
+### 2.3 API 变更
+
+无。
+
+### 2.4 依赖影响
+
+无。
+
+### 2.5 文件边界总览
+
+| 文件 | 仓库 | 操作 | 职责 | 对应步骤 |
+|------|------|------|------|----------|
+| \`src/alpha.txt\` | repo-alpha | Modify | alpha 业务 | Step 1 |
+| \`tests/run.sh\` | repo-alpha | Test | alpha 验证 | Step 1 |
+| \`src/beta.txt\` | repo-beta | Modify | beta 业务 | Step 2 |
+| \`tests/run.sh\` | repo-beta | Test | beta 验证 | Step 2 |
+PLAN
+    if [ "$include_dependency_table" = "1" ]; then
+        cat >> "$workspace_root/.ai-flow/plans/${date_dir}-${slug}.md" <<'PLAN'
+
+### 2.5 跨仓依赖表
+
+| 先提交仓库 | 后提交仓库 | 原因 |
+|------------|------------|------|
+| repo-beta | repo-alpha | 上游接口先落库 |
+PLAN
+    fi
+    cat >> "$workspace_root/.ai-flow/plans/${date_dir}-${slug}.md" <<'PLAN'
+
+### 2.6 高风险路径与缺陷族
+
+| 高风险能力/路径 | 影响面 | 典型失效模式 | 对应缺陷族 | 必须覆盖的验证方式 |
+|----------------|--------|--------------|------------|--------------------|
+| 提交流程 | 提交链路 | 误提交流水 | 测试/证据 | `bash tests/run.sh` |
+
+## 3. 实施步骤
+
+### Step 1: 提交 alpha 业务
+
+**目标**：提交 repo-alpha 变更
+
+**文件边界**：
+- Modify: `src/alpha.txt` — alpha 业务代码
+- Test: `tests/run.sh` — alpha 最小验证
+
+**本轮 review 预期关注面**：
+- alpha 业务完整性
+
+**执行动作**：
+- [ ] **1.1 运行通过验证**
+  - 命令：`bash tests/run.sh`
+  - 预期：PASS
+
+**本步关闭条件**：
+- `bash tests/run.sh` 通过
+
+**阻塞条件**：
+- 无
+
+### Step 2: 提交 beta 业务
+
+**目标**：提交 repo-beta 变更
+
+**文件边界**：
+- Modify: `src/beta.txt` — beta 业务代码
+- Test: `tests/run.sh` — beta 最小验证
+
+**本轮 review 预期关注面**：
+- beta 业务完整性
+
+**执行动作**：
+- [ ] **2.1 运行通过验证**
+  - 命令：`bash tests/run.sh`
+  - 预期：PASS
+
+**本步关闭条件**：
+- `bash tests/run.sh` 通过
+
+**阻塞条件**：
+- 无
+
+## 4. 测试计划
+
+### 4.1 单元测试
+
+- [ ] `bash tests/run.sh`
+
+### 4.2 集成测试
+
+- [ ] `bash tests/run.sh`
+
+### 4.3 回归验证
+
+- [ ] `bash tests/run.sh`
+
+### 4.4 定向验证矩阵
+
+| 缺陷族 | 目标风险路径 | 定向验证命令 | 验证类型 | 通过标准 |
+|--------|--------------|--------------|----------|----------|
+| 测试/证据 | 提交流程 | `bash tests/run.sh` | 集成 | 提交前验证通过 |
+
+## 5. 风险与注意事项
+
+- 无
+
+## 6. 验收标准
+
+- [ ] 通过
+
+## 7. 需求变更记录
+
+| 时间 | 变更描述 | 确认方式 |
+|------|----------|----------|
+| 2026-05-03 00:00 | 无 | 测试夹具 |
+
+## 8. 计划审核记录
+
+### 8.1 当前审核结论
+
+- 审核状态：待审核
+- 与原始需求一致性：待审核
+- 是否允许进入 `/ai-flow-plan-coding`：否
+- 当前审核轮次：0
+- 审核引擎/模型：待审核
+
+### 8.2 偏差与建议
+
+- 待审核
+
+### 8.3 审核历史
+
+- 第 0 轮：初始化 draft，待审核。
+PLAN
 }

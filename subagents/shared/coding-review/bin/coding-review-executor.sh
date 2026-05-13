@@ -1481,15 +1481,11 @@ else
 
     print_commit_instructions() {
         echo ">>> 状态已进入 [DONE]，现在允许提交已审查的未提交变更"
-        if [ -f "$CLAUDE_HOME/skills/git-commit/SKILL.md" ]; then
-            echo "    检测到 git-commit 技能：请使用 /git-commit 提交代码"
-        else
-            echo "    未检测到 git-commit 技能：请按项目提交规范提交；若项目无明确规范，使用 Gitmoji + Conventional Commits"
-        fi
+        echo "    请使用 /ai-flow-git-commit 提交代码"
 
         if [ "$IS_PLAN_REPOS_MODE" -eq 1 ] && [ ${#PLAN_REPO_IDS[@]} -gt 0 ]; then
             echo ""
-            echo ">>> 当前 plan 涉及以下代码仓库，请逐一提交变更："
+            echo ">>> 当前 plan 涉及以下代码仓库，后续应按依赖顺序逐仓、按业务关联性逐组提交："
             local i
             for i in "${!PLAN_REPO_IDS[@]}"; do
                 local repo_id="${PLAN_REPO_IDS[$i]}"
