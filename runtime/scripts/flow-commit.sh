@@ -849,59 +849,88 @@ if scope == "bound":
         if unknown:
             raise SystemExit(f"存在无法映射到业务分组的变更: {unknown[0]}")
 else:
-    support_roots = {"tests", "test", "docs", ".github"}
+    structural_roots = {
+        "src", "lib", "app", "apps", "pkg", "packages", "scripts", "script",
+        "tests", "test", "docs", "doc", ".github", "config", "configs",
+        "bin", "cmd", "internal"
+    }
+    support_roots = {"tests", "test", "docs", "doc", ".github"}
     support_extensions = (".md", ".json", ".yaml", ".yml", ".toml", ".lock")
     generic_tokens = {
-        "test", "tests", "doc", "docs", "github", "workflow", "workflows",
-        "readme", "changelog", "ci", "config", "configs"
+        "src", "lib", "app", "apps", "pkg", "packages", "scripts", "script",
+        "tests", "test", "doc", "docs", "github", "workflow", "workflows",
+        "readme", "changelog", "ci", "config", "configs", "internal", "cmd", "bin"
     }
 
-    def ensure_group(group_map, order, key, title):
-        group = group_map.get(key)
-        if group is None:
-            group = {
-                "id": f"standalone-{len(order) + 1}",
-                "title": title,
-                "verify_command": "",
-                "files": [],
-            }
-            group_map[key] = group
-            order.append(key)
-        return group
-
-    def business_root_for_path(path):
-        top = path.split("/", 1)[0]
-        if top in support_roots:
-            return None
-        if "/" not in path and top.endswith(support_extensions):
-            return None
-        return top
+    def classify_path(path):
+        parts = Path(path).parts
+        top = parts[0] if parts else path
+        is_support = top in support_roots or (len(parts) == 1 and top.endswith(support_extensions))
+        return top, parts, is_support
 
     def tokens_for_path(path):
-        raw_tokens = []
+        tokens = []
         for part in Path(path).parts:
-            normalized = part.replace(".", "-").replace("_", "-")
+            source = part
+            if "." in part and not part.startswith("."):
+                source = Path(part).stem
+            normalized = source.replace(".", "-").replace("_", "-")
             for token in normalized.split("-"):
                 token = token.strip().lower()
-                if token and token not in generic_tokens:
-                    raw_tokens.append(token)
-        return set(raw_tokens)
+                if not token or token in generic_tokens:
+                    continue
+                if token.isdigit():
+                    continue
+                tokens.append(token)
+        return set(tokens)
 
-    group_map = {}
-    group_order = []
+    def primary_token(path):
+        top, parts, _ = classify_path(path)
+        tokens = tokens_for_path(path)
+        preferred_parts = []
+        if top in structural_roots and len(parts) > 1:
+            preferred_parts.append(parts[1])
+        preferred_parts.extend(parts[2:])
+        preferred_parts.append(Path(path).stem)
+        for part in preferred_parts:
+            source = part
+            if "." in part and not part.startswith("."):
+                source = Path(part).stem
+            normalized = source.replace(".", "-").replace("_", "-")
+            for token in normalized.split("-"):
+                token = token.strip().lower()
+                if token and token not in generic_tokens and not token.isdigit():
+                    return token
+        if tokens:
+            return sorted(tokens)[0]
+        if top in structural_roots and len(parts) > 1:
+            return Path(parts[1]).stem.lower()
+        return top.lower()
+
+    def is_related(left, right):
+        left_top, _, left_support = classify_path(left)
+        right_top, _, right_support = classify_path(right)
+        left_tokens = tokens_for_path(left)
+        right_tokens = tokens_for_path(right)
+        shared_tokens = left_tokens.intersection(right_tokens)
+        if shared_tokens:
+            return True
+        if left_support and right_support:
+            return True
+        if left_top == right_top and left_top not in structural_roots:
+            return True
+        return False
+
+    primary_files = []
     support_files = []
-    root_tokens = {}
-
     for path in changed:
-        root = business_root_for_path(path)
-        if root is None:
+        _, _, is_support = classify_path(path)
+        if is_support:
             support_files.append(path)
-            continue
-        ensure_group(group_map, group_order, root, root)["files"].append(path)
-        root_tokens[root] = tokens_for_path(root)
-        root_tokens[root].add(root.lower())
+        else:
+            primary_files.append(path)
 
-    if not group_order:
+    if not primary_files:
         title = changed[0].split("/", 1)[0]
         groups.append({
             "id": "standalone-1",
@@ -909,30 +938,104 @@ else:
             "verify_command": "",
             "files": changed,
         })
-    else:
-        for path in support_files:
-            if len(group_order) == 1:
-                ensure_group(group_map, group_order, group_order[0], group_order[0])["files"].append(path)
-                continue
+        print(json.dumps(groups, ensure_ascii=False))
+        raise SystemExit(0)
 
-            path_tokens = tokens_for_path(path)
-            matched_roots = []
-            for root in group_order:
-                if root.startswith("support::"):
-                    continue
-                if root_tokens.get(root, set()).intersection(path_tokens):
-                    matched_roots.append(root)
+    primary_tops = {classify_path(path)[0] for path in primary_files}
+    if primary_tops and all(top in structural_roots for top in primary_tops):
+        files = sorted(dict.fromkeys(primary_files + support_files))
+        titles = []
+        for path in primary_files:
+            token = primary_token(path)
+            if token and token not in titles:
+                titles.append(token)
+        title = " + ".join(titles[:3]) if titles else primary_files[0].split("/", 1)[0]
+        groups.append({
+            "id": "standalone-1",
+            "title": title,
+            "verify_command": "",
+            "files": files,
+        })
+        print(json.dumps(groups, ensure_ascii=False))
+        raise SystemExit(0)
 
-            if len(matched_roots) == 1:
-                ensure_group(group_map, group_order, matched_roots[0], matched_roots[0])["files"].append(path)
-                continue
+    parent = list(range(len(primary_files)))
 
-            ensure_group(group_map, group_order, group_order[0], group_order[0])["files"].append(path)
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
 
-        for key in group_order:
-            group = dict(group_map[key])
-            group["files"] = sorted(dict.fromkeys(group["files"]))
-            groups.append(group)
+    def union(left, right):
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    for left in range(len(primary_files)):
+        for right in range(left + 1, len(primary_files)):
+            if is_related(primary_files[left], primary_files[right]):
+                union(left, right)
+
+    component_map = {}
+    for index, path in enumerate(primary_files):
+        component_map.setdefault(find(index), []).append(path)
+
+    ordered_components = []
+    for index, path in enumerate(primary_files):
+        root = find(index)
+        if root not in ordered_components and root in component_map:
+            ordered_components.append(root)
+
+    component_meta = []
+    for component_root in ordered_components:
+        files = sorted(dict.fromkeys(component_map[component_root]))
+        component_tokens = set()
+        for path in files:
+            component_tokens.update(tokens_for_path(path))
+        component_meta.append({
+            "root": component_root,
+            "files": files,
+            "tokens": component_tokens,
+        })
+
+    for path in support_files:
+        path_tokens = tokens_for_path(path)
+        if len(component_meta) == 1:
+            component_meta[0]["files"].append(path)
+            continue
+        scored = []
+        for item in component_meta:
+            score = len(item["tokens"].intersection(path_tokens))
+            scored.append((score, len(item["files"]), item))
+        scored.sort(key=lambda item: (-item[0], -item[1]))
+        if scored and scored[0][0] > 0:
+            scored[0][2]["files"].append(path)
+        else:
+            component_meta[0]["files"].append(path)
+
+    for item in component_meta:
+        files = sorted(dict.fromkeys(item["files"]))
+        title_files = []
+        for path in files:
+            _, _, is_support = classify_path(path)
+            if not is_support:
+                title_files.append(path)
+        if not title_files:
+            title_files = files
+        titles = []
+        for path in title_files:
+            token = primary_token(path)
+            if token and token not in titles:
+                titles.append(token)
+        title = " + ".join(titles[:3]) if titles else files[0].split("/", 1)[0]
+        groups.append({
+            "id": f"standalone-{len(groups) + 1}",
+            "title": title,
+            "verify_command": "",
+            "files": files,
+        })
 
 print(json.dumps(groups, ensure_ascii=False))
 PY

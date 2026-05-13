@@ -210,7 +210,7 @@ test_bound_done_single_repo_commit() {
     rm -rf "$temp_root"
 }
 
-test_standalone_splits_multiple_business_groups() {
+test_standalone_merges_related_changes_into_single_group() {
     local temp_root repo commit_script prepared_json message_map_json
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "ambiguous")"
@@ -226,10 +226,37 @@ test_standalone_splits_multiple_business_groups() {
 
     assert_protocol_field "$temp_root/multi-group.out" "RESULT" "success"
     assert_protocol_field "$temp_root/multi-group.out" "SCOPE" "standalone"
-    assert_protocol_field "$temp_root/multi-group.out" "COMMITS" "2"
-    assert_contains "$temp_root/multi-group.out" "识别到 2 个业务提交组"
-    assert_contains "$temp_root/multi-group.out" "提交组 standalone-1: scripts"
-    assert_contains "$temp_root/multi-group.out" "提交组 standalone-2: src"
+    assert_protocol_field "$temp_root/multi-group.out" "COMMITS" "1"
+    assert_contains "$temp_root/multi-group.out" "识别到 1 个业务提交组"
+    assert_contains "$temp_root/multi-group.out" "提交组 standalone-1:"
+    assert_contains "$temp_root/multi-group.out" "file: scripts/tool.sh"
+    assert_contains "$temp_root/multi-group.out" "file: src/app.txt"
+    assert_equals "2" "$(git_commit_count "$repo")"
+    rm -rf "$temp_root"
+}
+
+test_standalone_splits_unrelated_changes_into_multiple_groups() {
+    local temp_root repo commit_script prepared_json message_map_json
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "unrelated")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    mkdir -p "$repo/billing" "$repo/search"
+    printf 'invoice\n' > "$repo/billing/invoice.txt"
+    printf 'index\n' > "$repo/search/index.txt"
+
+    (
+        cd "$repo"
+        run_commit_with_generated_messages "$commit_script" "$temp_root/unrelated-group.out"
+    )
+
+    assert_protocol_field "$temp_root/unrelated-group.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/unrelated-group.out" "SCOPE" "standalone"
+    assert_protocol_field "$temp_root/unrelated-group.out" "COMMITS" "2"
+    assert_contains "$temp_root/unrelated-group.out" "识别到 2 个业务提交组"
+    assert_contains "$temp_root/unrelated-group.out" "提交组 standalone-1:"
+    assert_contains "$temp_root/unrelated-group.out" "提交组 standalone-2:"
+    assert_contains "$temp_root/unrelated-group.out" "file: billing/invoice.txt"
+    assert_contains "$temp_root/unrelated-group.out" "file: search/index.txt"
     assert_equals "3" "$(git_commit_count "$repo")"
     rm -rf "$temp_root"
 }
@@ -379,9 +406,9 @@ test_commit_rejects_missing_message_map_entry() {
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "missing-message")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
-    mkdir -p "$repo/scripts"
-    printf 'tool\n' > "$repo/scripts/tool.sh"
-    printf 'app\n' > "$repo/src/app.txt"
+    mkdir -p "$repo/billing" "$repo/search"
+    printf 'invoice\n' > "$repo/billing/invoice.txt"
+    printf 'index\n' > "$repo/search/index.txt"
 
     set +e
     (
@@ -403,7 +430,8 @@ test_standalone_commit_single_group
 test_bound_done_rejects_non_done_status
 test_bound_done_single_repo_commit
 test_commit_rejects_subject_verb_outside_whitelist
-test_standalone_splits_multiple_business_groups
+test_standalone_merges_related_changes_into_single_group
+test_standalone_splits_unrelated_changes_into_multiple_groups
 test_plan_repos_commit_uses_dependency_order
 test_plan_repos_commit_falls_back_to_scope_order_without_dependency_table
 test_standalone_auto_conflict_preserves_both_sides
