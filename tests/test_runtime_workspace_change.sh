@@ -18,7 +18,7 @@ test_workspace_change_updates_workspace_owned_plan() {
         bash "$SOURCE_FLOW_CHANGE_SCRIPT" ws-change "[新增] workspace 扩展功能 — 影响步骤: Step 1" >/dev/null
     )
 
-    assert_contains "$plan_file" "\\[新增\\] workspace 扩展功能"
+    assert_contains "$plan_file" "[新增] workspace 扩展功能"
     assert_not_contains "$plan_file" "{YYYY-MM-DD HH:MM}"
     rm -rf "$temp_root"
 }
@@ -38,7 +38,7 @@ test_workspace_change_from_declared_subrepo_updates_workspace_plan() {
         bash "$SOURCE_FLOW_CHANGE_SCRIPT" ws-change "[修改] 从子仓记录变更 — 影响步骤: Step 1" >/dev/null
     )
 
-    assert_contains "$plan_file" "\\[修改\\] 从子仓记录变更"
+    assert_contains "$plan_file" "[修改] 从子仓记录变更"
     assert_file_not_exists "$workspace/repo-alpha/.ai-flow/plans/20260503-ws-change.md"
     rm -rf "$temp_root"
 }

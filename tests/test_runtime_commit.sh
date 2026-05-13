@@ -71,11 +71,11 @@ test_bound_done_single_repo_commit() {
     assert_protocol_field "$temp_root/bound-single.out" "SCOPE" "bound"
     assert_protocol_field "$temp_root/bound-single.out" "SLUG" "demo"
     assert_protocol_field "$temp_root/bound-single.out" "COMMITS" "1"
-    assert_equals "3" "$(git_commit_count "$project")"
+    assert_equals "2" "$(git_commit_count "$project")"
     rm -rf "$temp_root"
 }
 
-test_standalone_rejects_ambiguous_grouping() {
+test_standalone_splits_multiple_business_groups() {
     local temp_root repo commit_script
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "ambiguous")"
@@ -84,17 +84,18 @@ test_standalone_rejects_ambiguous_grouping() {
     printf 'app\n' > "$repo/src/app.txt"
     printf 'tool\n' > "$repo/scripts/tool.sh"
 
-    set +e
     (
         cd "$repo"
-        bash "$commit_script" >"$temp_root/ambiguous.out" 2>&1
+        bash "$commit_script" >"$temp_root/multi-group.out" 2>&1
     )
-    rc=$?
-    set -e
 
-    [ "$rc" -ne 0 ] || fail "Expected ambiguous standalone grouping to fail"
-    assert_protocol_field "$temp_root/ambiguous.out" "RESULT" "failed"
-    assert_contains "$temp_root/ambiguous.out" "无法可靠判断业务分组"
+    assert_protocol_field "$temp_root/multi-group.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/multi-group.out" "SCOPE" "standalone"
+    assert_protocol_field "$temp_root/multi-group.out" "COMMITS" "2"
+    assert_contains "$temp_root/multi-group.out" "识别到 2 个业务提交组"
+    assert_contains "$temp_root/multi-group.out" "提交组 standalone-1: scripts"
+    assert_contains "$temp_root/multi-group.out" "提交组 standalone-2: src"
+    assert_equals "3" "$(git_commit_count "$repo")"
     rm -rf "$temp_root"
 }
 
@@ -240,7 +241,7 @@ test_standalone_manual_conflict_requires_user_action() {
 test_standalone_commit_single_group
 test_bound_done_rejects_non_done_status
 test_bound_done_single_repo_commit
-test_standalone_rejects_ambiguous_grouping
+test_standalone_splits_multiple_business_groups
 test_plan_repos_commit_uses_dependency_order
 test_plan_repos_commit_falls_back_to_scope_order_without_dependency_table
 test_standalone_auto_conflict_preserves_both_sides

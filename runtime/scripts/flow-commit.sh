@@ -414,6 +414,7 @@ finish_protocol() {
     [ -n "$PROTOCOL_FAILED_GROUP" ] && echo "FAILED_GROUP: $PROTOCOL_FAILED_GROUP"
     [ -n "$PROTOCOL_CONFLICT_MODE" ] && echo "CONFLICT_MODE: $PROTOCOL_CONFLICT_MODE"
     [ -n "$PROTOCOL_DETAIL" ] && echo "DETAIL: $PROTOCOL_DETAIL"
+    return 0
 }
 
 fail_protocol() {
@@ -665,7 +666,9 @@ for repo_index in "${!REPO_IDS[@]}"; do
     fi
 
     GROUPS_FILE="$(mktemp)"
-    python3 - "$CONTEXT_FILE" "$repo_id" "$PROTOCOL_SCOPE" "$repo_git_root" >"$GROUPS_FILE" <<'PY'
+    GROUPS_ERR_FILE="$(mktemp)"
+    set +e
+    python3 - "$CONTEXT_FILE" "$repo_id" "$PROTOCOL_SCOPE" "$repo_git_root" >"$GROUPS_FILE" 2>"$GROUPS_ERR_FILE" <<'PY'
 import json
 import subprocess
 import sys
@@ -750,30 +753,104 @@ if scope == "bound":
         if unknown:
             raise SystemExit(f"存在无法映射到业务分组的变更: {unknown[0]}")
 else:
-    support_roots = {
-        "tests", "test", "docs", ".github"
+    support_roots = {"tests", "test", "docs", ".github"}
+    support_extensions = (".md", ".json", ".yaml", ".yml", ".toml", ".lock")
+    generic_tokens = {
+        "test", "tests", "doc", "docs", "github", "workflow", "workflows",
+        "readme", "changelog", "ci", "config", "configs"
     }
-    primary_roots = []
-    for path in changed:
+
+    def ensure_group(group_map, order, key, title):
+        group = group_map.get(key)
+        if group is None:
+            group = {
+                "id": f"standalone-{len(order) + 1}",
+                "title": title,
+                "verify_command": "",
+                "files": [],
+            }
+            group_map[key] = group
+            order.append(key)
+        return group
+
+    def business_root_for_path(path):
         top = path.split("/", 1)[0]
         if top in support_roots:
+            return None
+        if "/" not in path and top.endswith(support_extensions):
+            return None
+        return top
+
+    def tokens_for_path(path):
+        raw_tokens = []
+        for part in Path(path).parts:
+            normalized = part.replace(".", "-").replace("_", "-")
+            for token in normalized.split("-"):
+                token = token.strip().lower()
+                if token and token not in generic_tokens:
+                    raw_tokens.append(token)
+        return set(raw_tokens)
+
+    group_map = {}
+    group_order = []
+    support_files = []
+    root_tokens = {}
+
+    for path in changed:
+        root = business_root_for_path(path)
+        if root is None:
+            support_files.append(path)
             continue
-        if top.endswith((".md", ".json", ".yaml", ".yml", ".toml", ".lock")):
-            continue
-        primary_roots.append(top)
-    primary_roots = sorted(dict.fromkeys(primary_roots))
-    if len(primary_roots) > 1:
-        raise SystemExit("未绑定 slug 时无法可靠判断业务分组，请缩小提交范围或绑定计划 slug")
-    title = primary_roots[0] if primary_roots else changed[0].split("/", 1)[0]
-    groups.append({
-        "id": "standalone-1",
-        "title": title,
-        "verify_command": "",
-        "files": changed,
-    })
+        ensure_group(group_map, group_order, root, root)["files"].append(path)
+        root_tokens[root] = tokens_for_path(root)
+        root_tokens[root].add(root.lower())
+
+    if not group_order:
+        title = changed[0].split("/", 1)[0]
+        groups.append({
+            "id": "standalone-1",
+            "title": title,
+            "verify_command": "",
+            "files": changed,
+        })
+    else:
+        for path in support_files:
+            if len(group_order) == 1:
+                ensure_group(group_map, group_order, group_order[0], group_order[0])["files"].append(path)
+                continue
+
+            path_tokens = tokens_for_path(path)
+            matched_roots = []
+            for root in group_order:
+                if root.startswith("support::"):
+                    continue
+                if root_tokens.get(root, set()).intersection(path_tokens):
+                    matched_roots.append(root)
+
+            if len(matched_roots) == 1:
+                ensure_group(group_map, group_order, matched_roots[0], matched_roots[0])["files"].append(path)
+                continue
+
+            ensure_group(group_map, group_order, group_order[0], group_order[0])["files"].append(path)
+
+        for key in group_order:
+            group = dict(group_map[key])
+            group["files"] = sorted(dict.fromkeys(group["files"]))
+            groups.append(group)
 
 print(json.dumps(groups, ensure_ascii=False))
 PY
+    group_rc=$?
+    set -e
+    if [ "$group_rc" -ne 0 ]; then
+        group_error="$(tr '\n' ' ' < "$GROUPS_ERR_FILE" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+        [ -n "$group_error" ] || group_error="仓库 [$repo_id] 无法生成业务分组。"
+        rm -f "$GROUPS_FILE" "$GROUPS_ERR_FILE"
+        PROTOCOL_FAILED_REPO="$repo_id"
+        PROTOCOL_DETAIL="$group_error"
+        fail_protocol "仓库 [$repo_id] 无法生成业务分组。"
+    fi
+    rm -f "$GROUPS_ERR_FILE"
     if [ ! -s "$GROUPS_FILE" ]; then
         rm -f "$GROUPS_FILE"
         PROTOCOL_FAILED_REPO="$repo_id"

@@ -14,13 +14,13 @@ fail() {
 assert_contains() {
     local file="$1"
     local pattern="$2"
-    grep -q -- "$pattern" "$file" || fail "Expected '$file' to contain '$pattern'"
+    grep -Fq -- "$pattern" "$file" || fail "Expected '$file' to contain '$pattern'"
 }
 
 assert_not_contains() {
     local file="$1"
     local pattern="$2"
-    if grep -q -- "$pattern" "$file"; then
+    if grep -Fq -- "$pattern" "$file"; then
         fail "Expected '$file' not to contain '$pattern'"
     fi
 }
@@ -274,6 +274,9 @@ $requirement
 - [ ] **1.1 运行通过验证**
   - 命令：\`bash tests/run.sh\`
   - 预期：PASS
+
+**本步验收**：
+- \`bash tests/run.sh\` 通过，且步骤产物满足计划结构要求
 
 **本步关闭条件**：
 - \`bash tests/run.sh\` 通过，且 review 报告能记录定向验证执行证据
@@ -662,6 +665,9 @@ $requirement
 - [ ] **1.1 运行通过验证**
   - 命令：\`bash tests/run.sh\`
   - 预期：PASS
+
+**本步验收**：
+- \`bash tests/run.sh\` 成功，且草案结构满足模板要求
 
 **本步关闭条件**：
 - \`bash tests/run.sh\` 通过
