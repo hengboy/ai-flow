@@ -8,11 +8,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
     cat <<'EOF'
 用法:
-  flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto]
+  flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] [--prepare-json]
+                 [--message-map-json '<json>']
 
 说明:
   --slug            绑定 AI Flow 状态；仅允许状态为 DONE
   --conflict-mode   冲突处理方式，默认 manual
+  --prepare-json    只输出业务提交组与 diff 的 JSON，不执行提交
+  --message-map-json
+                    为每个 repo_id/group_id 提供外部生成的 commit message
 EOF
 }
 
@@ -50,6 +54,7 @@ resolve_flow_root() {
 }
 
 say() {
+    [ "${PREPARE_JSON:-0}" -eq 1 ] && return 0
     echo ">>> $*"
 }
 
@@ -87,6 +92,52 @@ repo_has_rebase_in_progress() {
 
 default_verify_command() {
     printf 'git diff --check'
+}
+
+build_group_diff() {
+    local git_root="$1"
+    local files="$2"
+    python3 - "$git_root" "$files" <<'PY'
+import subprocess
+import sys
+from pathlib import Path
+
+git_root = Path(sys.argv[1]).resolve()
+files = [line.strip() for line in sys.argv[2].splitlines() if line.strip()]
+chunks = []
+
+def run_git(args, allow_statuses=(0,)):
+    result = subprocess.run(
+        ["git", "-C", str(git_root), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if result.returncode not in allow_statuses:
+        raise SystemExit(result.stderr.strip() or "git diff 执行失败")
+    return result.stdout
+
+for path in files:
+    tracked = subprocess.run(
+        ["git", "-C", str(git_root), "ls-files", "--error-unmatch", "--", path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+    if tracked:
+        diff = run_git(["diff", "--no-color", "--unified=0", "--", path])
+    else:
+        abs_path = git_root / path
+        diff = run_git(
+            ["diff", "--no-index", "--no-color", "--unified=0", "--", "/dev/null", str(abs_path)],
+            allow_statuses=(0, 1),
+        )
+    if diff.strip():
+        chunks.append(diff.rstrip())
+
+print("\n".join(chunks))
+PY
 }
 
 resolve_conflicted_file_preserve_both() {
@@ -155,7 +206,7 @@ auto_resolve_conflicts() {
         [ -n "$file" ] || continue
         resolve_conflicted_file_preserve_both "$git_root/$file"
         git -C "$git_root" add -- "$file"
-        echo "    冲突文件已自动合并: $file (phase=$phase)"
+        say "[$git_root] 冲突文件已自动合并: $file (phase=$phase)"
     done <<< "$files"
 
     if repo_has_rebase_in_progress "$git_root"; then
@@ -179,7 +230,7 @@ auto_resolve_conflicts() {
                     [ -n "$file" ] || continue
                     resolve_conflicted_file_preserve_both "$git_root/$file"
                     git -C "$git_root" add -- "$file"
-                    echo "    冲突文件已自动合并: $file (phase=$phase)"
+                    say "[$git_root] 冲突文件已自动合并: $file (phase=$phase)"
                 done <<< "$files"
                 continue
             fi
@@ -266,62 +317,86 @@ run_repo_sync() {
     git -C "$git_root" reset >/dev/null 2>&1 || true
 }
 
-classify_commit_emoji() {
-    local files="$1"
-    local emoji=":sparkles:"
+write_commit_message_from_map() {
+    local map_json="$1"
+    local repo_id="$2"
+    local group_id="$3"
+    local output_file="$4"
+    python3 - "$map_json" "$repo_id" "$group_id" "$output_file" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
 
-    if printf '%s\n' "$files" | grep -Eq '(^README\.md$|\.md$|^docs/)'; then
-        emoji=":memo:"
-    fi
-    if printf '%s\n' "$files" | awk '
-        BEGIN {only_tests = 1}
-        {
-            if ($0 !~ /(^tests\/|_test\.|\.spec\.|\.test\.)/) {
-                only_tests = 0
-            }
-        }
-        END {exit only_tests ? 0 : 1}
-    '; then
-        emoji=":white_check_mark:"
-    fi
-    if printf '%s\n' "$files" | awk '
-        BEGIN {only_config = 1}
-        {
-            if ($0 !~ /(^\.github\/|^\.gitignore$|^package(-lock)?\.json$|^pnpm-lock\.yaml$|^Cargo\.toml$|^Makefile$|\.ya?ml$|\.json$)/) {
-                only_config = 0
-            }
-        }
-        END {exit only_config ? 0 : 1}
-    '; then
-        emoji=":wrench:"
-    fi
+map_json = sys.argv[1]
+repo_id = sys.argv[2]
+group_id = sys.argv[3]
+output_file = Path(sys.argv[4])
 
-    printf '%s' "$emoji"
-}
+try:
+    payload = json.loads(map_json)
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"message-map-json 不是合法 JSON: {exc}")
 
-normalize_commit_subject_text() {
-    local title="$1"
-    title="$(printf '%s' "$title" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    case "$title" in
-        添加*|修复*|更新*|调整*|重构*|优化*|补充*|回滚*|完成*)
-            printf '%s' "$title"
-            ;;
-        *)
-            printf '完成%s' "$title"
-            ;;
-    esac
-}
+if not isinstance(payload, dict):
+    raise SystemExit("message-map-json 顶层必须是对象")
 
-generate_commit_subject() {
-    local title="$1"
-    local files="$2"
-    local emoji
-    local subject
+repo_payload = payload.get(repo_id)
+if not isinstance(repo_payload, dict):
+    raise SystemExit(f"message-map-json 缺少 repo_id={repo_id} 的 message")
 
-    emoji="$(classify_commit_emoji "$files")"
-    subject="$(normalize_commit_subject_text "$title")"
-    subject="$(printf '%s' "$subject" | cut -c 1-50)"
-    printf '%s %s' "$emoji" "$subject"
+group_payload = repo_payload.get(group_id)
+if not isinstance(group_payload, dict):
+    raise SystemExit(f"message-map-json 缺少 repo_id={repo_id} group_id={group_id} 的 message")
+
+subject = group_payload.get("subject")
+body = group_payload.get("body", [])
+footer = group_payload.get("footer", [])
+
+if not isinstance(subject, str) or not subject.strip():
+    raise SystemExit(f"{repo_id}/{group_id} 的 subject 不能为空")
+subject = subject.strip()
+
+subject_pattern = re.compile(
+    r"^:(sparkles|bug|memo|art|recycle|zap|white_check_mark|package|construction_worker|wrench|rewind): "
+    r"(添加|修复|更新|调整|重构|优化|补充|回滚).+"
+)
+if "完成" in subject:
+    raise SystemExit(f"{repo_id}/{group_id} 的 subject 禁止包含“完成”")
+if len(subject) > 50:
+    raise SystemExit(f"{repo_id}/{group_id} 的 subject 超过 50 个字符")
+if not subject_pattern.match(subject):
+    raise SystemExit(f"{repo_id}/{group_id} 的 subject 格式不合法")
+
+if isinstance(body, str):
+    body = [line.strip() for line in body.splitlines() if line.strip()]
+if not isinstance(body, list) or any(not isinstance(line, str) for line in body):
+    raise SystemExit(f"{repo_id}/{group_id} 的 body 必须是字符串数组")
+body = [line.strip() for line in body if line.strip()]
+if len(body) > 2:
+    raise SystemExit(f"{repo_id}/{group_id} 的 body 最多 2 行")
+if any(len(line) > 30 for line in body):
+    raise SystemExit(f"{repo_id}/{group_id} 的 body 单行不能超过 30 个字符")
+
+if isinstance(footer, str):
+    footer = [line.strip() for line in footer.splitlines() if line.strip()]
+if not isinstance(footer, list) or any(not isinstance(line, str) for line in footer):
+    raise SystemExit(f"{repo_id}/{group_id} 的 footer 必须是字符串数组")
+footer = [line.strip() for line in footer if line.strip()]
+footer_pattern = re.compile(r"^(Refs|Fixes) #\d+$")
+if any(not footer_pattern.match(line) for line in footer):
+    raise SystemExit(f"{repo_id}/{group_id} 的 footer 存在非法格式")
+
+parts = [subject]
+if body:
+    parts.append("")
+    parts.extend(body)
+if footer:
+    parts.append("")
+    parts.extend(footer)
+
+output_file.write_text("\n".join(parts) + "\n", encoding="utf-8")
+PY
 }
 
 print_commit_list() {
@@ -347,6 +422,8 @@ run_verify_command() {
 
 STATE_SLUG=""
 CONFLICT_MODE="manual"
+PREPARE_JSON=0
+MESSAGE_MAP_JSON=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --slug)
@@ -357,6 +434,15 @@ while [ "$#" -gt 0 ]; do
         --conflict-mode)
             [ $# -ge 2 ] || { usage >&2; exit 1; }
             CONFLICT_MODE="$2"
+            shift 2
+            ;;
+        --prepare-json)
+            PREPARE_JSON=1
+            shift
+            ;;
+        --message-map-json)
+            [ $# -ge 2 ] || { usage >&2; exit 1; }
+            MESSAGE_MAP_JSON="$2"
             shift 2
             ;;
         -h|--help)
@@ -395,6 +481,7 @@ PROTOCOL_FAILED_GROUP=""
 PROTOCOL_CONFLICT_MODE="$CONFLICT_MODE"
 PROTOCOL_DETAIL=""
 COMMIT_LOG_LINES=""
+MESSAGE_FILES_TO_CLEAN=()
 
 finish_protocol() {
     echo "RESULT: $PROTOCOL_RESULT"
@@ -427,6 +514,12 @@ fi
 CONTEXT_FILE="$(mktemp)"
 cleanup() {
     rm -f "$CONTEXT_FILE"
+    if [ "${#MESSAGE_FILES_TO_CLEAN[@]}" -gt 0 ]; then
+        local message_file
+        for message_file in "${MESSAGE_FILES_TO_CLEAN[@]}"; do
+            [ -n "$message_file" ] && rm -f "$message_file"
+        done
+    fi
 }
 trap cleanup EXIT
 
@@ -631,6 +724,10 @@ PY
 [ ${#REPO_IDS[@]} -gt 0 ] || fail_protocol "未解析到可提交的仓库。"
 PROTOCOL_REPOS="${#REPO_IDS[@]}"
 
+if [ "$PREPARE_JSON" -eq 0 ] && [ -z "$MESSAGE_MAP_JSON" ]; then
+    fail_protocol "缺少 --message-map-json，无法执行提交。"
+fi
+
 if [ "$PROTOCOL_SCOPE" = "bound" ]; then
     if [ "$USED_DEP_TABLE" = "1" ]; then
         say "按跨仓依赖顺序提交涉及仓库"
@@ -640,6 +737,7 @@ if [ "$PROTOCOL_SCOPE" = "bound" ]; then
 fi
 
 COMMIT_COUNT=0
+PREPARED_GROUPS_JSON=""
 for repo_index in "${!REPO_IDS[@]}"; do
     repo_id="${REPO_IDS[$repo_index]}"
     repo_git_root="${REPO_GIT_ROOTS[$repo_index]}"
@@ -909,6 +1007,32 @@ PY
         if [ -z "$group_files" ]; then
             continue
         fi
+        group_diff="$(build_group_diff "$repo_git_root" "$group_files")"
+
+        if [ "$PREPARE_JSON" -eq 1 ]; then
+            entry_json="$(python3 - "$repo_id" "$repo_git_root" "$group_id" "$group_title" "$group_files" "$group_diff" <<'PY'
+import json
+import sys
+
+repo_id = sys.argv[1]
+repo_git_root = sys.argv[2]
+group_id = sys.argv[3]
+group_title = sys.argv[4]
+files = [line for line in sys.argv[5].splitlines() if line]
+group_diff = sys.argv[6]
+print(json.dumps({
+    "repo_id": repo_id,
+    "repo_git_root": repo_git_root,
+    "group_id": group_id,
+    "group_title": group_title,
+    "files": files,
+    "staged_diff": group_diff,
+}, ensure_ascii=False))
+PY
+)"
+            PREPARED_GROUPS_JSON="${PREPARED_GROUPS_JSON}${entry_json}"$'\n'
+            continue
+        fi
         say "[$repo_id] 提交组 $group_id: $group_title"
         printf '%s\n' "$group_files" | sed 's/^/    file: /'
         verify_command="$(default_verify_command "$repo_git_root")"
@@ -928,17 +1052,39 @@ PY
             fail_protocol "提交组 [$group_title] 验证失败，已停止提交。"
         }
 
-        subject="$(generate_commit_subject "$group_title" "$group_files")"
+        message_file="$(mktemp)"
+        MESSAGE_FILES_TO_CLEAN+=("$message_file")
+        if ! write_commit_message_from_map "$MESSAGE_MAP_JSON" "$repo_id" "$group_id" "$message_file"; then
+            rm -f "$message_file" "$GROUPS_FILE"
+            PROTOCOL_FAILED_REPO="$repo_id"
+            PROTOCOL_FAILED_GROUP="$group_id"
+            PROTOCOL_DETAIL="commit message 无效或缺失"
+            fail_protocol "提交组 [$group_title] 缺少合法的 commit message。"
+        fi
+        subject="$(sed -n '1p' "$message_file")"
         (
             cd "$repo_git_root"
-            git commit -m "$subject" >/dev/null
+            git commit -F "$message_file" >/dev/null
         ) || {
-            rm -f "$GROUPS_FILE"
+            rm -f "$message_file" "$GROUPS_FILE"
             PROTOCOL_FAILED_REPO="$repo_id"
             PROTOCOL_FAILED_GROUP="$group_id"
             PROTOCOL_DETAIL="git commit 失败"
             fail_protocol "提交组 [$group_title] 提交失败。"
         }
+        rm -f "$message_file"
+        if [ "${#MESSAGE_FILES_TO_CLEAN[@]}" -gt 0 ]; then
+            filtered_message_files=()
+            for existing_message_file in "${MESSAGE_FILES_TO_CLEAN[@]}"; do
+                [ "$existing_message_file" = "$message_file" ] && continue
+                filtered_message_files+=("$existing_message_file")
+            done
+            if [ "${#filtered_message_files[@]}" -gt 0 ]; then
+                MESSAGE_FILES_TO_CLEAN=("${filtered_message_files[@]}")
+            else
+                MESSAGE_FILES_TO_CLEAN=()
+            fi
+        fi
         commit_hash="$(git -C "$repo_git_root" rev-parse --short HEAD)"
         echo "    committed: $commit_hash $subject"
         COMMIT_LOG_LINES="${COMMIT_LOG_LINES}${repo_id}"$'\t'"${commit_hash}"$'\t'"${subject}"$'\n'
@@ -956,6 +1102,17 @@ PY
 
     rm -f "$GROUPS_FILE"
 done
+
+[ "$PREPARE_JSON" -eq 0 ] || {
+    python3 - "$PREPARED_GROUPS_JSON" <<'PY'
+import json
+import sys
+
+lines = [line for line in sys.argv[1].splitlines() if line.strip()]
+print(json.dumps([json.loads(line) for line in lines], ensure_ascii=False))
+PY
+    exit 0
+}
 
 [ "$COMMIT_COUNT" -gt 0 ] || fail_protocol "没有可提交的业务分组变更。"
 
