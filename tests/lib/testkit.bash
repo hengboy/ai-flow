@@ -1156,10 +1156,10 @@ create_workspace_state_fixture() {
 write_simple_test_runner() {
     local repo_root="$1"
     mkdir -p "$repo_root/tests"
-    cat > "$repo_root/tests/run.sh" <<'EOF'
+cat > "$repo_root/tests/run.sh" <<'EOF'
 #!/bin/bash
 set -euo pipefail
-if grep -R "<<<<<<< " src tests >/dev/null 2>&1; then
+if find src tests -type f ! -path "tests/run.sh" 2>/dev/null | xargs grep -l "<<<<<<< " >/dev/null 2>&1; then
     echo "merge conflict markers found" >&2
     exit 1
 fi
@@ -1191,6 +1191,7 @@ setup_git_remote_pair() {
         git remote add origin "$remote_dir"
         git push -q -u origin main
     )
+    git --git-dir="$remote_dir" symbolic-ref HEAD refs/heads/main
     git clone -q "$remote_dir" "$work_dir"
     (
         cd "$work_dir" || exit 1

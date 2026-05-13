@@ -271,15 +271,12 @@ run_repo_sync() {
     git -C "$git_root" reset >/dev/null 2>&1 || true
 }
 
-generate_commit_subject() {
-    local title="$1"
-    local files="$2"
+classify_commit_emoji() {
+    local files="$1"
     local emoji=":sparkles:"
-    local verb="完成"
 
     if printf '%s\n' "$files" | grep -Eq '(^README\.md$|\.md$|^docs/)'; then
         emoji=":memo:"
-        verb="更新"
     fi
     if printf '%s\n' "$files" | awk '
         BEGIN {only_tests = 1}
@@ -291,7 +288,6 @@ generate_commit_subject() {
         END {exit only_tests ? 0 : 1}
     '; then
         emoji=":white_check_mark:"
-        verb="补充"
     fi
     if printf '%s\n' "$files" | awk '
         BEGIN {only_config = 1}
@@ -303,10 +299,45 @@ generate_commit_subject() {
         END {exit only_config ? 0 : 1}
     '; then
         emoji=":wrench:"
-        verb="调整"
     fi
 
-    printf '%s %s%s' "$emoji" "$verb" "$title"
+    printf '%s' "$emoji"
+}
+
+normalize_commit_subject_text() {
+    local title="$1"
+    title="$(printf '%s' "$title" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    case "$title" in
+        添加*|修复*|更新*|调整*|重构*|优化*|补充*|回滚*|完成*)
+            printf '%s' "$title"
+            ;;
+        *)
+            printf '完成%s' "$title"
+            ;;
+    esac
+}
+
+generate_commit_subject() {
+    local title="$1"
+    local files="$2"
+    local emoji
+    local subject
+
+    emoji="$(classify_commit_emoji "$files")"
+    subject="$(normalize_commit_subject_text "$title")"
+    subject="$(printf '%s' "$subject" | cut -c 1-50)"
+    printf '%s %s' "$emoji" "$subject"
+}
+
+print_commit_list() {
+    local lines="$1"
+    [ -n "$lines" ] || return 0
+    echo ""
+    echo ">>> 本次提交结果："
+    while IFS=$'\t' read -r repo_id commit_hash subject; do
+        [ -n "$repo_id" ] || continue
+        echo "    - [$repo_id] $commit_hash $subject"
+    done <<< "$lines"
 }
 
 run_verify_command() {
@@ -368,6 +399,7 @@ PROTOCOL_FAILED_REPO=""
 PROTOCOL_FAILED_GROUP=""
 PROTOCOL_CONFLICT_MODE="$CONFLICT_MODE"
 PROTOCOL_DETAIL=""
+COMMIT_LOG_LINES=""
 
 finish_protocol() {
     echo "RESULT: $PROTOCOL_RESULT"
@@ -525,6 +557,8 @@ for idx, match in enumerate(matches):
     verify = verify_match.group(1).strip() if verify_match else ""
     repo_files = defaultdict(list)
     for path in files:
+        if path.startswith("tests/") or "/tests/" in path:
+            continue
         repo_id = path_to_repo.get(path, "owner")
         repo_files[repo_id].append(path)
     for repo_id, repo_files_list in repo_files.items():
@@ -666,10 +700,33 @@ for line in result.stdout.splitlines():
     changed.append(path)
 changed = sorted(dict.fromkeys(changed))
 
+if scope == "bound" and repo.get("path") == ".":
+    participant_paths = []
+    for item in payload.get("repos", []):
+        item_path = (item.get("path") or "").strip()
+        if not item_path or item_path == ".":
+            continue
+        participant_paths.append(item_path.rstrip("/"))
+    if participant_paths:
+        filtered = []
+        for path in changed:
+            skip = False
+            for prefix in participant_paths:
+                if path == prefix or path.startswith(prefix + "/"):
+                    skip = True
+                    break
+            if not skip:
+                filtered.append(path)
+        changed = filtered
+
 groups = []
 if scope == "bound":
     parsed_groups = repo.get("groups", [])
     if not parsed_groups:
+        non_ai_flow_changed = [path for path in changed if not path.startswith(".ai-flow/")]
+        if not non_ai_flow_changed:
+            print(json.dumps([], ensure_ascii=False))
+            raise SystemExit(0)
         raise SystemExit("计划无法映射当前仓库变更到业务分组")
     if len(parsed_groups) == 1:
         only = dict(parsed_groups[0])
@@ -693,10 +750,21 @@ if scope == "bound":
         if unknown:
             raise SystemExit(f"存在无法映射到业务分组的变更: {unknown[0]}")
 else:
-    top_levels = sorted({path.split("/", 1)[0] for path in changed})
-    if len(top_levels) > 1:
+    support_roots = {
+        "tests", "test", "docs", ".github"
+    }
+    primary_roots = []
+    for path in changed:
+        top = path.split("/", 1)[0]
+        if top in support_roots:
+            continue
+        if top.endswith((".md", ".json", ".yaml", ".yml", ".toml", ".lock")):
+            continue
+        primary_roots.append(top)
+    primary_roots = sorted(dict.fromkeys(primary_roots))
+    if len(primary_roots) > 1:
         raise SystemExit("未绑定 slug 时无法可靠判断业务分组，请缩小提交范围或绑定计划 slug")
-    title = top_levels[0] if top_levels else "当前改动"
+    title = primary_roots[0] if primary_roots else changed[0].split("/", 1)[0]
     groups.append({
         "id": "standalone-1",
         "title": title,
@@ -716,7 +784,7 @@ PY
 import json
 import sys
 groups = json.load(open(sys.argv[1], encoding="utf-8"))
-if not groups:
+if groups is None:
     raise SystemExit(1)
 PY
     then
@@ -732,14 +800,38 @@ groups = json.load(open(sys.argv[1], encoding="utf-8"))
 print(len(groups))
 PY
 )"
+    if [ "$GROUP_COUNT" = "0" ]; then
+        say "[$repo_id] 无可提交业务分组，跳过"
+        rm -f "$GROUPS_FILE"
+        continue
+    fi
     say "[$repo_id] 识别到 ${GROUP_COUNT} 个业务提交组"
 
-    while IFS=$'\t' read -r group_id group_title verify_command files_b64; do
-        [ -n "$group_id" ] || continue
-        group_files="$(python3 - "$files_b64" <<'PY'
-import base64
+    while IFS= read -r group_json; do
+        [ -n "$group_json" ] || continue
+        group_id="$(python3 - "$group_json" <<'PY'
+import json
 import sys
-print(base64.b64decode(sys.argv[1].encode("ascii")).decode("utf-8"))
+print(json.loads(sys.argv[1]).get("id", ""))
+PY
+)"
+        [ -n "$group_id" ] || continue
+        group_title="$(python3 - "$group_json" <<'PY'
+import json
+import sys
+print(json.loads(sys.argv[1]).get("title", ""))
+PY
+)"
+        verify_command="$(python3 - "$group_json" <<'PY'
+import json
+import sys
+print(json.loads(sys.argv[1]).get("verify_command", ""))
+PY
+)"
+        group_files="$(python3 - "$group_json" <<'PY'
+import json
+import sys
+print("\n".join(json.loads(sys.argv[1]).get("files", [])))
 PY
 )"
         if [ -z "$group_files" ]; then
@@ -779,23 +871,16 @@ PY
         }
         commit_hash="$(git -C "$repo_git_root" rev-parse --short HEAD)"
         echo "    committed: $commit_hash $subject"
+        COMMIT_LOG_LINES="${COMMIT_LOG_LINES}${repo_id}"$'\t'"${commit_hash}"$'\t'"${subject}"$'\n'
         COMMIT_COUNT=$((COMMIT_COUNT + 1))
     done < <(
         python3 - "$GROUPS_FILE" <<'PY'
-import base64
 import json
 import sys
 
 groups = json.load(open(sys.argv[1], encoding="utf-8"))
 for group in groups:
-    files = "\n".join(group.get("files", []))
-    files_b64 = base64.b64encode(files.encode("utf-8")).decode("ascii")
-    print("\t".join([
-        group.get("id", ""),
-        group.get("title", ""),
-        group.get("verify_command", ""),
-        files_b64,
-    ]))
+    print(json.dumps(group, ensure_ascii=False))
 PY
     )
 
@@ -811,4 +896,5 @@ if [ "$PROTOCOL_SCOPE" = "bound" ]; then
 else
     PROTOCOL_SUMMARY="已提交 ${COMMIT_COUNT} 个业务提交组。"
 fi
+print_commit_list "$COMMIT_LOG_LINES"
 finish_protocol

@@ -17,6 +17,7 @@ test_default_install_layout() {
     install_ai_flow "$temp_root"
 
     assert_file_exists "$skills_root/ai-flow-plan/SKILL.md"
+    assert_file_exists "$skills_root/ai-flow-git-commit/SKILL.md"
     assert_file_not_exists "$skills_root/ai-flow-plan/scripts"
     assert_file_not_exists "$skills_root/ai-flow-plan/prompts"
     assert_file_not_exists "$skills_root/ai-flow-plan/templates"
@@ -27,6 +28,7 @@ test_default_install_layout() {
     assert_file_exists "$runtime_root/scripts/flow-state.sh"
     assert_file_exists "$runtime_root/scripts/flow-status.sh"
     assert_file_exists "$runtime_root/scripts/flow-change.sh"
+    assert_file_exists "$runtime_root/scripts/flow-commit.sh"
     assert_file_not_exists "$runtime_root/scripts/flow-plan.sh"
     assert_file_exists "$agents_root/ai-flow-codex-plan/AGENT.md"
     assert_file_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
@@ -89,7 +91,9 @@ test_custom_roots_install() {
         bash "$TEST_ROOT/install.sh" >"$temp_root/install-custom.out"
 
     assert_file_exists "$onespace_skills/ai-flow-plan/SKILL.md"
+    assert_file_exists "$onespace_skills/ai-flow-git-commit/SKILL.md"
     assert_file_exists "$runtime_root/scripts/flow-state.sh"
+    assert_file_exists "$runtime_root/scripts/flow-commit.sh"
     assert_file_exists "$claude_agents/ai-flow-codex-plan/AGENT.md"
     assert_file_exists "$claude_agents/ai-flow-codex-plan/bin/plan-executor.sh"
     assert_file_exists "$claude_agents/ai-flow-codex-plan-review/bin/plan-review-executor.sh"
