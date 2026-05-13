@@ -132,7 +132,9 @@ $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode ma
 
 成功提交后，还必须按仓库输出本次 commit 列表，格式为 `repo_id + commit id + message`。
 
-机器可读协议块：
+机器可读协议块只用于内部解析，不是面向用户的主要内容。面向用户的最终回复必须只保留自然语言摘要和 commit 列表，禁止直接输出 `RESULT:`、`SCOPE:`、`SLUG:`、`COMMITS:`、`DETAIL:` 等协议字段；只有用户明确要求查看协议字段时才可额外展示。
+
+内部机器可读协议块：
 
 ```text
 RESULT: success|failed|partial
