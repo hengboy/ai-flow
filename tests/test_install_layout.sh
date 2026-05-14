@@ -19,6 +19,8 @@ test_default_install_layout() {
     assert_file_exists "$skills_root/ai-flow-plan/SKILL.md"
     assert_file_exists "$skills_root/ai-flow-code-optimize/SKILL.md"
     assert_file_exists "$skills_root/ai-flow-git-commit/SKILL.md"
+    assert_contains "$skills_root/ai-flow-plan/SKILL.md" 'plan-review 失败后重新进入 `/ai-flow-plan` 时，不得绕过配置选择逻辑'
+    assert_contains "$skills_root/ai-flow-plan/SKILL.md" '禁止因为“修订”语义直接固定指派 `ai-flow-claude-plan`'
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "唯一合法执行入口是："
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "\$HOME/.config/ai-flow/scripts/flow-commit.sh"
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "第一执行动作必须是直接调用上面的 runtime 脚本"
@@ -102,6 +104,8 @@ test_custom_roots_install() {
     assert_file_exists "$onespace_skills/ai-flow-plan/SKILL.md"
     assert_file_exists "$onespace_skills/ai-flow-code-optimize/SKILL.md"
     assert_file_exists "$onespace_skills/ai-flow-git-commit/SKILL.md"
+    assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" 'plan-review 失败后重新进入 `/ai-flow-plan` 时，不得绕过配置选择逻辑'
+    assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" '禁止因为“修订”语义直接固定指派 `ai-flow-claude-plan`'
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "唯一合法执行入口是："
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "\$HOME/.config/ai-flow/scripts/flow-commit.sh"
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "第一执行动作必须是直接调用上面的 runtime 脚本"
