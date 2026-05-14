@@ -81,8 +81,14 @@ overlay_tree_contents() {
 install_skill_dir() {
     local source_dir="$1"
     local destination_root="$2"
+    local target_dir
     [ -f "$source_dir/SKILL.md" ] || return 0
     copy_tree "$source_dir" "$destination_root"
+    target_dir="$destination_root/$(basename "$source_dir")"
+    if [ -d "$SUBAGENT_SHARED_LIB_DIR" ]; then
+        mkdir -p "$target_dir/lib"
+        cp -R "$SUBAGENT_SHARED_LIB_DIR"/. "$target_dir/lib"/
+    fi
 }
 
 install_subagent_dir() {

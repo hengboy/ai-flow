@@ -17,7 +17,9 @@ test_default_install_layout() {
     install_ai_flow "$temp_root"
 
     assert_file_exists "$skills_root/ai-flow-plan/SKILL.md"
+    assert_file_exists "$skills_root/ai-flow-plan/lib/flow_utils.py"
     assert_file_exists "$skills_root/ai-flow-code-optimize/SKILL.md"
+    assert_file_exists "$skills_root/ai-flow-code-optimize/lib/flow_utils.py"
     assert_file_exists "$skills_root/ai-flow-git-commit/SKILL.md"
     assert_contains "$skills_root/ai-flow-plan/SKILL.md" 'plan-review 失败后重新进入 `/ai-flow-plan` 时，不得绕过配置选择逻辑'
     assert_contains "$skills_root/ai-flow-plan/SKILL.md" '禁止因为“修订”语义直接固定指派 `ai-flow-claude-plan`'
