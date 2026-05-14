@@ -1,0 +1,77 @@
+# AI Flow 项目级规则模板
+# 复制为 <项目根目录>/.ai-flow/rule.yaml 并根据项目需要修改。
+# 不存在 rule.yaml 时视为无附加规则，不影响现有行为。
+
+# 规则 schema 版本，当前为 1
+version: 1
+
+prompt:
+  # 通用项目背景、领域术语、输出偏好，注入所有阶段的 prompt
+  shared_context: []
+    # - "项目背景：简要说明项目定位与核心职责"
+    # - "领域术语：列出关键业务术语或缩写"
+    # - "输出偏好：如'先给结论再给细节'、'保持简洁'等"
+
+  # 针对具体 skill 名称的附加提示，仅在对应 skill 执行时注入
+  skill_overrides:
+    # ai-flow-plan:
+    #   prepend:
+    #     - "生成计划时优先考虑兼容旧接口"
+    ai-flow-plan-coding:
+      prepend:
+        - "实现时优先最小改动"
+
+  # 针对具体 subagent 名称的附加提示，仅在对应 subagent 执行时注入
+  subagent_overrides:
+    # ai-flow-codex-plan:
+    #   prepend:
+    #     - "生成 plan 时必须体现数据库迁移风险"
+    ai-flow-claude-plan-review:
+      prepend:
+        - "审核时重点检查回滚方案"
+
+constraints:
+  # 受保护路径，命中后直接失败
+  protected_paths:
+    - "src/generated/**"
+    - "openapi/**"
+
+  # 执行前必须读取的文件，文件不存在则直接失败
+  required_reads:
+    - "README.md"
+
+  # 禁止改动的文件/路径，命中后直接失败并输出 reason
+  forbidden_changes:
+    - path: "package-lock.json"
+      reason: "除非用户明确要求升级依赖"
+
+  test_policy:
+    # 存在非豁免代码改动时必须有测试或等价验证证据
+    require_tests_for_code_change: true
+
+    # 允许无测试证据的路径白名单（仅作用于本 repo）
+    allow_testless_paths:
+      - "docs/**"
+      - "*.md"
+
+review:
+  # 审核必查项，review 报告必须逐一回应
+  required_checks:
+    - "是否越过文件边界"
+    - "是否缺少失败用例或验证证据"
+
+  # 报告必须体现的验证证据
+  required_evidence:
+    - "说明未执行项及原因"
+
+  # 规则违规到严重级别的映射
+  # 严重级别顺序固定：critical > important > minor > note
+  severity_rules:
+    - protected_path_change: critical
+    - missing_tests_when_required: important
+    - missing_required_read: important
+
+  # 命中任一条件时 review 直接判定为不通过
+  fail_conditions:
+    # - "命中 protected_paths 且无豁免"
+    # - "代码改动但缺少测试证据"
