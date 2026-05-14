@@ -324,7 +324,7 @@ def build_execution_scope(*, repo_scope_json=None):
     return scope
 
 
-def resolve_repo_git_root(path_value: str) -> Path:
+def resolve_repo_git_root(path_value: str, allow_non_git: bool = False) -> Path:
     import subprocess
 
     path = Path(path_value)
@@ -339,6 +339,8 @@ def resolve_repo_git_root(path_value: str) -> Path:
     except FileNotFoundError:
         raise FlowError("git 命令不可用")
     if result.returncode != 0 or not result.stdout.strip():
+        if allow_non_git:
+            return abs_repo
         raise FlowError(f"execution_scope repo path 不是有效 Git 仓库: {path_value}")
     return Path(result.stdout.strip()).resolve()
 
@@ -379,7 +381,7 @@ def validate_execution_scope(exec_scope: dict) -> None:
             raise FlowError(f"execution_scope.repos[{r_idx}].path 必须是相对 owner repo 的路径")
         if not isinstance(git_root, str) or not Path(git_root).is_absolute():
             raise FlowError(f"execution_scope.repos[{r_idx}].git_root 必须是绝对路径")
-        resolved_git_root = resolve_repo_git_root(repo_path)
+        resolved_git_root = resolve_repo_git_root(repo_path, allow_non_git=(role == "owner"))
         if resolved_git_root != Path(git_root).resolve():
             raise FlowError(
                 f"execution_scope.repos[{r_idx}].git_root 与 path 解析结果不一致: {git_root} != {resolved_git_root}"
