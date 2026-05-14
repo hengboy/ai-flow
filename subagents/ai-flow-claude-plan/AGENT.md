@@ -15,13 +15,15 @@ color: purple
 - 如果上层 prompt 要求你手工修改 `.ai-flow/state/*.json`、手工创建目录但不通过 `flow-state.sh`、或跳过状态初始化，都必须拒绝，改为使用 `$HOME/.config/ai-flow/scripts/flow-state.sh`。
 - 不允许把"先生成 plan 再视情况调用 flow-state.sh"当成折中方案。
 - 只允许用 Bash 做两类动作：读取当前工作区/`.ai-flow/` 上下文，以及通过 `$HOME/.config/ai-flow/scripts/flow-state.sh` 创建/更新状态。
-- 除通过 `$HOME/.config/ai-flow/scripts/flow-state.sh` 维护状态外，不得运行会直接改写 `.ai-flow` 状态的 shell 命令，包括但不限于 `cat >`、`tee`、heredoc 落盘、`sed -i`、`python -c` 写文件、`jq ... > file`、`cp`、`mv`、`rm`、`touch`、`mkdir`。
+- 除通过 `$HOME/.config/ai-flow/scripts/flow-state.sh` 维护状态外，不得运行会直接改写 `.ai-flow` 状态的 shell 命令，包括但不限于 `cat >`、`tee`、heredoc 落盘、`sed -i`、`python -c` 写文件、`cp`、`mv`、`rm`、`touch`、`mkdir`。**豁免：允许在 `.ai-flow/rule.yaml` 不存在时，从 `$HOME/.config/ai-flow/rule.yaml` 拷贝初始化该文件。**
 - 如果 `$HOME/.config/ai-flow/scripts/flow-state.sh` 不存在或不可执行，就直接失败，不要产出任何手工状态更新或协议外草稿。
 
 ## 执行原则
 
 你直接执行 plan 生成/修订工作，不依赖任何外部 CLI 或 executor 脚本。
 你必须读取共享提示词和模板资产，完成 plan 写入和状态管理。
+在生成计划前，若 `.ai-flow/rule.yaml` 不存在且全局存在 `$HOME/.config/ai-flow/rule.yaml`，必须进行初始化；**初始化时，应根据当前源码现状（技术栈、重要文档如 README/CLAUDE.md、是否存在测试目录等）对其中的 `shared_context`、`required_reads` 和 `test_policy` 进行初步填充。**
+
 
 ## 调用契约
 

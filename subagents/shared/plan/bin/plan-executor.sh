@@ -1785,6 +1785,51 @@ fi
 DETECT_STACK="${FRAMEWORKS%, }"
 [ -z "$DETECT_STACK" ] && DETECT_STACK="未检测到明确技术栈"
 
+# Initialize local rule.yaml from global default if missing
+if [ ! -f "$FLOW_DIR/rule.yaml" ] && [ -f "$AI_FLOW_HOME/rule.yaml" ]; then
+    echo ">>> Initializing project rule.yaml..."
+    cp "$AI_FLOW_HOME/rule.yaml" "$FLOW_DIR/rule.yaml"
+    
+    # Refine content based on source code (no-dependency string replacement)
+    python3 - "$FLOW_DIR/rule.yaml" "$DETECT_STACK" "$PROJECT_DIR" <<'PY'
+import sys
+from pathlib import Path
+
+rule_path = Path(sys.argv[1])
+detect_stack = sys.argv[2]
+project_dir = Path(sys.argv[3])
+
+if not rule_path.is_file():
+    sys.exit(0)
+
+text = rule_path.read_text(encoding='utf-8')
+
+# 1. Update shared_context
+stack_info = f"Project Stack: {detect_stack}"
+if "shared_context: []" in text:
+    text = text.replace("shared_context: []", f"shared_context:\n    - \"{stack_info}\"")
+
+# 2. Update required_reads
+candidates = ["README.md", "README_CN.md", "CLAUDE.md"]
+found = [c for c in candidates if (project_dir / c).is_file()]
+if found and "required_reads: []" in text:
+    reads_str = "required_reads:\n" + "\n".join([f"    - \"{c}\"" for c in found])
+    text = text.replace("required_reads: []", reads_str)
+
+# 3. Update test_policy
+has_tests = False
+for d in ["tests", "test", "src/test"]:
+    if (project_dir / d).is_dir():
+        has_tests = True
+        break
+if has_tests:
+    text = text.replace("require_tests_for_code_change: false", "require_tests_for_code_change: true")
+
+rule_path.write_text(text, encoding='utf-8')
+PY
+    echo "    Optimized $FLOW_DIR/rule.yaml based on project status ($DETECT_STACK)"
+fi
+
 TEMPLATE_CONTENT=$(render_plan_template_content "$REQUIREMENT" "$REQUIREMENT")
 
 if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
