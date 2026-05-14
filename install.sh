@@ -244,6 +244,13 @@ elif [ ! -f "$AI_FLOW_HOME/setting.json" ]; then
     echo "Created default setting.json at $AI_FLOW_HOME"
 fi
 
+# Install rule.yaml template for user reference
+if [ ! -f "$AI_FLOW_HOME/rule.yaml" ]; then
+    mkdir -p "$AI_FLOW_HOME"
+    cp "$ROOT_DIR/subagents/shared/rule.yaml.template" "$AI_FLOW_HOME/rule.yaml"
+    echo "Created default rule.yaml at $AI_FLOW_HOME"
+fi
+
 for agent_dir in "$ROOT_DIR"/subagents/*; do
     [ -d "$agent_dir" ] || continue
     install_subagent_dir "$agent_dir" "$CLAUDE_AGENTS_DIR"
