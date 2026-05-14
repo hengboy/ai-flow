@@ -12,4 +12,9 @@ if [ ! -f "$TARGET" ]; then
     exit 1
 fi
 
+if [ -z "${1:-}" ]; then
+    echo "AI Flow: 无 slug 绑定，允许独立执行缺陷修复。"
+    exit 0
+fi
+
 exec bash "$TARGET" "$@"

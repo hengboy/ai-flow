@@ -71,118 +71,21 @@ fail_protocol() {
     exit 1
 }
 
-state_field() {
-    local state_file="$1"
-    local field="$2"
-    python3 - "$state_file" "$field" <<'PY'
-import json
-import sys
-from pathlib import Path
+FLOW_UTILS_PY="$AI_FLOW_HOME/lib/flow_utils.py"
+if [ ! -f "$FLOW_UTILS_PY" ]; then
+    FLOW_UTILS_PY="$(cd "$SCRIPT_DIR/../.." && pwd)/subagents/shared/lib/flow_utils.py"
+fi
 
-state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-value = state
-for part in sys.argv[2].split("."):
-    if value is None:
-        break
-    if isinstance(value, dict):
-        value = value.get(part)
-    elif isinstance(value, list) and part.isdigit():
-        index = int(part)
-        value = value[index] if 0 <= index < len(value) else None
-    else:
-        value = None
-        break
-if value is None:
-    sys.exit(1)
-print(value)
-PY
+state_field() {
+    python3 "$FLOW_UTILS_PY" get-json-field "$1" "$2"
 }
 
 collect_rule_repo_args() {
-    local state_file="$1"
-    python3 - "$state_file" "$PROJECT_DIR" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-owner = Path(sys.argv[2]).resolve()
-scope = state.get("execution_scope") or {}
-repos = scope.get("repos") or []
-for repo in repos:
-    repo_id = str(repo.get("id") or "").strip()
-    repo_path = str(repo.get("path") or "").strip()
-    if not repo_id or not repo_path:
-        continue
-    repo_root = (owner / repo_path).resolve()
-    print(f"{repo_id}::{repo_root}")
-PY
+    python3 "$FLOW_UTILS_PY" collect-repos "$1" "$PROJECT_DIR"
 }
 
 validate_plan_rule_paths() {
-    local bundle_json="$1"
-    local plan_file="$2"
-    python3 - "$bundle_json" "$plan_file" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-bundle = json.loads(sys.argv[1])
-plan_file = Path(sys.argv[2]).resolve()
-plan = plan_file.read_text(encoding="utf-8")
-repos = bundle.get("repos", []) or []
-repo_ids = {str(item.get("repo_id") or "").strip() for item in repos}
-
-def extract_section_table(text: str, needle: str):
-    lines = text.splitlines()
-    in_section = False
-    table = []
-    for line in lines:
-        if line.startswith("##") or line.startswith("###"):
-            if needle in line:
-                in_section = True
-                table = []
-                continue
-            if in_section:
-                break
-        if in_section and line.startswith("|"):
-            table.append(line)
-    if len(table) < 3:
-        return []
-    rows = []
-    for raw in table[2:]:
-        cells = [cell.strip() for cell in raw.strip().strip("|").split("|")]
-        if len(cells) >= 5 and any(cells):
-            rows.append(cells)
-    return rows
-
-def matches(path: str, pattern: str) -> bool:
-    import fnmatch
-    return fnmatch.fnmatch(path, pattern.strip().replace("\\", "/"))
-
-rows = extract_section_table(plan, "文件边界总览")
-errors = []
-for row in rows:
-    path = row[0].strip().replace("`", "")
-    repo_id = row[1].strip() or "owner"
-    if repo_id not in repo_ids:
-        repo_id = "owner"
-    if not path:
-        continue
-    for item in bundle.get("merged", {}).get("protected_paths", []):
-        pattern = str(item.get("path") or "").strip()
-        if item.get("repo_id") == repo_id and pattern and matches(path, pattern):
-            errors.append(f"命中 protected_paths，计划声明的执行边界不可修改: [{repo_id}] {path} -> {pattern}")
-    for item in bundle.get("merged", {}).get("forbidden_changes", []):
-        pattern = str(item.get("path") or "").strip()
-        if item.get("repo_id") == repo_id and pattern and matches(path, pattern):
-            reason = str(item.get("reason") or "").strip()
-            suffix = f"：{reason}" if reason else ""
-            errors.append(f"命中 forbidden_changes，计划声明的执行边界不可修改: [{repo_id}] {path} -> {pattern}{suffix}")
-
-if errors:
-    print("\n".join(errors))
-PY
+    python3 "$FLOW_UTILS_PY" validate-plan-paths "$1" "$2"
 }
 
 MATCHED_STATES=()
