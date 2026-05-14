@@ -18,12 +18,12 @@ test_transitions_and_repair() {
         bash "$state_script" record-plan-review --slug demo --result passed --engine Fixture --model fixture >/dev/null
         bash "$state_script" start-execute demo >/dev/null
         bash "$state_script" finish-implementation demo >/dev/null
-        write_review_report_fixture ".ai-flow/reports/20260503/demo-review.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "1" "failed" "demo"
-        bash "$state_script" record-review --slug demo --mode regular --result failed --report-file .ai-flow/reports/20260503/demo-review.md >/dev/null
+        write_review_report_fixture ".ai-flow/reports/20260503-demo-review.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "1" "failed" "demo"
+        bash "$state_script" record-review --slug demo --mode regular --result failed --report-file .ai-flow/reports/20260503-demo-review.md >/dev/null
         bash "$state_script" start-fix demo >/dev/null
         bash "$state_script" finish-fix demo >/dev/null
-        write_review_report_fixture ".ai-flow/reports/20260503/demo-review-v2.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "2" "passed_with_notes" "demo"
-        bash "$state_script" record-review --slug demo --mode regular --result passed_with_notes --report-file .ai-flow/reports/20260503/demo-review-v2.md >/dev/null
+        write_review_report_fixture ".ai-flow/reports/20260503-demo-review-v2.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "2" "passed_with_notes" "demo"
+        bash "$state_script" record-review --slug demo --mode regular --result passed_with_notes --report-file .ai-flow/reports/20260503-demo-review-v2.md >/dev/null
         bash "$state_script" repair --slug demo --status IMPLEMENTING --note "需求变更" >/dev/null
     )
 

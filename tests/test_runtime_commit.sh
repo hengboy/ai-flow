@@ -290,8 +290,8 @@ test_plan_repos_commit_uses_dependency_order() {
         bash "$runtime_script" record-plan-review --slug multi-demo --result passed --engine Fixture --model fixture-model >/dev/null
         bash "$runtime_script" start-execute multi-demo >/dev/null
         bash "$runtime_script" finish-implementation multi-demo >/dev/null
-        write_review_report_fixture ".ai-flow/reports/20260503/multi-demo-review.md" "multi-demo" ".ai-flow/plans/20260503-multi-demo.md" "regular" "1" "passed" "multi-demo"
-        bash "$runtime_script" record-review --slug multi-demo --mode regular --result passed --report-file ".ai-flow/reports/20260503/multi-demo-review.md" >/dev/null
+        write_review_report_fixture ".ai-flow/reports/20260503-multi-demo-review.md" "multi-demo" ".ai-flow/plans/20260503-multi-demo.md" "regular" "1" "passed" "multi-demo"
+        bash "$runtime_script" record-review --slug multi-demo --mode regular --result passed --report-file ".ai-flow/reports/20260503-multi-demo-review.md" >/dev/null
     )
     printf 'alpha local\n' > "$workspace/repo-alpha/src/alpha.txt"
     printf 'beta local\n' > "$workspace/repo-beta/src/beta.txt"
@@ -342,8 +342,8 @@ test_plan_repos_commit_falls_back_to_scope_order_without_dependency_table() {
         bash "$runtime_script" record-plan-review --slug multi-no-dep --result passed --engine Fixture --model fixture-model >/dev/null
         bash "$runtime_script" start-execute multi-no-dep >/dev/null
         bash "$runtime_script" finish-implementation multi-no-dep >/dev/null
-        write_review_report_fixture ".ai-flow/reports/20260503/multi-no-dep-review.md" "multi-no-dep" ".ai-flow/plans/20260503-multi-no-dep.md" "regular" "1" "passed" "multi-no-dep"
-        bash "$runtime_script" record-review --slug multi-no-dep --mode regular --result passed --report-file ".ai-flow/reports/20260503/multi-no-dep-review.md" >/dev/null
+        write_review_report_fixture ".ai-flow/reports/20260503-multi-no-dep-review.md" "multi-no-dep" ".ai-flow/plans/20260503-multi-no-dep.md" "regular" "1" "passed" "multi-no-dep"
+        bash "$runtime_script" record-review --slug multi-no-dep --mode regular --result passed --report-file ".ai-flow/reports/20260503-multi-no-dep-review.md" >/dev/null
     )
     printf 'alpha local\n' > "$workspace/repo-alpha/src/alpha.txt"
     printf 'beta local\n' > "$workspace/repo-beta/src/beta.txt"

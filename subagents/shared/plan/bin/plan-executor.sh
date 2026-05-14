@@ -1445,7 +1445,7 @@ PY
 }
 
 ensure_project_root_context
-mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports/$DATE_PREFIX" "$STATE_DIR"
+mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports" "$STATE_DIR"
 
 if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
     STATE_FILE=$(find_state_file_by_keyword "$MATCH_KEYWORD")

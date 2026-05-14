@@ -112,8 +112,8 @@ setup_project_dirs() {
     local date_dir="${2:-20260503}"
     setup_project_root "$project_dir"
     mkdir -p \
-        "$project_dir/.ai-flow/plans/$date_dir" \
-        "$project_dir/.ai-flow/reports/$date_dir" \
+        "$project_dir/.ai-flow/plans" \
+        "$project_dir/.ai-flow/reports" \
         "$project_dir/.ai-flow/state/.locks"
 }
 
@@ -524,8 +524,8 @@ create_state_with_status() {
                 bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
                 bash "$flow_state_script" start-execute "$slug" >/dev/null
                 bash "$flow_state_script" finish-implementation "$slug" >/dev/null
-                write_review_report_fixture ".ai-flow/reports/$date_dir/${slug}-review.md" "$slug" "$plan_file" "regular" "1" "failed" "$title"
-                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result failed --report-file ".ai-flow/reports/$date_dir/${slug}-review.md" >/dev/null
+                write_review_report_fixture ".ai-flow/reports/${date_dir}-${slug}-review.md" "$slug" "$plan_file" "regular" "1" "failed" "$title"
+                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result failed --report-file ".ai-flow/reports/${date_dir}-${slug}-review.md" >/dev/null
                 ;;
             FIXING_REVIEW)
                 create_state_with_status "$flow_state_script" "$project_dir" "$slug" "REVIEW_FAILED" "$date_dir" "$title"
@@ -535,8 +535,8 @@ create_state_with_status() {
                 bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
                 bash "$flow_state_script" start-execute "$slug" >/dev/null
                 bash "$flow_state_script" finish-implementation "$slug" >/dev/null
-                write_review_report_fixture ".ai-flow/reports/$date_dir/${slug}-review.md" "$slug" "$plan_file" "regular" "1" "passed" "$title"
-                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result passed --report-file ".ai-flow/reports/$date_dir/${slug}-review.md" >/dev/null
+                write_review_report_fixture ".ai-flow/reports/${date_dir}-${slug}-review.md" "$slug" "$plan_file" "regular" "1" "passed" "$title"
+                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result passed --report-file ".ai-flow/reports/${date_dir}-${slug}-review.md" >/dev/null
                 ;;
             *)
                 fail "Unknown target status: $target_status"
@@ -1059,8 +1059,8 @@ setup_workspace_root() {
     local workspace_name="${2:-workspace-test}"
     local date_dir="${3:-20260503}"
     mkdir -p "$workspace_root/.ai-flow/state/.locks" \
-             "$workspace_root/.ai-flow/plans/$date_dir" \
-             "$workspace_root/.ai-flow/reports/$date_dir"
+             "$workspace_root/.ai-flow/plans" \
+             "$workspace_root/.ai-flow/reports"
 }
 
 setup_workspace_git_repos() {
@@ -1107,8 +1107,8 @@ setup_workspace_root_with_repos() {
     fi
 
     mkdir -p "$workspace_root/.ai-flow/state/.locks" \
-             "$workspace_root/.ai-flow/plans/$date_dir" \
-             "$workspace_root/.ai-flow/reports/$date_dir"
+             "$workspace_root/.ai-flow/plans" \
+             "$workspace_root/.ai-flow/reports"
     if ! git -C "$workspace_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         (
             cd "$workspace_root" || exit 1
@@ -1173,8 +1173,8 @@ create_workspace_state_fixture() {
                 bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
                 bash "$flow_state_script" start-execute "$slug" >/dev/null
                 bash "$flow_state_script" finish-implementation "$slug" >/dev/null
-                write_review_report_fixture ".ai-flow/reports/$date_dir/${slug}-review.md" "$slug" "$plan_file" "regular" "1" "passed" "$title"
-                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result passed --report-file ".ai-flow/reports/$date_dir/${slug}-review.md" >/dev/null
+                write_review_report_fixture ".ai-flow/reports/${date_dir}-${slug}-review.md" "$slug" "$plan_file" "regular" "1" "passed" "$title"
+                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result passed --report-file ".ai-flow/reports/${date_dir}-${slug}-review.md" >/dev/null
                 ;;
             *)
                 fail "Unknown target status for workspace fixture: $target_status"

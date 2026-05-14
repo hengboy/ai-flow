@@ -13,7 +13,7 @@ test_status_only_uses_state_files() {
     create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "planned" "PLANNED" "20260503" "planned"
     create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "await-review" "AWAITING_REVIEW" "20260503" "await-review"
     create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "done" "DONE" "20260503" "done"
-    printf '# 审查报告：bogus\nREVIEW_FAILED\n' > "$project/.ai-flow/reports/20260503/noise.md"
+    printf '# 审查报告：bogus\nREVIEW_FAILED\n' > "$project/.ai-flow/reports/20260503-noise.md"
     printf '# 实施计划：bogus\nDONE\n' > "$project/.ai-flow/plans/20260503-noise.md"
 
     (

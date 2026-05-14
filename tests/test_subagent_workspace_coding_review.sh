@@ -141,7 +141,7 @@ test_workspace_coding_review_from_declared_subrepo_uses_workspace_root() {
     report_file=$(protocol_field "$out" "ARTIFACT")
     assert_equals ".ai-flow/reports/ws-subrepo-review.md" "$report_file"
     assert_file_exists "$workspace/$report_file"
-    assert_file_not_exists "$workspace/repo-alpha/.ai-flow/reports/20260503-ws-subrepo-review.md"
+    assert_file_not_exists "$workspace/repo-alpha/.ai-flow/reports/ws-subrepo-review.md"
     assert_contains "$temp_root/codex.review.argv" "-C $(cd "$workspace" && pwd -P)"
     rm -rf "$temp_root"
 }
@@ -170,7 +170,7 @@ test_workspace_coding_review_prefers_ancestor_workspace_over_local_ai_flow_dir()
     assert_protocol_field "$out" "RESULT" "success"
     report_file=$(protocol_field "$out" "ARTIFACT")
     assert_file_exists "$workspace/$report_file"
-    assert_file_not_exists "$workspace/repo-alpha/.ai-flow/reports/20260503-ws-local-flow-review.md"
+    assert_file_not_exists "$workspace/repo-alpha/.ai-flow/reports/ws-local-flow-review.md"
     rm -rf "$temp_root"
 }
 
@@ -187,7 +187,7 @@ test_workspace_coding_review_from_undeclared_repo_keeps_single_repo_mode() {
 
     mkdir -p "$workspace/standalone/src"
     printf '{ "name": "standalone" }\n' > "$workspace/standalone/package.json"
-    mkdir -p "$workspace/standalone/.ai-flow/state/.locks" "$workspace/standalone/.ai-flow/reports/20260503" "$workspace/standalone/.ai-flow/plans"
+    mkdir -p "$workspace/standalone/.ai-flow/state/.locks" "$workspace/standalone/.ai-flow/reports" "$workspace/standalone/.ai-flow/plans"
     create_plan_file "$workspace/standalone" "solo" "20260503" "solo"
     (
         cd "$workspace/standalone"
