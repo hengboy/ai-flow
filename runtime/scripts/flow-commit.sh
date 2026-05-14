@@ -300,9 +300,19 @@ run_repo_sync() {
         local stash_rc=$?
         set -e
         if [ "$stash_rc" -ne 0 ]; then
+            # 尝试不带 --index 恢复
+            set +e
+            git -C "$git_root" stash pop >/dev/null 2>&1
+            stash_rc=$?
+            set -e
+        fi
+
+        if [ "$stash_rc" -ne 0 ]; then
             if repo_has_conflicts "$git_root"; then
                 if [ "$conflict_mode" = "auto" ]; then
                     auto_resolve_conflicts "$git_root" "stash-pop" || return 1
+                    # auto 模式解决冲突后，需要手动清理掉 stash 栈，因为 pop 失败时不会自动 drop
+                    git -C "$git_root" stash drop >/dev/null 2>&1 || true
                 else
                     print_conflict_failure "$git_root" "stash-pop"
                     return 1
@@ -510,7 +520,7 @@ fail_protocol() {
     exit 1
 }
 
-if [ -z "$CURRENT_GIT_ROOT" ]; then
+if [ -z "$CURRENT_GIT_ROOT" ] && [ -z "$STATE_SLUG" ]; then
     fail_protocol "当前目录不在 Git 仓库内，无法提交代码。"
 fi
 
@@ -746,7 +756,13 @@ for repo_index in "${!REPO_IDS[@]}"; do
     repo_git_root="${REPO_GIT_ROOTS[$repo_index]}"
     repo_role="${REPO_ROLES[$repo_index]}"
 
-    [ -d "$repo_git_root/.git" ] || fail_protocol "仓库不存在或不是有效 Git 仓库：$repo_git_root"
+    if [ ! -d "$repo_git_root/.git" ]; then
+        if [ "$repo_role" = "owner" ]; then
+            say "[$repo_id] 根目录非 Git 仓库，跳过该仓库的 Git 操作"
+            continue
+        fi
+        fail_protocol "仓库不存在或不是有效 Git 仓库：$repo_git_root"
+    fi
     say "处理仓库 [$repo_id] ($repo_role): $repo_git_root"
 
     run_repo_sync "$repo_git_root" "$CONFLICT_MODE" || {
