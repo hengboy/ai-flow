@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$AGENT_DIR/lib/agent-common.sh"
+source "$AGENT_DIR/lib/rule-loader.sh"
 exec 3>&1 1>&2
 
 REVIEW_ENGINE_MODE="${ENGINE_MODE_OVERRIDE:-auto}"
@@ -30,6 +31,9 @@ PROTOCOL_NEXT="none"
 PROTOCOL_REVIEW_RESULT="failed"
 PROTOCOL_SUMMARY=""
 PROTOCOL_EMITTED=0
+RULE_BUNDLE_JSON=""
+RULE_PROMPT_BLOCK=""
+RULE_REQUIRED_READS_BLOCK=""
 
 cd "$PROJECT_DIR"
 
@@ -270,6 +274,8 @@ EOF
     AI_FLOW_CURRENT_ROUND="$CURRENT_ROUND" \
     AI_FLOW_PLAN_TITLE="$PLAN_TITLE" \
     AI_FLOW_WORKSPACE_CONTEXT="$repo_ctx" \
+    AI_FLOW_RULE_PROMPT_BLOCK="${RULE_PROMPT_BLOCK:-}" \
+    AI_FLOW_RULE_REQUIRED_READS_BLOCK="${RULE_REQUIRED_READS_BLOCK:-}" \
     python3 - "$prompt_template" <<'PY'
 import os
 import sys
@@ -287,10 +293,26 @@ replacements = {
     "__AI_FLOW_CURRENT_ROUND__": os.environ["AI_FLOW_CURRENT_ROUND"],
     "__AI_FLOW_PLAN_TITLE__": os.environ["AI_FLOW_PLAN_TITLE"],
     "__AI_FLOW_WORKSPACE_CONTEXT__": os.environ.get("AI_FLOW_WORKSPACE_CONTEXT", ""),
+    "__AI_FLOW_RULE_PROMPT_BLOCK__": os.environ.get("AI_FLOW_RULE_PROMPT_BLOCK", ""),
+    "__AI_FLOW_RULE_REQUIRED_READS_BLOCK__": os.environ.get("AI_FLOW_RULE_REQUIRED_READS_BLOCK", ""),
 }
 for needle, value in replacements.items():
     text = text.replace(needle, value)
 sys.stdout.write(text)
+PY
+}
+
+append_rule_context_to_prompt_template() {
+    local template_file="$1"
+    local output_file="$2"
+    python3 - "$template_file" "$output_file" <<'PY'
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1]).read_text(encoding="utf-8")
+dst = Path(sys.argv[2])
+appendix = "\n\n__AI_FLOW_RULE_PROMPT_BLOCK__\n\n__AI_FLOW_RULE_REQUIRED_READS_BLOCK__\n"
+dst.write_text(src.rstrip() + appendix, encoding="utf-8")
 PY
 }
 
@@ -394,7 +416,149 @@ PY
         PLAN_REPO_ROLES+=("$role")
     done < "$scope_file"
     rm -f "$scope_file"
-    IS_PLAN_REPOS_MODE=1
+    if [ "${#PLAN_REPO_IDS[@]}" -gt 1 ]; then
+        IS_PLAN_REPOS_MODE=1
+    else
+        IS_PLAN_REPOS_MODE=0
+    fi
+}
+
+load_rule_bundle_for_scope() {
+    local stage="$1"
+    local skill_name="$2"
+    local subagent_name="$3"
+    shift 3 || true
+    local bundle_json
+    local status=0
+    bundle_json="$(load_rule_bundle_json "$stage" "$skill_name" "$subagent_name" "$@")" || status=$?
+    if [ "$status" -ne 0 ]; then
+        local error_text
+        error_text="$(extract_rule_loader_error "$bundle_json")"
+        fail_protocol "$error_text"
+    fi
+    RULE_BUNDLE_JSON="$bundle_json"
+    RULE_PROMPT_BLOCK="$(render_rule_prompt_block "$RULE_BUNDLE_JSON" || true)"
+    local required_reads_output required_reads_status=0
+    required_reads_output="$(render_required_reads_block "$RULE_BUNDLE_JSON" 2>&1)" || required_reads_status=$?
+    if [ "$required_reads_status" -ne 0 ]; then
+        local error_text
+        error_text="$(extract_rule_loader_error "$required_reads_output")"
+        fail_protocol "$error_text"
+    fi
+    RULE_REQUIRED_READS_BLOCK="$required_reads_output"
+}
+
+validate_rule_constraints_before_review() {
+    local changed_paths_file="$1"
+    python3 - "$RULE_BUNDLE_JSON" "$changed_paths_file" "$IS_PLAN_REPOS_MODE" <<'PY'
+import fnmatch
+import json
+import sys
+from pathlib import Path
+
+bundle = json.loads(sys.argv[1])
+paths = [line.strip() for line in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines() if line.strip()]
+is_plan_repos = sys.argv[3] == "1"
+merged = bundle.get("merged", {})
+errors = []
+
+protected = merged.get("protected_paths", [])
+forbidden = merged.get("forbidden_changes", [])
+
+def split_path(raw: str):
+    if is_plan_repos and "/" in raw:
+        repo_id, rel = raw.split("/", 1)
+        return repo_id, rel
+    return "owner", raw
+
+def matches(entry, repo_id, rel):
+    return entry.get("repo_id") == repo_id and fnmatch.fnmatch(rel, entry.get("path", ""))
+
+for raw in paths:
+    repo_id, rel = split_path(raw)
+    for entry in protected:
+        if matches(entry, repo_id, rel):
+            errors.append(f"命中 protected_paths，禁止继续: [{repo_id}] {rel}")
+    for entry in forbidden:
+        if matches(entry, repo_id, rel):
+            reason = entry.get("reason") or "命中 forbidden_changes"
+            errors.append(f"命中 forbidden_changes: [{repo_id}] {rel} — {reason}")
+
+if errors:
+    print(json.dumps({"errors": errors}, ensure_ascii=False))
+    sys.exit(1)
+
+print(json.dumps({"errors": []}, ensure_ascii=False))
+PY
+}
+
+report_has_test_evidence_for_rule_bundle() {
+    python3 - "$RULE_BUNDLE_JSON" "$REPORT_FILE" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+bundle = json.loads(sys.argv[1])
+report = Path(sys.argv[2]).read_text(encoding="utf-8")
+merged = bundle.get("merged", {})
+test_policy = merged.get("test_policy") or {}
+if not test_policy.get("require_tests_for_code_change"):
+    sys.exit(0)
+match = re.search(r"(?ms)^### 1\.2 .*?(?=^## 2\. |\Z)", report)
+section = match.group(0) if match else ""
+patterns = [
+    r"`[^`]*(pytest|go test|cargo test|cargo check|mvn|gradle|npm|pnpm|yarn|bash tests/|test-compile|build|check)[^`]*`",
+]
+sys.exit(0 if any(re.search(pattern, section) for pattern in patterns) else 1)
+PY
+}
+
+report_has_required_evidence_for_rule_bundle() {
+    python3 - "$RULE_BUNDLE_JSON" "$REPORT_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+bundle = json.loads(sys.argv[1])
+report = Path(sys.argv[2]).read_text(encoding="utf-8")
+required = (bundle.get("merged", {}) or {}).get("review_required_evidence") or []
+missing = []
+for item in required:
+    text = str(item or "").strip()
+    if text and text not in report:
+        missing.append(text)
+
+if missing:
+    print(json.dumps({"missing": missing}, ensure_ascii=False))
+    sys.exit(1)
+PY
+}
+
+rule_severity_for_key() {
+    python3 - "$RULE_BUNDLE_JSON" "$1" "$2" <<'PY'
+import json
+import sys
+
+bundle = json.loads(sys.argv[1])
+key = sys.argv[2]
+default = sys.argv[3]
+value = str((((bundle.get("merged", {}) or {}).get("severity_rules") or {}).get(key) or "")).strip().lower()
+allowed = {"note", "minor", "important", "critical"}
+print(value if value in allowed else default)
+PY
+}
+
+rule_fail_condition_enabled() {
+    python3 - "$RULE_BUNDLE_JSON" "$1" <<'PY'
+import json
+import sys
+
+bundle = json.loads(sys.argv[1])
+target = sys.argv[2].strip()
+conditions = [str(item).strip() for item in (((bundle.get("merged", {}) or {}).get("fail_conditions")) or [])]
+sys.exit(0 if target in conditions else 1)
+PY
 }
 
 find_owner_dir_for_state_keyword() {
@@ -1008,7 +1172,16 @@ if [ "$IS_ADHOC" -eq 0 ]; then
         STATE_FILE_ABS="$(resolve_project_path "$STATE_FILE")"
         apply_review_arg_compat "$ARG2" "$ARG3" "$ARG4"
         load_plan_repo_scope "$STATE_FILE_ABS"
+        rule_repo_args=()
+        for i in "${!PLAN_REPO_IDS[@]}"; do
+            rule_repo_args+=("${PLAN_REPO_IDS[$i]}::${PLAN_REPO_GIT_ROOTS[$i]}")
+        done
+        load_rule_bundle_for_scope "coding_review" "ai-flow-plan-coding-review" "$AGENT_NAME" "${rule_repo_args[@]}"
     fi
+fi
+
+if [ "$IS_ADHOC" -eq 1 ]; then
+    load_rule_bundle_for_scope "coding_review" "ai-flow-plan-coding-review" "$AGENT_NAME" "owner::${PROJECT_DIR}"
 fi
 
 if [ "$IS_ADHOC" -eq 1 ]; then
@@ -1101,6 +1274,14 @@ fi
 mkdir -p "$(dirname "$REPORT_FILE")"
 ensure_reviewable_git_changes
 require_root_cause_review_loop_record
+PROMPT_TEMPLATE_RENDERED="$(mktemp)"
+append_rule_context_to_prompt_template "$PROMPT_TEMPLATE" "$PROMPT_TEMPLATE_RENDERED"
+PROMPT_TEMPLATE="$PROMPT_TEMPLATE_RENDERED"
+CHANGED_PATHS_FILE="$(mktemp)"
+list_reviewable_git_paths > "$CHANGED_PATHS_FILE"
+if ! rule_constraint_error="$(validate_rule_constraints_before_review "$CHANGED_PATHS_FILE" 2>&1)"; then
+    fail_protocol "$(extract_rule_loader_error "$rule_constraint_error")"
+fi
 
 if [ "$IS_ADHOC" -eq 0 ]; then
     PLAN_CONTENT=$(cat "$PLAN_FILE_ABS")
@@ -1276,6 +1457,7 @@ echo ">>> 审查报告已生成: $REPORT_FILE"
 echo ">>> 校验审查报告结构..."
 
 ERRORS=""
+RULE_MISSING_TESTS=0
 FIRST_LINE=$(head -1 "$REPORT_FILE")
 if ! echo "$FIRST_LINE" | grep -qE '^# 审查报告：'; then
     ERRORS="${ERRORS}首行必须是 '# 审查报告：...'\n"
@@ -1435,6 +1617,27 @@ if [ "$IS_ADHOC" -eq 0 ]; then
             ERRORS="${ERRORS}${plan_repo_validation_error}\n"
         fi
     fi
+    if ! report_has_test_evidence_for_rule_bundle; then
+        RULE_MISSING_TESTS=1
+    fi
+fi
+
+required_evidence_error=""
+if ! required_evidence_error="$(report_has_required_evidence_for_rule_bundle 2>&1)"; then
+    required_evidence_list="$(python3 - "$required_evidence_error" <<'PY'
+import json
+import sys
+
+raw = sys.argv[1].strip()
+try:
+    payload = json.loads(raw)
+except Exception:
+    print(raw)
+    raise SystemExit(0)
+print("；".join(payload.get("missing") or []))
+PY
+)"
+    ERRORS="${ERRORS}命中 review.required_evidence，但报告缺少以下证据说明: ${required_evidence_list}\n"
 fi
 
 if [ "$META_RESULT" = "passed" ]; then
@@ -1502,8 +1705,33 @@ else
     DERIVED_RESULT="passed"
 fi
 
+MISSING_TESTS_SEVERITY="$(rule_severity_for_key "missing_tests_when_required" "important")"
+FAIL_ON_MISSING_TESTS=0
+if rule_fail_condition_enabled "代码改动但缺少测试证据"; then
+    FAIL_ON_MISSING_TESTS=1
+fi
+
+if [ "$RULE_MISSING_TESTS" -eq 1 ]; then
+    case "$MISSING_TESTS_SEVERITY" in
+        critical|important)
+            DERIVED_RESULT="failed"
+            ;;
+        minor|note)
+            if [ "$DERIVED_RESULT" = "passed" ]; then
+                DERIVED_RESULT="passed_with_notes"
+            fi
+            ;;
+    esac
+    if [ "$FAIL_ON_MISSING_TESTS" -eq 1 ]; then
+        DERIVED_RESULT="failed"
+    fi
+fi
+
 echo ""
 echo ">>> 严重度推导: Critical/Important=${SEVERITY_CRITICAL}, Minor=${SEVERITY_MINOR}, 待修复=${TODO_MARKERS}"
+if [ "$RULE_MISSING_TESTS" -eq 1 ]; then
+    echo "    规则违规: missing_tests_when_required -> ${MISSING_TESTS_SEVERITY}${FAIL_ON_MISSING_TESTS:+}"
+fi
 echo "    推导结果: ${DERIVED_RESULT}"
 
 # 校验 Codex 自评结果与推导结果是否一致
@@ -1519,7 +1747,11 @@ if [ "$RESULT" = "failed" ]; then
     if [ "$NEXT_ON_FAILURE" = "invalid" ]; then
         fail_protocol "阻塞缺陷的修复流向必须是 ai-flow-plan-coding 或 ai-flow-code-optimize"
     elif [ "$NEXT_ON_FAILURE" = "none" ]; then
-        fail_protocol "审查结果为 failed，但未能从阻塞缺陷中推导出修复流向"
+        if [ "$RULE_MISSING_TESTS" -eq 1 ]; then
+            NEXT_ON_FAILURE="ai-flow-plan-coding"
+        else
+            fail_protocol "审查结果为 failed，但未能从阻塞缺陷中推导出修复流向"
+        fi
     fi
 fi
 
@@ -1604,7 +1836,11 @@ else
             ;;
         REVIEW_FAILED)
             echo ">>> 审查发现问题，状态已更新为 [REVIEW_FAILED]"
-            PROTOCOL_SUMMARY="审查未通过，状态进入 [REVIEW_FAILED]。"
+            if [ "$RULE_MISSING_TESTS" -eq 1 ]; then
+                PROTOCOL_SUMMARY="审查未通过，缺少测试或自动化验证证据，状态进入 [REVIEW_FAILED]。"
+            else
+                PROTOCOL_SUMMARY="审查未通过，状态进入 [REVIEW_FAILED]。"
+            fi
             PROTOCOL_NEXT="$NEXT_ON_FAILURE"
             ;;
         *)

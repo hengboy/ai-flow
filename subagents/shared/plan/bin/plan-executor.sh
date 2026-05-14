@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$AGENT_DIR/lib/agent-common.sh"
+source "$AGENT_DIR/lib/rule-loader.sh"
 exec 3>&1 1>&2
 
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
@@ -32,6 +33,8 @@ PLANS_DIR="$FLOW_DIR/plans"
 OWNER_GIT_ROOT=""
 REPO_SCOPE_JSON=""
 PLAN_REPO_IDS=()
+PLAN_REPO_PATHS=()
+PLAN_REPO_GIT_ROOTS=()
 TEMPLATE="$AGENT_DIR/templates/plan-template.md"
 PLAN_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-generation.md"
 PLAN_REVIEW_PROMPT_TEMPLATE="$AGENT_DIR/prompts/plan-review.md"
@@ -43,6 +46,9 @@ PLAN_ENGINE_NAME=""
 PLAN_ENGINE_MODEL=""
 REQUIREMENT=""
 MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
+RULE_BUNDLE_JSON=""
+RULE_PROMPT_BLOCK=""
+RULE_REQUIRED_READS_BLOCK=""
 PROTOCOL_ARTIFACT="none"
 PROTOCOL_STATE="none"
 PROTOCOL_NEXT="none"
@@ -232,6 +238,8 @@ render_prompt_template() {
     AI_FLOW_PLAN_CONTENT="${PLAN_CONTENT_FOR_PROMPT:-}" \
     AI_FLOW_REVIEW_ITEMS="${PLAN_REVIEW_ITEMS_FOR_PROMPT:-}" \
     AI_FLOW_REPO_SCOPE_CONTEXT="$repo_ctx" \
+    AI_FLOW_RULE_PROMPT_BLOCK="${RULE_PROMPT_BLOCK:-}" \
+    AI_FLOW_RULE_REQUIRED_READS_BLOCK="${RULE_REQUIRED_READS_BLOCK:-}" \
     python3 - "$prompt_template" <<'PY'
 import os
 import sys
@@ -246,10 +254,26 @@ replacements = {
     "__AI_FLOW_PLAN_CONTENT__": os.environ.get("AI_FLOW_PLAN_CONTENT", ""),
     "__AI_FLOW_REVIEW_ITEMS__": os.environ.get("AI_FLOW_REVIEW_ITEMS", ""),
     "__AI_FLOW_REPO_SCOPE_CONTEXT__": os.environ.get("AI_FLOW_REPO_SCOPE_CONTEXT", ""),
+    "__AI_FLOW_RULE_PROMPT_BLOCK__": os.environ.get("AI_FLOW_RULE_PROMPT_BLOCK", ""),
+    "__AI_FLOW_RULE_REQUIRED_READS_BLOCK__": os.environ.get("AI_FLOW_RULE_REQUIRED_READS_BLOCK", ""),
 }
 for needle, value in replacements.items():
     text = text.replace(needle, value)
 sys.stdout.write(text)
+PY
+}
+
+append_rule_context_to_prompt_template() {
+    local template_file="$1"
+    local output_file="$2"
+    python3 - "$template_file" "$output_file" <<'PY'
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1]).read_text(encoding="utf-8")
+dst = Path(sys.argv[2])
+appendix = "\n\n__AI_FLOW_RULE_PROMPT_BLOCK__\n\n__AI_FLOW_RULE_REQUIRED_READS_BLOCK__\n"
+dst.write_text(src.rstrip() + appendix, encoding="utf-8")
 PY
 }
 
@@ -1359,6 +1383,45 @@ print(json.dumps({"mode": "plan_repos", "repos": repos}, ensure_ascii=False))
 PY
 }
 
+load_rule_bundle_for_repos() {
+    local stage="$1"
+    local skill_name="$2"
+    local subagent_name="$3"
+    shift 3 || true
+    local bundle_json
+    if ! bundle_json="$(load_rule_bundle_json "$stage" "$skill_name" "$subagent_name" "$@")"; then
+        local error_text
+        error_text="$(extract_rule_loader_error "$bundle_json")"
+        fail_protocol "$error_text" "${PROTOCOL_REVIEW_RESULT:-}"
+    fi
+    RULE_BUNDLE_JSON="$bundle_json"
+    RULE_PROMPT_BLOCK="$(render_rule_prompt_block "$RULE_BUNDLE_JSON" || true)"
+    local required_reads_output
+    if ! required_reads_output="$(render_required_reads_block "$RULE_BUNDLE_JSON" 2>&1)"; then
+        local error_text
+        error_text="$(extract_rule_loader_error "$required_reads_output")"
+        fail_protocol "$error_text" "${PROTOCOL_REVIEW_RESULT:-}"
+    fi
+    RULE_REQUIRED_READS_BLOCK="$required_reads_output"
+}
+
+owner_rule_repo_arg() {
+    printf 'owner::%s\n' "$PROJECT_DIR"
+}
+
+collect_repo_args_from_scope_json() {
+    local scope_json="$1"
+    python3 - "$scope_json" <<'PY'
+import json
+import sys
+
+scope = json.loads(sys.argv[1])
+repos = scope.get("repos") or []
+for repo in repos:
+    print(f"{repo['id']}::{repo['git_root']}")
+PY
+}
+
 validate_plan_repos_match_state() {
     local plan_file="$1"
     local state_file="$2"
@@ -1447,6 +1510,16 @@ PY
 ensure_project_root_context
 mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports" "$STATE_DIR"
 
+PLAN_PROMPT_TEMPLATE_RENDERED="$(mktemp)"
+PLAN_REVIEW_PROMPT_TEMPLATE_RENDERED="$(mktemp)"
+PLAN_REVISION_PROMPT_TEMPLATE_RENDERED="$(mktemp)"
+append_rule_context_to_prompt_template "$PLAN_PROMPT_TEMPLATE" "$PLAN_PROMPT_TEMPLATE_RENDERED"
+append_rule_context_to_prompt_template "$PLAN_REVIEW_PROMPT_TEMPLATE" "$PLAN_REVIEW_PROMPT_TEMPLATE_RENDERED"
+append_rule_context_to_prompt_template "$PLAN_REVISION_PROMPT_TEMPLATE" "$PLAN_REVISION_PROMPT_TEMPLATE_RENDERED"
+PLAN_PROMPT_TEMPLATE="$PLAN_PROMPT_TEMPLATE_RENDERED"
+PLAN_REVIEW_PROMPT_TEMPLATE="$PLAN_REVIEW_PROMPT_TEMPLATE_RENDERED"
+PLAN_REVISION_PROMPT_TEMPLATE="$PLAN_REVISION_PROMPT_TEMPLATE_RENDERED"
+
 if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
     STATE_FILE=$(find_state_file_by_keyword "$MATCH_KEYWORD")
     SLUG=$(basename "$STATE_FILE" .json)
@@ -1468,6 +1541,19 @@ if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
         PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
         fail_protocol "关联计划文件不存在: $PLAN_FILE" "failed"
     }
+    STATE_SCOPE_JSON="$(python3 - "$STATE_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(json.dumps(state.get("execution_scope") or {}, ensure_ascii=False))
+PY
+)"
+    rule_repo_args=()
+    while IFS= read -r repo_arg; do
+        [ -n "$repo_arg" ] && rule_repo_args+=("$repo_arg")
+    done < <(collect_repo_args_from_scope_json "$STATE_SCOPE_JSON")
+    load_rule_bundle_for_repos "plan_review" "ai-flow-plan-review" "$AGENT_NAME" "${rule_repo_args[@]}"
     REQUIREMENT=$(extract_requirement_from_plan "$PLAN_FILE")
     TEMPLATE_CONTENT=$(render_plan_template_content "$PLAN_TITLE" "$REQUIREMENT")
     PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
@@ -1598,6 +1684,19 @@ if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
         PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
         fail_protocol "关联计划文件不存在: $PLAN_FILE"
     }
+    STATE_SCOPE_JSON="$(python3 - "$EXISTING_STATE_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(json.dumps(state.get("execution_scope") or {}, ensure_ascii=False))
+PY
+)"
+    rule_repo_args=()
+    while IFS= read -r repo_arg; do
+        [ -n "$repo_arg" ] && rule_repo_args+=("$repo_arg")
+    done < <(collect_repo_args_from_scope_json "$STATE_SCOPE_JSON")
+    load_rule_bundle_for_repos "plan_revision" "ai-flow-plan" "$AGENT_NAME" "${rule_repo_args[@]}"
 
     FRAMEWORKS=""
 else
@@ -1616,6 +1715,10 @@ else
     PLAN_FILE="$PLANS_DIR/${DATE_PREFIX}-${SLUG}.md"
 fi
 PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
+
+if [ -z "$RULE_BUNDLE_JSON" ]; then
+    load_rule_bundle_for_repos "plan_generation" "ai-flow-plan" "$AGENT_NAME" "$(owner_rule_repo_arg)"
+fi
 
 FRAMEWORKS=""
 if [ -f "$PROJECT_DIR/package.json" ]; then
@@ -1738,8 +1841,36 @@ else
     PLAN_TITLE=$(sed -n '1s/^# 实施计划：//p' "$PLAN_FILE")
     [ -z "$PLAN_TITLE" ] && PLAN_TITLE="$REQUIREMENT"
 
-    echo ">>> 初始化状态文件..."
     REPO_SCOPE_JSON=$(build_repo_scope_json "$PLAN_FILE")
+    rule_repo_args=()
+    while IFS= read -r repo_arg; do
+        [ -n "$repo_arg" ] && rule_repo_args+=("$repo_arg")
+    done < <(collect_repo_args_from_scope_json "$REPO_SCOPE_JSON")
+    load_rule_bundle_for_repos "plan_generation" "ai-flow-plan" "$AGENT_NAME" "${rule_repo_args[@]}"
+
+    PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
+    PLAN_REVIEW_ITEMS_FOR_PROMPT=""
+    SECOND_STAGE_PROMPT=$(render_prompt_template "$PLAN_REVISION_PROMPT_TEMPLATE")
+    second_stage_output=$(mktemp)
+    echo ">>> 按参与仓库规则补强 draft plan..."
+    if ! run_plan_authoring_prompt "$SECOND_STAGE_PROMPT" "$second_stage_output" "# 实施计划：" "$AUTHORING_REASONING"; then
+        if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
+            if [ "$PLAN_ENGINE_MODE" = "claude" ]; then
+                fail_protocol "PLAN_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
+            fi
+            rm -f "$second_stage_output"
+            PROTOCOL_ARTIFACT="none"
+            PROTOCOL_STATE="none"
+            PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan。"
+            emit_current_protocol "degraded"
+            exit 0
+        fi
+    fi
+    mv "$second_stage_output" "$PLAN_FILE"
+    ensure_requirement_literal "$PLAN_FILE"
+    validate_plan_structure "$PLAN_FILE" "draft"
+
+    echo ">>> 初始化状态文件..."
     AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "${DATE_PREFIX}-${SLUG}" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE" --repo-scope-json "$REPO_SCOPE_JSON"
     PLAN_STATUS=$("$FLOW_STATE_SH" show "${DATE_PREFIX}-${SLUG}" --field current_status)
     echo "    状态已验证为 [$PLAN_STATUS]"

@@ -176,11 +176,13 @@ $HOME/.config/ai-flow/scripts/flow-change.sh {YYYYMMDD}-{slug} "[root-cause-revi
 
 ### 8. 后续指引
 
-- 变更后状态统一为 `AWAITING_PLAN_REVIEW`：提示使用 `/ai-flow-plan-review` 重新审核变更后的计划
+- 如果变更前状态是 `PLANNED` 或 `IMPLEMENTING`，变更后状态应为 `AWAITING_PLAN_REVIEW`：提示使用 `/ai-flow-plan-review` 重新审核变更后的计划
+- 如果变更前状态是 `AWAITING_REVIEW`、`DONE`、`REVIEW_FAILED` 或 `FIXING_REVIEW`，变更后状态应为 `IMPLEMENTING`：继续增量修订计划与实现，再按后续阶段进入审核
 - 审核通过后状态回到 `PLANNED`：提示使用 `/ai-flow-plan-coding` 继续执行
 
 ## 约束
 
+- 若当前 repo 或绑定 flow 的参与 repo 存在 `.ai-flow/rule.yaml`，变更计划时必须保留其中要求的关键约束、必读文件和审查门禁，不得通过改 plan 绕开规则
 - 只能通过 `flow-state.sh` 调用 `repair`（状态转换）、`revert-plan`（需求变更回退到审核）和 `show`（状态查询）子命令，禁止调用 `create`、`record-plan-review`、`record-review`、`start-execute` 等其他子命令
 - 禁止直接编辑 `.ai-flow/state/*.json` 文件
 - 计划文件是执行和审查的唯一依据；变更必须写入计划各章节，不能仅记录在 `## 7` 审计表
@@ -195,6 +197,7 @@ $HOME/.config/ai-flow/scripts/flow-change.sh {YYYYMMDD}-{slug} "[root-cause-revi
 
 - 变更是增量编辑，不是重写。保留已有的已完成步骤和验收记录。
 - 如果用户要求完全推翻原有计划，建议使用 `/ai-flow-plan` 重新生成。
+- 只有在变更导致状态进入 `AWAITING_PLAN_REVIEW` 时，才需要立即重新走 `/ai-flow-plan-review`；如果状态被 repair 到 `IMPLEMENTING`，则应先完成本轮变更落地，再按后续阶段进入审核。
 - 变更后需先通过 `/ai-flow-plan-review` 重新审核计划，审核通过后 execute 才会从第一个未完成的 `- [ ]` 动作开始。
 - review 会对比计划内容，所以变更后的步骤必须足够详细（文件路径、具体改动、验证命令）。
 - 如果当前有未提交的 Git 变更，变更计划后这些变更仍然存在，后续 execute 和 review 会基于最新的工作区状态操作。

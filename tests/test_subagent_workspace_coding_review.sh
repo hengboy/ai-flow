@@ -232,7 +232,7 @@ test_workspace_coding_review_prompt_includes_workspace_contract() {
         FAKE_CODE_REVIEW_RESULT=passed run_with_fake_coding_review_agents "$temp_root" bash "$executor" ws-prompt >"$temp_root/prompt.out"
     )
 
-    prompt_file="$(ls -1t "$temp_root"/codex-review-prompt-*.txt | head -1)"
+    prompt_file="$temp_root/codex-review-prompt.txt"
     assert_file_exists "$prompt_file"
     assert_contains "$prompt_file" 'git -C <git_root> status --porcelain --untracked-files=all'
     assert_contains "$prompt_file" 'git -C <git_root> diff --staged'

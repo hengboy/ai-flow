@@ -215,8 +215,8 @@ test_plan_generation_rewrites_full_implementation_plan_input() {
     assert_contains "$plan_file" "## 8. 计划审核记录"
     assert_contains "$plan_file" "完整实施方案："
     assert_contains "$plan_file" "验收标准：生成的 plan 保留原始方案"
-    assert_contains "$temp_root"/codex-plan-prompt-*.txt "如果”需求描述”是一份完整实施方案"
-    assert_contains "$temp_root"/codex-plan-prompt-*.txt "全部映射到下方"
+    assert_contains "$temp_root/codex-plan-prompt.log" "如果”需求描述”是一份完整实施方案"
+    assert_contains "$temp_root/codex-plan-prompt.log" "全部映射到下方"
     rm -rf "$temp_root"
 }
 
@@ -243,8 +243,57 @@ test_plan_generation_allows_document_links_as_original_requirement() {
     assert_file_exists "$plan_file"
     assert_contains "$plan_file" "https://docs.example.com/specs/ai-flow-plan-input"
     assert_contains "$plan_file" "./docs/requirements/plan-input.md"
-    assert_contains "$temp_root"/codex-plan-prompt-*.txt "只包含一个或多个文档地址"
-    assert_contains "$temp_root"/codex-plan-prompt-*.txt "可以直接引用这些文档地址"
+    assert_contains "$temp_root/codex-plan-prompt.log" "只包含一个或多个文档地址"
+    assert_contains "$temp_root/codex-plan-prompt.log" "可以直接引用这些文档地址"
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_injects_rule_prompt_and_required_reads() {
+    local temp_root project executor readme_rule
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    printf '# Domain Model\n' > "$project/README.md"
+    write_rule_yaml "$project" $'version: 1\nprompt:\n  shared_context:\n    - "项目背景：权限域"\nconstraints:\n  required_reads:\n    - "README.md"\nreview: {}\n'
+    setup_git_repo_clean "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+
+    (
+        cd "$project"
+        run_with_fake_plan_agents "$temp_root" bash "$executor" "新增用户权限管理模块" rules-demo >"$temp_root/rule-plan.out"
+    )
+
+    assert_protocol_field "$temp_root/rule-plan.out" "RESULT" "success"
+    assert_contains "$temp_root/codex-plan-prompt.log" "## AI Flow 项目规则"
+    assert_contains "$temp_root/codex-plan-prompt.log" "项目背景：权限域"
+    assert_contains "$temp_root/codex-plan-prompt.log" "### Required Read [owner] README.md"
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_fails_when_required_read_missing() {
+    local temp_root project executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    write_rule_yaml "$project" $'version: 1\nconstraints:\n  required_reads:\n    - "docs/domain-model.md"\nprompt: {}\nreview: {}\n'
+    setup_git_repo_clean "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+
+    set +e
+    (
+        cd "$project"
+        run_with_fake_plan_agents "$temp_root" bash "$executor" "新增用户权限管理模块" missing-read >"$temp_root/missing-read.out"
+    )
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected missing required_reads to fail"
+    assert_protocol_field "$temp_root/missing-read.out" "RESULT" "failed"
+    assert_contains "$temp_root/missing-read.out" "required_reads 文件不存在"
     rm -rf "$temp_root"
 }
 
@@ -310,4 +359,6 @@ test_plan_generation_escalates_reasoning_for_complex_requirements
 test_plan_generation_allows_negative_tbd_references
 test_plan_generation_rewrites_full_implementation_plan_input
 test_plan_generation_allows_document_links_as_original_requirement
+test_plan_generation_injects_rule_prompt_and_required_reads
+test_plan_generation_fails_when_required_read_missing
 test_plan_missing_runtime_fails_deterministically
