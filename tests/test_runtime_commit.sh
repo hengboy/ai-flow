@@ -426,6 +426,79 @@ test_commit_rejects_missing_message_map_entry() {
     rm -rf "$temp_root"
 }
 
+test_plan_repos_commit_with_non_git_root() {
+    local temp_root workspace runtime_script commit_script scope alpha beta alpha_git_root beta_git_root prepared_json message_map_json
+    temp_root=$(make_temp_root)
+    workspace="$temp_root/workspace"
+    runtime_script="$SOURCE_FLOW_STATE_SCRIPT"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+
+    mkdir -p "$workspace"
+    setup_project_dirs "$workspace" "20260514"
+    mkdir -p "$workspace/repos"
+    alpha="$(setup_git_remote_pair "$workspace/repos" "repo-alpha")"
+    beta="$(setup_git_remote_pair "$workspace/repos" "repo-beta")"
+    mv "$alpha" "$workspace/repo-alpha"
+    mv "$beta" "$workspace/repo-beta"
+    
+    alpha_git_root=$(git -C "$workspace/repo-alpha" rev-parse --show-toplevel)
+    beta_git_root=$(git -C "$workspace/repo-beta" rev-parse --show-toplevel)
+    scope=$(cat <<EOF
+{
+  "mode": "plan_repos",
+  "repos": [
+    { "id": "owner", "path": ".", "git_root": "$workspace", "role": "owner" },
+    { "id": "repo-alpha", "path": "repo-alpha", "git_root": "$alpha_git_root", "role": "participant" },
+    { "id": "repo-beta", "path": "repo-beta", "git_root": "$beta_git_root", "role": "participant" }
+  ]
+}
+EOF
+)
+    write_plan_repos_commit_plan "$workspace" "non-git-root" "20260514" "1"
+    (
+        cd "$workspace"
+        bash "$runtime_script" create --slug non-git-root --title "non-git-root" --plan-file ".ai-flow/plans/20260514-non-git-root.md" --repo-scope-json "$scope" >/dev/null
+        python3 - ".ai-flow/state/non-git-root.json" <<'PY'
+import json, sys; from pathlib import Path
+p = Path(sys.argv[1]); s = json.loads(p.read_text()); s["current_status"] = "DONE"; p.write_text(json.dumps(s))
+PY
+    )
+    printf 'alpha change\n' > "$workspace/repo-alpha/src/alpha.txt"
+    printf 'beta change\n' > "$workspace/repo-beta/src/beta.txt"
+
+    (
+        cd "$workspace"
+        run_commit_with_generated_messages "$commit_script" "$temp_root/non-git-root.out" --slug non-git-root
+    )
+
+    assert_protocol_field "$temp_root/non-git-root.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/non-git-root.out" "COMMITS" "2"
+    assert_contains "$temp_root/non-git-root.out" "[owner] 根目录非 Git 仓库，跳过该仓库的 Git 操作"
+    rm -rf "$temp_root"
+}
+
+test_stash_pop_conflict_auto_resolve_cleans_up_stash() {
+    local temp_root repo remote_dir commit_script prepared_json message_map_json
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "stash-cleanup")"
+    remote_dir="$temp_root/stash-cleanup-remote.git"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+
+    printf 'line 1\n' > "$repo/src/app.txt"
+    (cd "$repo" && git add . && git commit -m "base" && git push origin main)
+    make_remote_change "$remote_dir" "src/app.txt" "remote change\nline 1"
+    printf 'local change\nline 1\n' > "$repo/src/app.txt"
+
+    (
+        cd "$repo"
+        run_commit_with_generated_messages "$commit_script" "$temp_root/stash-cleanup.out" --conflict-mode auto
+    )
+
+    assert_protocol_field "$temp_root/stash-cleanup.out" "RESULT" "success"
+    [ -z "$(git -C "$repo" stash list)" ] || fail "Expected stash list to be empty after auto-resolve"
+    rm -rf "$temp_root"
+}
+
 test_standalone_commit_single_group
 test_bound_done_rejects_non_done_status
 test_bound_done_single_repo_commit
@@ -438,3 +511,5 @@ test_standalone_auto_conflict_preserves_both_sides
 test_standalone_manual_conflict_requires_user_action
 test_commit_message_uses_diff_and_keeps_body_concise
 test_commit_rejects_missing_message_map_entry
+test_plan_repos_commit_with_non_git_root
+test_stash_pop_conflict_auto_resolve_cleans_up_stash
