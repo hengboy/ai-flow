@@ -1311,27 +1311,43 @@ for line in text.splitlines():
 if "owner" not in repo_ids:
     repo_ids.insert(0, "owner")
 
-repos = []
-for repo_id in repo_ids:
-    repo_path = "." if repo_id == "owner" else f"../{repo_id}"
-    abs_path = (owner / repo_path).resolve()
-    if not abs_path.exists():
-        raise SystemExit(f"plan 声明仓库 {repo_id}，但路径不存在: {repo_path}")
+def git_root_for(path: Path) -> Path:
     result = subprocess.run(
-        ["git", "-C", str(abs_path), "rev-parse", "--show-toplevel"],
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
         timeout=10,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        raise SystemExit(f"plan 声明仓库 {repo_id} 不是有效 Git 仓库: {repo_path}")
-    git_root = Path(result.stdout.strip()).resolve()
+        raise SystemExit(f"路径不是有效 Git 仓库: {path}")
+    return Path(result.stdout.strip()).resolve()
+
+discovered = {"owner": {"path": ".", "git_root": git_root_for(owner)}}
+for child in sorted(owner.iterdir(), key=lambda item: item.name):
+    if not child.is_dir() or child.name.startswith(".") or child.name == ".ai-flow":
+        continue
+    try:
+        git_root = git_root_for(child)
+    except SystemExit:
+        continue
     try:
         rel_path = git_root.relative_to(owner).as_posix()
     except ValueError:
-        rel_path = repo_path
-    if repo_id == "owner":
-        rel_path = "."
+        continue
+    if rel_path == "." or "/" in rel_path:
+        continue
+    discovered.setdefault(child.name, {"path": rel_path, "git_root": git_root})
+
+repos = []
+for repo_id in repo_ids:
+    repo_meta = discovered.get(repo_id)
+    if repo_meta is None:
+        available = ", ".join(sorted(discovered.keys()))
+        raise SystemExit(
+            f"plan 声明仓库 {repo_id}，但未在 owner 根目录下发现同名一级 Git 仓库；可用仓库: {available}"
+        )
+    rel_path = repo_meta["path"]
+    git_root = repo_meta["git_root"]
     repos.append({
         "id": repo_id,
         "path": rel_path,

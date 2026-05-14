@@ -16,7 +16,7 @@ test_plan_scoped_multi_repo_accepts_owner_root() {
 
     (
         cd "$workspace"
-        run_with_fake_plan_agents "$temp_root" bash "$executor" "跨仓库权限扩展" workspace-perms >"$temp_root/plan.out"
+        FAKE_PLAN_INCLUDE_PARTICIPANT_REPOS=1 run_with_fake_plan_agents "$temp_root" bash "$executor" "跨仓库权限扩展" workspace-perms >"$temp_root/plan.out"
     )
     out="$temp_root/plan.out"
 
@@ -31,6 +31,12 @@ test_plan_scoped_multi_repo_accepts_owner_root() {
     assert_equals "owner" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.0.id")"
     assert_equals "." "$(state_field "$workspace" "$state_slug" "execution_scope.repos.0.path")"
     assert_equals "owner" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.0.role")"
+    assert_equals "repo-alpha" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.1.id")"
+    assert_equals "repo-alpha" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.1.path")"
+    assert_equals "participant" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.1.role")"
+    assert_equals "repo-beta" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.2.id")"
+    assert_equals "repo-beta" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.2.path")"
+    assert_equals "participant" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.2.role")"
     rm -rf "$temp_root"
 }
 

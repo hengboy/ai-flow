@@ -596,6 +596,18 @@ if [ "${FAKE_PLAN_INCLUDE_NEGATIVE_TBD:-0}" = "1" ]; then
     guard_note=$'> 校验说明：计划文件不得包含 `TBD`、`TODO`。\n'
 fi
 build_plan() {
+    local module_rows='| `src/review-target.txt` | owner | fixture | 修改 |'
+    local file_rows='| `src/review-target.txt` | owner | Modify | fixture | Step 1 |'
+    if [ "${FAKE_PLAN_INCLUDE_PARTICIPANT_REPOS:-0}" = "1" ]; then
+        module_rows='| `src/review-target.txt` | owner | fixture | 修改 |
+| `src/alpha.txt` | repo-alpha | alpha 业务 | 修改 |
+| `src/beta.txt` | repo-beta | beta 业务 | 修改 |'
+        file_rows='| `src/review-target.txt` | owner | Modify | fixture | Step 1 |
+| `src/alpha.txt` | repo-alpha | Modify | alpha 业务 | Step 1 |
+| `tests/run.sh` | repo-alpha | Test | alpha 验证 | Step 1 |
+| `src/beta.txt` | repo-beta | Modify | beta 业务 | Step 1 |
+| `tests/run.sh` | repo-beta | Test | beta 验证 | Step 1 |'
+    fi
     cat > "$out" <<PLAN
 # 实施计划：$slug
 
@@ -623,7 +635,7 @@ $requirement
 
 | 模块 | 仓库 | 职责 | 变更类型 |
 |------|------|------|----------|
-| \`src/review-target.txt\` | owner | fixture | 修改 |
+$module_rows
 
 ### 2.2 数据模型变更
 
@@ -641,7 +653,7 @@ $requirement
 
 | 文件 | 仓库 | 操作 | 职责 | 对应步骤 |
 |------|------|------|------|----------|
-| \`src/review-target.txt\` | owner | Modify | fixture | Step 1 |
+$file_rows
 
 ### 2.6 高风险路径与缺陷族
 
