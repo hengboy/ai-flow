@@ -4,6 +4,7 @@ TEST_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SOURCE_FLOW_STATE_SCRIPT="$TEST_ROOT/runtime/scripts/flow-state.sh"
 SOURCE_FLOW_STATUS_SCRIPT="$TEST_ROOT/runtime/scripts/flow-status.sh"
 SOURCE_FLOW_CHANGE_SCRIPT="$TEST_ROOT/runtime/scripts/flow-change.sh"
+SOURCE_FLOW_PLAN_CODING_SCRIPT="$TEST_ROOT/runtime/scripts/flow-plan-coding.sh"
 SOURCE_FLOW_COMMIT_SCRIPT="$TEST_ROOT/runtime/scripts/flow-commit.sh"
 
 fail() {
@@ -105,6 +106,13 @@ setup_project_root() {
     local project_dir="$1"
     mkdir -p "$project_dir/src"
     printf '{ "name": "fixture" }\n' > "$project_dir/package.json"
+}
+
+write_rule_yaml() {
+    local repo_root="$1"
+    local content="$2"
+    mkdir -p "$repo_root/.ai-flow"
+    printf '%s\n' "$content" > "$repo_root/.ai-flow/rule.yaml"
 }
 
 setup_project_dirs() {
@@ -577,7 +585,7 @@ while [ "$#" -gt 0 ]; do
     fi
     shift || true
 done
-prompt_file="$temp_root/codex-plan-prompt-$(date +%s%N).txt"
+prompt_file="$temp_root/codex-plan-prompt.txt"
 cat > "$prompt_file"
 slug=$(sed -n 's/^> 需求简称：//p' "$prompt_file" | head -1)
 [ -n "$slug" ] || slug=demo
@@ -779,6 +787,7 @@ if grep -q '只允许输出以下固定格式' "$prompt_file"; then
 else
     build_plan
 fi
+cat "$prompt_file" >> "$temp_root/codex-plan-prompt.log"
 FAKE_CODEX
     chmod +x "$temp_root/bin/codex"
 }
@@ -825,7 +834,7 @@ while [ "$#" -gt 0 ]; do
     fi
     shift || true
 done
-prompt_file="$temp_root/codex-review-prompt-$(date +%s%N).txt"
+prompt_file="$temp_root/codex-review-prompt.txt"
 cat > "$prompt_file"
 title=$(sed -n 's/^# 审查报告：//p' "$prompt_file" | tail -1)
 [ -n "$title" ] || title=demo
@@ -1038,6 +1047,7 @@ $conclusion_fix
 $tracking_note
 $tracking
 REPORT
+cat "$prompt_file" >> "$temp_root/codex-review-prompt.log"
 FAKE_CODEX
     chmod +x "$temp_root/bin/codex"
 }
