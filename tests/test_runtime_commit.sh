@@ -670,6 +670,40 @@ test_standalone_commit_single_group() {
     rm -rf "$temp_root"
 }
 
+test_standalone_commit_with_non_git_root_and_direct_child_repos() {
+    local temp_root workspace commit_script alpha beta
+    temp_root=$(make_temp_root)
+    workspace="$temp_root/workspace"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+
+    mkdir -p "$workspace"
+    setup_project_dirs "$workspace" "20260515"
+    mkdir -p "$workspace/repos"
+    alpha="$(setup_git_remote_pair "$workspace/repos" "repo-alpha")"
+    beta="$(setup_git_remote_pair "$workspace/repos" "repo-beta")"
+    mv "$alpha" "$workspace/repo-alpha"
+    mv "$beta" "$workspace/repo-beta"
+
+    printf 'alpha local\n' > "$workspace/repo-alpha/src/alpha.txt"
+    printf 'beta local\n' > "$workspace/repo-beta/src/beta.txt"
+
+    (
+        cd "$workspace"
+        run_commit_with_generated_messages "$commit_script" "$temp_root/non-git-standalone.out"
+    )
+
+    assert_protocol_field "$temp_root/non-git-standalone.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/non-git-standalone.out" "SCOPE" "standalone"
+    assert_protocol_field "$temp_root/non-git-standalone.out" "REPOS" "2"
+    assert_protocol_field "$temp_root/non-git-standalone.out" "COMMITS" "2"
+    assert_contains "$temp_root/non-git-standalone.out" "[repo-alpha]"
+    assert_contains "$temp_root/non-git-standalone.out" "[repo-beta]"
+    assert_line_order "$temp_root/non-git-standalone.out" "处理仓库 [repo-alpha]" "处理仓库 [repo-beta]"
+    assert_equals "2" "$(git_commit_count "$workspace/repo-alpha")"
+    assert_equals "2" "$(git_commit_count "$workspace/repo-beta")"
+    rm -rf "$temp_root"
+}
+
 test_commit_message_uses_diff_and_keeps_body_concise() {
     local temp_root repo commit_script body_lines subject
     temp_root=$(make_temp_root)
@@ -1136,6 +1170,7 @@ test_validate_groups_json_accepts_explicit_session_id_without_json_top_level_ses
 test_validate_groups_json_rejects_session_id_mismatch_between_flag_and_json
 test_prepare_json_rejects_session_id_flag
 test_standalone_commit_single_group
+test_standalone_commit_with_non_git_root_and_direct_child_repos
 test_commit_message_uses_diff_and_keeps_body_concise
 test_commit_rejects_subject_verb_outside_whitelist
 test_bound_done_rejects_non_done_status

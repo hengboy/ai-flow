@@ -66,6 +66,47 @@ current_git_root() {
     git rev-parse --show-toplevel 2>/dev/null || true
 }
 
+discover_direct_child_git_repos_json() {
+    local start_dir="${1:-$(pwd)}"
+    python3 - "$start_dir" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+start_dir = Path(sys.argv[1]).resolve()
+repos = []
+seen_git_roots = set()
+
+for child in sorted(start_dir.iterdir(), key=lambda item: item.name):
+    if not child.is_dir() or child.name.startswith("."):
+        continue
+    result = subprocess.run(
+        ["git", "-C", str(child), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if result.returncode != 0:
+        continue
+    git_root = str(Path(result.stdout.strip()).resolve())
+    if not git_root or git_root in seen_git_roots:
+        continue
+    seen_git_roots.add(git_root)
+    rel_path = child.relative_to(start_dir).as_posix()
+    repos.append({
+        "id": child.name,
+        "path": rel_path,
+        "git_root": git_root,
+        "role": "participant",
+        "plan_context": {},
+    })
+
+print(json.dumps(repos, ensure_ascii=False))
+PY
+}
+
 list_changed_paths() {
     local git_root="$1"
     git -C "$git_root" status --porcelain --untracked-files=all 2>/dev/null | awk '
@@ -1428,6 +1469,19 @@ fail_protocol() {
 }
 
 if [ -z "$CURRENT_GIT_ROOT" ] && [ -z "$STATE_SLUG" ]; then
+    STANDALONE_DISCOVERED_REPOS_JSON="$(discover_direct_child_git_repos_json "$PROJECT_DIR")"
+    STANDALONE_DISCOVERED_REPOS_COUNT="$(python3 - "$STANDALONE_DISCOVERED_REPOS_JSON" <<'PY'
+import json
+import sys
+print(len(json.loads(sys.argv[1])))
+PY
+)"
+else
+    STANDALONE_DISCOVERED_REPOS_JSON="[]"
+    STANDALONE_DISCOVERED_REPOS_COUNT="0"
+fi
+
+if [ -z "$CURRENT_GIT_ROOT" ] && [ -z "$STATE_SLUG" ] && [ "$STANDALONE_DISCOVERED_REPOS_COUNT" = "0" ]; then
     if [ "$PREPARE_JSON" -eq 1 ] || [ -n "$GROUPS_JSON" ]; then
         fail_protocol "当前目录不在 Git 仓库内，无法提交代码。"
     fi
@@ -1609,23 +1663,32 @@ print(json.dumps(payload, ensure_ascii=False))
 PY
 else
     PROTOCOL_SCOPE="standalone"
-    python3 - "$CURRENT_GIT_ROOT" >"$CONTEXT_FILE" <<'PY'
+    python3 - "$CURRENT_GIT_ROOT" "$PROJECT_DIR" "$STANDALONE_DISCOVERED_REPOS_JSON" >"$CONTEXT_FILE" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-git_root = Path(sys.argv[1]).resolve()
+current_git_root = sys.argv[1].strip()
+project_dir = Path(sys.argv[2]).resolve()
+discovered_repos = json.loads(sys.argv[3])
+
+repos = []
+if current_git_root:
+    repos.append({
+        "id": "owner",
+        "path": ".",
+        "git_root": str(Path(current_git_root).resolve()),
+        "role": "owner",
+        "plan_context": {},
+    })
+else:
+    repos.extend(discovered_repos)
+
 payload = {
     "scope": "standalone",
     "slug": "none",
     "used_dependency_table": False,
-    "repos": [{
-        "id": "owner",
-        "path": ".",
-        "git_root": str(git_root),
-        "role": "owner",
-        "plan_context": {},
-    }],
+    "repos": repos,
 }
 print(json.dumps(payload, ensure_ascii=False))
 PY
