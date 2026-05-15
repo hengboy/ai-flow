@@ -1526,12 +1526,18 @@ for line in plan_text.splitlines():
         plan_title = line[2:].strip()
         break
 
-step_pattern = re.compile(r"^### Step (\d+): (.+)$", re.M)
-step_matches = list(step_pattern.finditer(plan_text))
-step_titles = {}
-for match in step_matches:
-    step_no = match.group(1)
-    step_titles[f"Step {step_no}"] = match.group(2).strip()
+step_sections = re.split(r"(?=^### (?!\d+\.\d+\s))", plan_text, flags=re.M)
+step_sections = [section for section in step_sections if re.match(r"^### (?!\d+\.\d+\s)", section)]
+step_ids = {}
+for section in step_sections:
+    header_match = re.match(r"^### (.+)$", section)
+    if not header_match:
+        continue
+    title = header_match.group(1).strip()
+    step_id_match = re.search(r"(?m)^\*\*Step ID\*\*：`?([^`\n]+)`?\s*$", section)
+    step_id = step_id_match.group(1).strip() if step_id_match else ""
+    if step_id:
+        step_ids[step_id] = title
 
 file_boundary_rows = extract_section_table(plan_text, "文件边界总览") or []
 repo_file_boundaries = defaultdict(list)
@@ -1551,7 +1557,7 @@ for row in file_boundary_rows:
             "path": path,
             "step": step_ref,
         })
-    step_title = step_titles.get(step_ref)
+    step_title = step_ids.get(step_ref)
     if step_title and step_title not in seen_step_titles[repo_id]:
         repo_step_titles[repo_id].append(step_title)
         seen_step_titles[repo_id].add(step_title)
