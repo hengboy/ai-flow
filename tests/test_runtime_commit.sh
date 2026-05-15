@@ -209,6 +209,11 @@ PY
     [ -s "$output_file" ] || fail "Expected commit output file to be non-empty: $output_file"
 }
 
+session_json_file() {
+    local session_id="$1"
+    printf '%s/.config/ai-flow/tmp/flow-commit-sessions/%s.json' "$HOME" "$session_id"
+}
+
 assert_line_order() {
     local file="$1"
     local first="$2"
@@ -558,6 +563,37 @@ PY
 
     [ "$rc" -ne 0 ] || fail "Expected commit to reject tampered validated groups json"
     assert_contains "$temp_root/tampered-groups.out" "必须使用 runtime 最近一次校验后的原样输出"
+    rm -rf "$temp_root"
+}
+
+test_validate_groups_json_persists_raw_validated_output() {
+    local temp_root repo commit_script prepared_json groups_json validated_json session_id session_file
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "persist-validated")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(build_groups_json "$prepared_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
+        session_file="$(session_json_file "$session_id")"
+        python3 - "$session_file" "$validated_json" <<'PY'
+import json
+import sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+assert record["validated_output_json"] == sys.argv[2]
+assert record["message_map_json"] == ""
+print("ok")
+PY
+    )
+
     rm -rf "$temp_root"
 }
 
@@ -1079,6 +1115,139 @@ PY
     rm -rf "$temp_root"
 }
 
+test_resume_commit_reuses_session_payloads() {
+    local temp_root repo commit_script prepared_json groups_json validated_json message_map_json session_id rc
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "resume-commit")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(build_groups_json "$prepared_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
+        message_map_json="$(build_message_map_json "$validated_json")"
+        set +e
+        bash "$commit_script" --session-id "$session_id" --groups-json "$(python3 - "$validated_json" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+payload["repos"][0]["repo_git_root"] = payload["repos"][0]["repo_git_root"] + "/tampered"
+print(json.dumps(payload, ensure_ascii=False))
+PY
+)" --message-map-json "$message_map_json" >"$temp_root/resume-first-fail.out" 2>&1
+        rc=$?
+        set -e
+        [ "$rc" -ne 0 ] || fail "Expected first commit attempt to fail with tampered groups"
+        bash "$commit_script" --session-id "$session_id" --resume-commit >"$temp_root/resume.out" 2>&1
+        python3 - "$(session_json_file "$session_id")" <<'PY'
+import json
+import sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+assert record["message_map_json"]
+assert record["commit_result"]["status"] == "success"
+assert record["commit_result"]["commit_count"] == 1
+print("ok")
+PY
+    )
+
+    assert_contains "$temp_root/resume-first-fail.out" "必须使用 runtime 最近一次校验后的原样输出"
+    assert_protocol_field "$temp_root/resume.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/resume.out" "COMMITS" "1"
+    assert_equals "2" "$(git_commit_count "$repo")"
+    rm -rf "$temp_root"
+}
+
+test_resume_commit_reports_completed_session() {
+    local temp_root repo commit_script prepared_json groups_json validated_json message_map_json session_id
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "resume-completed")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(build_groups_json "$prepared_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
+        message_map_json="$(build_message_map_json "$validated_json")"
+        bash "$commit_script" --session-id "$session_id" --groups-json "$validated_json" --message-map-json "$message_map_json" >"$temp_root/initial.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --resume-commit >"$temp_root/resume-completed.out" 2>&1
+    )
+
+    assert_protocol_field "$temp_root/resume-completed.out" "RESULT" "success"
+    assert_contains "$temp_root/resume-completed.out" "该 session 对应的提交已完成"
+    assert_equals "2" "$(git_commit_count "$repo")"
+    rm -rf "$temp_root"
+}
+
+test_resume_commit_reports_completed_session_with_new_changes() {
+    local temp_root repo commit_script prepared_json groups_json validated_json message_map_json session_id
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "resume-completed-dirty")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(build_groups_json "$prepared_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
+        message_map_json="$(build_message_map_json "$validated_json")"
+        bash "$commit_script" --session-id "$session_id" --groups-json "$validated_json" --message-map-json "$message_map_json" >"$temp_root/initial-dirty.out" 2>&1
+        printf 'new drift\n' > "$repo/src/new-drift.txt"
+        bash "$commit_script" --session-id "$session_id" --resume-commit >"$temp_root/resume-completed-dirty.out" 2>&1
+    )
+
+    assert_protocol_field "$temp_root/resume-completed-dirty.out" "RESULT" "success"
+    assert_contains "$temp_root/resume-completed-dirty.out" "该 session 对应的提交已完成；检测到新的未提交改动"
+    assert_equals "2" "$(git_commit_count "$repo")"
+    rm -rf "$temp_root"
+}
+
+test_resume_commit_requires_persisted_message_map() {
+    local temp_root repo commit_script prepared_json groups_json session_id rc
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "resume-missing-message")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    set +e
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(build_groups_json "$prepared_json")"
+        bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json" >/dev/null
+        bash "$commit_script" --session-id "$session_id" --resume-commit >"$temp_root/resume-missing-message.out" 2>&1
+    )
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected resume commit to fail without persisted message map"
+    assert_contains "$temp_root/resume-missing-message.out" "当前 session 无法恢复最终提交，请重新生成 commit message"
+    rm -rf "$temp_root"
+}
+
 test_plan_repos_commit_with_non_git_root() {
     local temp_root workspace runtime_script commit_script scope alpha beta alpha_git_root beta_git_root state_slug
     temp_root=$(make_temp_root)
@@ -1166,6 +1335,7 @@ test_validate_groups_json_rejects_empty_reason
 test_validate_groups_json_rejects_more_than_five_groups
 test_validate_groups_json_rejects_workspace_drift_after_prepare
 test_commit_rejects_tampered_validated_groups_json
+test_validate_groups_json_persists_raw_validated_output
 test_validate_groups_json_accepts_explicit_session_id_without_json_top_level_session
 test_validate_groups_json_rejects_session_id_mismatch_between_flag_and_json
 test_prepare_json_rejects_session_id_flag
@@ -1182,5 +1352,9 @@ test_bound_prepare_skips_repo_without_changes
 test_standalone_auto_conflict_preserves_both_sides
 test_standalone_manual_conflict_requires_user_action
 test_commit_rejects_missing_message_map_entry
+test_resume_commit_reuses_session_payloads
+test_resume_commit_reports_completed_session
+test_resume_commit_reports_completed_session_with_new_changes
+test_resume_commit_requires_persisted_message_map
 test_plan_repos_commit_with_non_git_root
 test_stash_pop_conflict_auto_resolve_cleans_up_stash

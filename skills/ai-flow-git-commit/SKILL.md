@@ -45,6 +45,7 @@ $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode ma
 $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --prepare-json
 $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <session_id> --validate-groups-json '<json>'
 $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <session_id> --groups-json '<json>' --message-map-json '<json>'
+$HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <session_id> --resume-commit
 ```
 
 默认 `--conflict-mode manual`。
@@ -142,6 +143,13 @@ FOOTER:
 ```
 
 10. 调用 `--session-id '<prepare-json.session_id>' --groups-json '<validated-json>' --message-map-json '<json>'` 执行提交。
+   - `groups-json` 必须直接使用 `--validate-groups-json` 的原样输出，禁止重新组装、裁剪字段或重新序列化后再提交
+   - runtime 会在最终提交前持久化 `message-map-json`；若最终提交阶段失败，优先使用 `--resume-commit` 恢复，不要手工重组 `groups-json`
+
+11. 如果最终提交阶段已经生成 message、但在提交前失败：
+   - 不要重新组装 `groups-json`
+   - 优先调用 `--session-id '<prepare-json.session_id>' --resume-commit`
+   - 若 runtime 提示 session 已完成，则直接向用户说明提交已完成；若提示检测到新的未提交改动，则重新从 `--prepare-json` 开始
 
 ## 子代理约束
 

@@ -12,6 +12,7 @@ usage() {
   flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --prepare-json
   flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <id> --validate-groups-json '<json>'
   flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <id> --groups-json '<json>' --message-map-json '<json>'
+  flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <id> --resume-commit
 
 说明:
   --slug                  绑定 AI Flow 状态；仅允许状态为 DONE
@@ -21,6 +22,7 @@ usage() {
   --validate-groups-json  校验模型返回的分组并补全 group_id/staged_diff
   --groups-json           提供已校验分组结果
   --message-map-json      为每个 repo_id/group_id 提供外部生成的 commit message
+  --resume-commit         复用当前 session 中持久化的分组与 message 继续完成最终提交
 EOF
 }
 
@@ -579,7 +581,10 @@ record = {
     "prepare_payload": prepare_payload,
     "repo_state": repo_state,
     "validated_payload": None,
+    "validated_output_json": "",
     "validated_groups_hash": "",
+    "message_map_json": "",
+    "commit_result": None,
 }
 session_file.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
 print(json.dumps(output_payload, ensure_ascii=False))
@@ -612,11 +617,164 @@ if not session_file.is_file():
 record = json.loads(session_file.read_text(encoding="utf-8"))
 validated_payload = json.loads(sys.argv[2])
 validated_groups_hash = sys.argv[3]
-output_payload = json.loads(sys.argv[4])
+output_json = sys.argv[4]
+output_payload = json.loads(output_json)
 record["validated_payload"] = validated_payload
+record["validated_output_json"] = output_json
 record["validated_groups_hash"] = validated_groups_hash
+record["message_map_json"] = ""
+record["commit_result"] = None
 session_file.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
 print(json.dumps(output_payload, ensure_ascii=False))
+PY
+}
+
+store_message_map_for_session() {
+    local session_id="$1"
+    local message_map_json="$2"
+    local session_file
+    session_file="$(session_file_path "$session_id")"
+    python3 - "$session_file" "$message_map_json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+session_file = Path(sys.argv[1])
+if not session_file.is_file():
+    raise SystemExit("prepare session 不存在或已过期")
+record = json.loads(session_file.read_text(encoding="utf-8"))
+json.loads(sys.argv[2])
+record["message_map_json"] = sys.argv[2]
+record["commit_result"] = None
+session_file.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+PY
+}
+
+load_raw_validated_output_json() {
+    local session_json="$1"
+    python3 - "$session_json" <<'PY'
+import json
+import sys
+
+record = json.loads(sys.argv[1])
+value = record.get("validated_output_json")
+if not isinstance(value, str) or not value.strip():
+    raise SystemExit("当前 session 缺少已校验分组原文，请重新执行 --validate-groups-json")
+print(value)
+PY
+}
+
+load_raw_message_map_json() {
+    local session_json="$1"
+    python3 - "$session_json" <<'PY'
+import json
+import sys
+
+record = json.loads(sys.argv[1])
+value = record.get("message_map_json")
+if not isinstance(value, str) or not value.strip():
+    raise SystemExit("当前 session 缺少最终提交 message-map-json，请重新提供 message 后再执行最终提交")
+print(value)
+PY
+}
+
+store_commit_result() {
+    local session_id="$1"
+    local scope="$2"
+    local slug="$3"
+    local commit_log_lines="$4"
+    local repo_head_lines="$5"
+    local session_file
+    session_file="$(session_file_path "$session_id")"
+    python3 - "$session_file" "$scope" "$slug" "$commit_log_lines" "$repo_head_lines" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+session_file = Path(sys.argv[1])
+if not session_file.is_file():
+    raise SystemExit("prepare session 不存在或已过期")
+
+record = json.loads(session_file.read_text(encoding="utf-8"))
+scope = sys.argv[2]
+slug = sys.argv[3]
+commit_lines = [line for line in sys.argv[4].splitlines() if line.strip()]
+repo_head_lines = [line for line in sys.argv[5].splitlines() if line.strip()]
+
+commits = []
+for raw in commit_lines:
+    repo_id, short_hash, subject = raw.split("\t", 2)
+    commits.append({
+        "repo_id": repo_id,
+        "commit_hash_short": short_hash,
+        "subject": subject,
+    })
+
+repos = {}
+for raw in repo_head_lines:
+    repo_id, repo_git_root, full_hash = raw.split("\t", 2)
+    repos[repo_id] = {
+        "repo_id": repo_id,
+        "repo_git_root": repo_git_root,
+        "final_commit_hash": full_hash,
+    }
+
+record["commit_result"] = {
+    "status": "success",
+    "scope": scope,
+    "slug": slug,
+    "commit_count": len(commits),
+    "commits": commits,
+    "repos": list(repos.values()),
+}
+session_file.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+PY
+}
+
+detect_completed_commit_result() {
+    local session_json="$1"
+    local current_repo_state_json="$2"
+    python3 - "$session_json" "$current_repo_state_json" <<'PY'
+import json
+import subprocess
+import sys
+
+record = json.loads(sys.argv[1])
+current_repo_state = json.loads(sys.argv[2])
+commit_result = record.get("commit_result")
+if not isinstance(commit_result, dict):
+    raise SystemExit(1)
+
+repos = commit_result.get("repos")
+if not isinstance(repos, list) or not repos:
+    raise SystemExit(1)
+
+for repo in repos:
+    if not isinstance(repo, dict):
+        raise SystemExit(1)
+    repo_git_root = repo.get("repo_git_root")
+    final_commit_hash = repo.get("final_commit_hash")
+    if not isinstance(repo_git_root, str) or not repo_git_root.strip():
+        raise SystemExit(1)
+    if not isinstance(final_commit_hash, str) or not final_commit_hash.strip():
+        raise SystemExit(1)
+    result = subprocess.run(
+        ["git", "-C", repo_git_root, "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(1)
+    if result.stdout.strip() != final_commit_hash.strip():
+        raise SystemExit(1)
+
+state = "completed_clean" if current_repo_state.get("repos") == [] else "completed_with_new_changes"
+print(json.dumps({
+    "state": state,
+    "commit_result": commit_result,
+}, ensure_ascii=False))
 PY
 }
 
@@ -1336,6 +1494,7 @@ PREPARE_JSON=0
 VALIDATE_GROUPS_JSON=""
 GROUPS_JSON=""
 MESSAGE_MAP_JSON=""
+RESUME_COMMIT=0
 MODE_COUNT=0
 
 while [ "$#" -gt 0 ]; do
@@ -1376,6 +1535,11 @@ while [ "$#" -gt 0 ]; do
             MESSAGE_MAP_JSON="$2"
             shift 2
             ;;
+        --resume-commit)
+            RESUME_COMMIT=1
+            MODE_COUNT=$((MODE_COUNT + 1))
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -1395,7 +1559,7 @@ case "$CONFLICT_MODE" in
         ;;
 esac
 
-if [ "$MODE_COUNT" -ne 1 ] && [ -z "$GROUPS_JSON" ]; then
+if [ "$MODE_COUNT" -ne 1 ] && [ -z "$GROUPS_JSON" ] && [ "$RESUME_COMMIT" -eq 0 ]; then
     usage >&2
     exit 1
 fi
@@ -1407,6 +1571,16 @@ fi
 
 if [ "$PREPARE_JSON" -eq 1 ] && [ -n "$SESSION_ID" ]; then
     echo "--prepare-json 阶段不允许传入 --session-id" >&2
+    exit 1
+fi
+
+if [ "$RESUME_COMMIT" -eq 1 ] && { [ -n "$GROUPS_JSON" ] || [ -n "$MESSAGE_MAP_JSON" ]; }; then
+    echo "--resume-commit 阶段不允许同时传入 --groups-json 或 --message-map-json" >&2
+    exit 1
+fi
+
+if [ "$RESUME_COMMIT" -eq 1 ] && [ -z "$SESSION_ID" ]; then
+    echo "缺少 --session-id，无法恢复最终提交。" >&2
     exit 1
 fi
 
@@ -1482,7 +1656,7 @@ else
 fi
 
 if [ -z "$CURRENT_GIT_ROOT" ] && [ -z "$STATE_SLUG" ] && [ "$STANDALONE_DISCOVERED_REPOS_COUNT" = "0" ]; then
-    if [ "$PREPARE_JSON" -eq 1 ] || [ -n "$GROUPS_JSON" ]; then
+    if [ "$PREPARE_JSON" -eq 1 ] || [ -n "$GROUPS_JSON" ] || [ "$RESUME_COMMIT" -eq 1 ]; then
         fail_protocol "当前目录不在 Git 仓库内，无法提交代码。"
     fi
     echo "当前目录不在 Git 仓库内，无法提交代码。" >&2
@@ -1759,6 +1933,22 @@ fi
 [ -n "$SESSION_ID" ] || fail_protocol "缺少 --session-id，且 groups-json 顶层未提供 session_id。"
 SESSION_JSON="$(load_session_record_json "$SESSION_ID")" || fail_protocol "prepare session 不存在或已过期。"
 
+if [ "$RESUME_COMMIT" -eq 1 ]; then
+    GROUPS_JSON="$(load_raw_validated_output_json "$SESSION_JSON")" || {
+        PROTOCOL_DETAIL="session 缺少已校验分组原文"
+        fail_protocol "当前 session 无法恢复最终提交，请重新执行分组校验。"
+    }
+    MESSAGE_MAP_JSON="$(load_raw_message_map_json "$SESSION_JSON")" || {
+        PROTOCOL_DETAIL="session 缺少 message-map-json"
+        fail_protocol "当前 session 无法恢复最终提交，请重新生成 commit message。"
+    }
+fi
+
+store_message_map_for_session "$SESSION_ID" "$MESSAGE_MAP_JSON" || {
+    PROTOCOL_DETAIL="message-map-json 无效"
+    fail_protocol "无法持久化 commit message，已停止提交。"
+}
+
 if [ "$PROTOCOL_SCOPE" = "bound" ]; then
     USED_DEP_TABLE="$(python3 - "$CONTEXT_FILE" <<'PY'
 import json
@@ -1775,6 +1965,45 @@ PY
 fi
 
 SESSION_COMMIT_GROUPS_JSON="$(normalize_commit_groups_json_for_session "$SESSION_JSON" "$GROUPS_JSON" "$(cat "$REPO_STATE_FILE")" "$SESSION_ID")" || {
+    COMPLETED_COMMIT_RESULT="$(detect_completed_commit_result "$SESSION_JSON" "$(cat "$REPO_STATE_FILE")" 2>/dev/null || true)"
+    if [ -n "$COMPLETED_COMMIT_RESULT" ]; then
+        COMMIT_LOG_LINES="$(python3 - "$COMPLETED_COMMIT_RESULT" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+for item in payload.get("commit_result", {}).get("commits", []):
+    print("\t".join([
+        item.get("repo_id", ""),
+        item.get("commit_hash_short", ""),
+        item.get("subject", ""),
+    ]))
+PY
+)"
+        COMMIT_COUNT="$(python3 - "$COMPLETED_COMMIT_RESULT" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+print(payload.get("commit_result", {}).get("commit_count", 0))
+PY
+)"
+        PROTOCOL_RESULT="success"
+        PROTOCOL_COMMITS="$COMMIT_COUNT"
+        COMPLETED_STATE="$(python3 - "$COMPLETED_COMMIT_RESULT" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+print(payload.get("state", ""))
+PY
+)"
+        if [ "$COMPLETED_STATE" = "completed_with_new_changes" ]; then
+            PROTOCOL_SUMMARY="该 session 对应的提交已完成；检测到新的未提交改动，请重新执行 --prepare-json。"
+        else
+            PROTOCOL_SUMMARY="该 session 对应的提交已完成，无需重复执行。"
+        fi
+        print_commit_list "$COMMIT_LOG_LINES"
+        finish_protocol
+        exit 0
+    fi
     PROTOCOL_DETAIL="groups-json 无效"
     fail_protocol "已校验分组与当前工作区不匹配。"
 }
@@ -1924,5 +2153,29 @@ if [ "$PROTOCOL_SCOPE" = "bound" ]; then
 else
     PROTOCOL_SUMMARY="已提交 ${COMMIT_COUNT} 个业务提交组。"
 fi
+REPO_HEAD_LINES="$(python3 - "$NORMALIZED_GROUPS_FILE" <<'PY'
+import json
+import subprocess
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+for repo in payload.get("repos", []):
+    repo_id = repo.get("repo_id", "")
+    repo_git_root = repo.get("repo_git_root", "")
+    if not repo_id or not repo_git_root:
+        continue
+    result = subprocess.run(
+        ["git", "-C", repo_git_root, "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.stderr.strip() or "git rev-parse HEAD 失败")
+    print("\t".join([repo_id, repo_git_root, result.stdout.strip()]))
+PY
+)"
+store_commit_result "$SESSION_ID" "$PROTOCOL_SCOPE" "$PROTOCOL_SLUG" "$COMMIT_LOG_LINES" "$REPO_HEAD_LINES" || true
 print_commit_list "$COMMIT_LOG_LINES"
 finish_protocol
