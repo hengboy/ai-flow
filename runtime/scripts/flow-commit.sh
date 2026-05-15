@@ -924,7 +924,7 @@ for repo_id in repo_order:
     if not groups:
         fail(f"repo_id={repo_id} 至少需要 1 个 group")
     if len(groups) > max_groups:
-        fail(f"repo_id={repo_id} 分组数量超过上限 {max_groups}")
+        fail(f"repo_id={repo_id} 分组数量超过上限 {max_groups}，请按业务关联性合并为最多 {max_groups} 组后重试")
 
     changed_set = set(changed_files)
     assigned = set()

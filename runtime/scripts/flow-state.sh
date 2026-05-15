@@ -678,7 +678,8 @@ def cmd_create(args):
     def mutator(state):
         if state is not None:
             raise FlowError(f"状态文件已存在: {state_path_for_slug(slug)}")
-        at = now_iso()
+        at = (args.created_at or "").strip() or now_iso()
+        parse_iso(at, "created_at")
         artifacts: dict = {"plan_file": plan_file}
         engine = (getattr(args, "engine", None) or "").strip()
         model = (getattr(args, "model", None) or "").strip()
@@ -1068,6 +1069,7 @@ def build_parser():
     create.add_argument("--slug", required=True)
     create.add_argument("--title", required=True)
     create.add_argument("--plan-file", required=True)
+    create.add_argument("--created-at")
     create.add_argument("--repo-scope-json")
     create.add_argument("--engine")
     create.add_argument("--model")
