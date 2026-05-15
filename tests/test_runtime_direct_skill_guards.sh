@@ -65,12 +65,13 @@ test_code_optimize_runtime_allows_awaiting_review_without_transition() {
 }
 
 test_code_optimize_runtime_starts_fix_when_all_blocking_routes_are_optimize() {
-    local temp_root project state_script runtime_script
+    local temp_root project state_script runtime_script state_slug
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     project="$temp_root/project"
     state_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
     runtime_script="$(installed_runtime_script "$temp_root" "flow-code-optimize.sh")"
+    state_slug="20260503-demo"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$state_script" "$project" "demo" "AWAITING_REVIEW" "20260503" "demo"
     write_review_report_fixture "$project/.ai-flow/reports/20260503-demo-review.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "1" "failed" "demo"
@@ -82,7 +83,7 @@ path.write_text(text, encoding='utf-8')
 PY
     (
         cd "$project"
-        bash "$state_script" record-review --slug demo --mode regular --result failed --report-file ".ai-flow/reports/20260503-demo-review.md" >/dev/null
+        bash "$state_script" record-review --slug "$state_slug" --mode regular --result failed --report-file ".ai-flow/reports/20260503-demo-review.md" >/dev/null
         bash "$runtime_script" demo >"$temp_root/opt-fix.out"
     )
 

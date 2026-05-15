@@ -162,11 +162,12 @@ test_commit_rejects_subject_verb_outside_whitelist() {
 }
 
 test_bound_done_rejects_non_done_status() {
-    local temp_root project runtime_script commit_script
+    local temp_root project runtime_script commit_script state_slug
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     runtime_script="$SOURCE_FLOW_STATE_SCRIPT"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    state_slug="20260503-demo"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_REVIEW" "20260503" "demo"
     setup_git_repo_with_change "$project"
@@ -175,7 +176,7 @@ test_bound_done_rejects_non_done_status() {
     set +e
     (
         cd "$project"
-        bash "$commit_script" --slug demo >"$temp_root/not-done.out" 2>&1
+        bash "$commit_script" --slug "$state_slug" >"$temp_root/not-done.out" 2>&1
     )
     rc=$?
     set -e
@@ -187,11 +188,12 @@ test_bound_done_rejects_non_done_status() {
 }
 
 test_bound_done_single_repo_commit() {
-    local temp_root project runtime_script commit_script prepared_json message_map_json
+    local temp_root project runtime_script commit_script prepared_json message_map_json state_slug
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     runtime_script="$SOURCE_FLOW_STATE_SCRIPT"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    state_slug="20260503-demo"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "DONE" "20260503" "demo"
     write_simple_test_runner "$project"
@@ -199,12 +201,12 @@ test_bound_done_single_repo_commit() {
 
     (
         cd "$project"
-        run_commit_with_generated_messages "$commit_script" "$temp_root/bound-single.out" --slug demo
+        run_commit_with_generated_messages "$commit_script" "$temp_root/bound-single.out" --slug "$state_slug"
     )
 
     assert_protocol_field "$temp_root/bound-single.out" "RESULT" "success"
     assert_protocol_field "$temp_root/bound-single.out" "SCOPE" "bound"
-    assert_protocol_field "$temp_root/bound-single.out" "SLUG" "demo"
+    assert_protocol_field "$temp_root/bound-single.out" "SLUG" "$state_slug"
     assert_protocol_field "$temp_root/bound-single.out" "COMMITS" "1"
     assert_equals "2" "$(git_commit_count "$project")"
     rm -rf "$temp_root"
@@ -262,11 +264,12 @@ test_standalone_splits_unrelated_changes_into_multiple_groups() {
 }
 
 test_plan_repos_commit_uses_dependency_order() {
-    local temp_root workspace runtime_script commit_script scope alpha beta prepared_json message_map_json
+    local temp_root workspace runtime_script commit_script scope alpha beta prepared_json message_map_json state_slug
     temp_root=$(make_temp_root)
     workspace="$temp_root/workspace"
     runtime_script="$SOURCE_FLOW_STATE_SCRIPT"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    state_slug="20260503-multi-demo"
 
     setup_workspace_root_with_repos "$workspace" "workspace-test" "20260503" "repo-alpha::repo-alpha" "repo-beta::repo-beta"
     printf "repo-alpha/\nrepo-beta/\nrepos/\n" > "$workspace/.gitignore"
@@ -287,18 +290,18 @@ test_plan_repos_commit_uses_dependency_order() {
     (
         cd "$workspace"
         bash "$runtime_script" create --slug multi-demo --title "multi demo" --plan-file ".ai-flow/plans/20260503-multi-demo.md" --repo-scope-json "$scope" >/dev/null
-        bash "$runtime_script" record-plan-review --slug multi-demo --result passed --engine Fixture --model fixture-model >/dev/null
-        bash "$runtime_script" start-execute multi-demo >/dev/null
-        bash "$runtime_script" finish-implementation multi-demo >/dev/null
+        bash "$runtime_script" record-plan-review --slug "$state_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" start-execute "$state_slug" >/dev/null
+        bash "$runtime_script" finish-implementation "$state_slug" >/dev/null
         write_review_report_fixture ".ai-flow/reports/20260503-multi-demo-review.md" "multi-demo" ".ai-flow/plans/20260503-multi-demo.md" "regular" "1" "passed" "multi-demo"
-        bash "$runtime_script" record-review --slug multi-demo --mode regular --result passed --report-file ".ai-flow/reports/20260503-multi-demo-review.md" >/dev/null
+        bash "$runtime_script" record-review --slug "$state_slug" --mode regular --result passed --report-file ".ai-flow/reports/20260503-multi-demo-review.md" >/dev/null
     )
     printf 'alpha local\n' > "$workspace/repo-alpha/src/alpha.txt"
     printf 'beta local\n' > "$workspace/repo-beta/src/beta.txt"
 
     (
         cd "$workspace"
-        run_commit_with_generated_messages "$commit_script" "$temp_root/multi.out" --slug multi-demo
+        run_commit_with_generated_messages "$commit_script" "$temp_root/multi.out" --slug "$state_slug"
     )
 
     assert_protocol_field "$temp_root/multi.out" "RESULT" "success"
@@ -316,11 +319,12 @@ test_plan_repos_commit_uses_dependency_order() {
 }
 
 test_plan_repos_commit_falls_back_to_scope_order_without_dependency_table() {
-    local temp_root workspace runtime_script commit_script scope prepared_json message_map_json
+    local temp_root workspace runtime_script commit_script scope prepared_json message_map_json state_slug
     temp_root=$(make_temp_root)
     workspace="$temp_root/workspace"
     runtime_script="$SOURCE_FLOW_STATE_SCRIPT"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    state_slug="20260503-multi-no-dep"
 
     setup_workspace_root_with_repos "$workspace" "workspace-test" "20260503" "repo-alpha::repo-alpha" "repo-beta::repo-beta"
     printf "repo-alpha/\nrepo-beta/\n" > "$workspace/.gitignore"
@@ -339,18 +343,18 @@ test_plan_repos_commit_falls_back_to_scope_order_without_dependency_table() {
     (
         cd "$workspace"
         bash "$runtime_script" create --slug multi-no-dep --title "multi no dep" --plan-file ".ai-flow/plans/20260503-multi-no-dep.md" --repo-scope-json "$scope" >/dev/null
-        bash "$runtime_script" record-plan-review --slug multi-no-dep --result passed --engine Fixture --model fixture-model >/dev/null
-        bash "$runtime_script" start-execute multi-no-dep >/dev/null
-        bash "$runtime_script" finish-implementation multi-no-dep >/dev/null
+        bash "$runtime_script" record-plan-review --slug "$state_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" start-execute "$state_slug" >/dev/null
+        bash "$runtime_script" finish-implementation "$state_slug" >/dev/null
         write_review_report_fixture ".ai-flow/reports/20260503-multi-no-dep-review.md" "multi-no-dep" ".ai-flow/plans/20260503-multi-no-dep.md" "regular" "1" "passed" "multi-no-dep"
-        bash "$runtime_script" record-review --slug multi-no-dep --mode regular --result passed --report-file ".ai-flow/reports/20260503-multi-no-dep-review.md" >/dev/null
+        bash "$runtime_script" record-review --slug "$state_slug" --mode regular --result passed --report-file ".ai-flow/reports/20260503-multi-no-dep-review.md" >/dev/null
     )
     printf 'alpha local\n' > "$workspace/repo-alpha/src/alpha.txt"
     printf 'beta local\n' > "$workspace/repo-beta/src/beta.txt"
 
     (
         cd "$workspace"
-        run_commit_with_generated_messages "$commit_script" "$temp_root/multi-no-dep.out" --slug multi-no-dep
+        run_commit_with_generated_messages "$commit_script" "$temp_root/multi-no-dep.out" --slug "$state_slug"
     )
 
     assert_protocol_field "$temp_root/multi-no-dep.out" "RESULT" "success"
@@ -427,11 +431,12 @@ test_commit_rejects_missing_message_map_entry() {
 }
 
 test_plan_repos_commit_with_non_git_root() {
-    local temp_root workspace runtime_script commit_script scope alpha beta alpha_git_root beta_git_root prepared_json message_map_json
+    local temp_root workspace runtime_script commit_script scope alpha beta alpha_git_root beta_git_root prepared_json message_map_json state_slug
     temp_root=$(make_temp_root)
     workspace="$temp_root/workspace"
     runtime_script="$SOURCE_FLOW_STATE_SCRIPT"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    state_slug="20260514-non-git-root"
 
     mkdir -p "$workspace"
     setup_project_dirs "$workspace" "20260514"
@@ -458,7 +463,7 @@ EOF
     (
         cd "$workspace"
         bash "$runtime_script" create --slug non-git-root --title "non-git-root" --plan-file ".ai-flow/plans/20260514-non-git-root.md" --repo-scope-json "$scope" >/dev/null
-        python3 - ".ai-flow/state/non-git-root.json" <<'PY'
+        python3 - ".ai-flow/state/${state_slug}.json" <<'PY'
 import json, sys; from pathlib import Path
 p = Path(sys.argv[1]); s = json.loads(p.read_text()); s["current_status"] = "DONE"; p.write_text(json.dumps(s))
 PY
@@ -468,7 +473,7 @@ PY
 
     (
         cd "$workspace"
-        run_commit_with_generated_messages "$commit_script" "$temp_root/non-git-root.out" --slug non-git-root
+        run_commit_with_generated_messages "$commit_script" "$temp_root/non-git-root.out" --slug "$state_slug"
     )
 
     assert_protocol_field "$temp_root/non-git-root.out" "RESULT" "success"

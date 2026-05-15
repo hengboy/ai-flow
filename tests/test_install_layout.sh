@@ -18,9 +18,14 @@ test_default_install_layout() {
 
     assert_file_exists "$skills_root/ai-flow-plan/SKILL.md"
     assert_file_exists "$skills_root/ai-flow-plan/lib/flow_utils.py"
+    assert_file_exists "$skills_root/ai-flow-auto-run/SKILL.md"
     assert_file_exists "$skills_root/ai-flow-code-optimize/SKILL.md"
     assert_file_exists "$skills_root/ai-flow-code-optimize/lib/flow_utils.py"
     assert_file_exists "$skills_root/ai-flow-git-commit/SKILL.md"
+    assert_contains "$skills_root/ai-flow-auto-run/SKILL.md" '无 slug 必须列出候选并等待用户选择'
+    assert_contains "$skills_root/ai-flow-auto-run/SKILL.md" '主 agent 自动循环到 DONE'
+    assert_contains "$skills_root/ai-flow-auto-run/SKILL.md" '保留现有分步入口'
+    assert_contains "$skills_root/ai-flow-auto-run/SKILL.md" '不自动提交代码'
     assert_contains "$skills_root/ai-flow-plan/SKILL.md" 'plan-review 失败后重新进入 `/ai-flow-plan` 时，不得绕过配置选择逻辑'
     assert_contains "$skills_root/ai-flow-plan/SKILL.md" '禁止因为“修订”语义直接固定指派 `ai-flow-claude-plan`'
     assert_contains "$skills_root/ai-flow-plan/SKILL.md" '先做一次头脑风暴式 intake'
@@ -39,6 +44,7 @@ test_default_install_layout() {
     assert_file_not_exists "$skills_root/ai-flow-plan-coding-review/scripts"
     assert_file_exists "$runtime_root/scripts/flow-state.sh"
     assert_file_exists "$runtime_root/scripts/flow-status.sh"
+    assert_file_exists "$runtime_root/scripts/flow-auto-run.sh"
     assert_file_exists "$runtime_root/scripts/flow-change.sh"
     assert_file_exists "$runtime_root/scripts/flow-plan-coding.sh"
     assert_file_exists "$runtime_root/scripts/flow-bug-fix.sh"
@@ -113,8 +119,13 @@ test_custom_roots_install() {
         bash "$TEST_ROOT/install.sh" >"$temp_root/install-custom.out"
 
     assert_file_exists "$onespace_skills/ai-flow-plan/SKILL.md"
+    assert_file_exists "$onespace_skills/ai-flow-auto-run/SKILL.md"
     assert_file_exists "$onespace_skills/ai-flow-code-optimize/SKILL.md"
     assert_file_exists "$onespace_skills/ai-flow-git-commit/SKILL.md"
+    assert_contains "$onespace_skills/ai-flow-auto-run/SKILL.md" '无 slug 必须列出候选并等待用户选择'
+    assert_contains "$onespace_skills/ai-flow-auto-run/SKILL.md" '主 agent 自动循环到 DONE'
+    assert_contains "$onespace_skills/ai-flow-auto-run/SKILL.md" '保留现有分步入口'
+    assert_contains "$onespace_skills/ai-flow-auto-run/SKILL.md" '不自动提交代码'
     assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" 'plan-review 失败后重新进入 `/ai-flow-plan` 时，不得绕过配置选择逻辑'
     assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" '禁止因为“修订”语义直接固定指派 `ai-flow-claude-plan`'
     assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" '先做一次头脑风暴式 intake'
@@ -126,6 +137,7 @@ test_custom_roots_install() {
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "不要先自行运行"
     assert_file_exists "$runtime_root/scripts/flow-state.sh"
     assert_file_exists "$runtime_root/scripts/flow-plan-coding.sh"
+    assert_file_exists "$runtime_root/scripts/flow-auto-run.sh"
     assert_file_exists "$runtime_root/scripts/flow-bug-fix.sh"
     assert_file_exists "$runtime_root/scripts/flow-code-optimize.sh"
     assert_file_exists "$runtime_root/scripts/flow-code-refactor.sh"

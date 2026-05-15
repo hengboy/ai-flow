@@ -343,10 +343,10 @@ while [ "$#" -gt 0 ]; do
 done
 cat > /dev/null
 cat > "$out" <<'REPORT'
-# 审查报告：demo
+# 审查报告：20260503-demo
 
 > 审查日期：2026-05-03
-> 需求简称：demo
+> 需求简称：20260503-demo
 > 审查模式：regular
 > 审查轮次：1
 > 审查结果：passed
@@ -491,10 +491,10 @@ while [ "$#" -gt 0 ]; do
 done
 cat > /dev/null
 cat > "$out" <<'REPORT'
-# 审查报告：demo
+# 审查报告：20260503-demo
 
 > 审查日期：2026-05-03
-> 需求简称：demo
+> 需求简称：20260503-demo
 > 审查模式：regular
 > 审查轮次：1
 > 审查结果：passed_with_notes
@@ -639,10 +639,10 @@ while [ "$#" -gt 0 ]; do
 done
 cat > /dev/null
 cat > "$out" <<'REPORT'
-# 审查报告：demo
+# 审查报告：20260503-demo
 
 > 审查日期：2026-05-03
-> 需求简称：demo
+> 需求简称：20260503-demo
 > 审查模式：regular
 > 审查轮次：1
 > 审查结果：passed_with_notes
@@ -783,7 +783,7 @@ test_review_fails_without_required_evidence_text() {
 }
 
 test_root_cause_gate_and_fallback() {
-    local temp_root project runtime_script executor change_script
+    local temp_root project runtime_script executor change_script state_slug
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     write_fake_coding_review_agents "$temp_root"
@@ -791,6 +791,7 @@ test_root_cause_gate_and_fallback() {
     change_script="$(installed_runtime_script "$temp_root" "flow-change.sh")"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
     project="$temp_root/project"
+    state_slug="20260503-demo"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_REVIEW" "20260503" "demo"
     setup_git_repo_with_change "$project"
@@ -798,18 +799,18 @@ test_root_cause_gate_and_fallback() {
     (
         cd "$project"
         write_review_report_fixture ".ai-flow/reports/20260503-demo-review.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "1" "failed" "demo"
-        bash "$runtime_script" record-review --slug demo --mode regular --result failed --report-file .ai-flow/reports/20260503-demo-review.md >/dev/null || true
+        bash "$runtime_script" record-review --slug "$state_slug" --mode regular --result failed --report-file .ai-flow/reports/20260503-demo-review.md >/dev/null || true
     ) >/dev/null 2>&1 || true
 
     (
         cd "$project"
-        bash "$runtime_script" repair --slug demo --status REVIEW_FAILED --note "fixture align" >/dev/null
-        bash "$runtime_script" start-fix demo >/dev/null
-        bash "$runtime_script" finish-fix demo >/dev/null
+        bash "$runtime_script" repair --slug "$state_slug" --status REVIEW_FAILED --note "fixture align" >/dev/null
+        bash "$runtime_script" start-fix "$state_slug" >/dev/null
+        bash "$runtime_script" finish-fix "$state_slug" >/dev/null
         write_review_report_fixture ".ai-flow/reports/20260503-demo-review-v2.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "2" "failed" "demo"
-        bash "$runtime_script" record-review --slug demo --mode regular --result failed --report-file .ai-flow/reports/20260503-demo-review-v2.md >/dev/null
-        bash "$runtime_script" start-fix demo >/dev/null
-        bash "$runtime_script" finish-fix demo >/dev/null
+        bash "$runtime_script" record-review --slug "$state_slug" --mode regular --result failed --report-file .ai-flow/reports/20260503-demo-review-v2.md >/dev/null
+        bash "$runtime_script" start-fix "$state_slug" >/dev/null
+        bash "$runtime_script" finish-fix "$state_slug" >/dev/null
     )
 
     set +e

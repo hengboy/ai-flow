@@ -5,6 +5,7 @@ SOURCE_FLOW_STATE_SCRIPT="$TEST_ROOT/runtime/scripts/flow-state.sh"
 SOURCE_FLOW_STATUS_SCRIPT="$TEST_ROOT/runtime/scripts/flow-status.sh"
 SOURCE_FLOW_CHANGE_SCRIPT="$TEST_ROOT/runtime/scripts/flow-change.sh"
 SOURCE_FLOW_PLAN_CODING_SCRIPT="$TEST_ROOT/runtime/scripts/flow-plan-coding.sh"
+SOURCE_FLOW_AUTO_RUN_SCRIPT="$TEST_ROOT/runtime/scripts/flow-auto-run.sh"
 SOURCE_FLOW_COMMIT_SCRIPT="$TEST_ROOT/runtime/scripts/flow-commit.sh"
 
 fail() {
@@ -147,7 +148,9 @@ state_field() {
     local project_dir="$1"
     local slug="$2"
     local field="$3"
-    python3 - "$project_dir/.ai-flow/state/$slug.json" "$field" <<'PY'
+    local state_file
+    state_file="$(resolve_state_file "$project_dir" "$slug")"
+    python3 - "$state_file" "$field" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -169,6 +172,28 @@ if value is None:
     sys.exit(1)
 print(value)
 PY
+}
+
+resolve_state_file() {
+    local project_dir="$1"
+    local slug="$2"
+    local exact="$project_dir/.ai-flow/state/$slug.json"
+    if [ -f "$exact" ]; then
+        printf '%s\n' "$exact"
+        return 0
+    fi
+
+    local matches=()
+    while IFS= read -r -d '' path; do
+        matches+=("$path")
+    done < <(find "$project_dir/.ai-flow/state" -maxdepth 1 -type f -name "*-${slug}.json" -print0 2>/dev/null)
+
+    if [ "${#matches[@]}" -eq 1 ]; then
+        printf '%s\n' "${matches[0]}"
+        return 0
+    fi
+
+    fail "Expected state file for slug '$slug' under $project_dir/.ai-flow/state"
 }
 
 repo_scope_json() {
@@ -499,10 +524,14 @@ create_state_with_status() {
     local date_dir="${5:-20260503}"
     local title="${6:-$slug}"
     local base_slug="$slug"
+    local effective_slug="$slug"
     if [[ "$slug" =~ ^[0-9]{8}-(.+)$ ]]; then
         base_slug="${BASH_REMATCH[1]}"
+    else
+        effective_slug="${date_dir}-${slug}"
     fi
     local plan_file=".ai-flow/plans/${date_dir}-${base_slug}.md"
+    local report_file=".ai-flow/reports/${date_dir}-${base_slug}-review.md"
     create_plan_file "$project_dir" "$base_slug" "$date_dir" "$title"
     (
         cd "$project_dir" || exit 1
@@ -518,37 +547,37 @@ create_state_with_status() {
             AWAITING_PLAN_REVIEW)
                 ;;
             PLAN_REVIEW_FAILED)
-                bash "$flow_state_script" record-plan-review --slug "$slug" --result failed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result failed --engine Fixture --model fixture-model >/dev/null
                 ;;
             PLANNED)
-                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
                 ;;
             IMPLEMENTING)
-                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$slug" >/dev/null
+                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
                 ;;
             AWAITING_REVIEW)
-                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$slug" >/dev/null
+                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
+                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
                 ;;
             REVIEW_FAILED)
-                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$slug" >/dev/null
-                write_review_report_fixture ".ai-flow/reports/${date_dir}-${slug}-review.md" "$slug" "$plan_file" "regular" "1" "failed" "$title"
-                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result failed --report-file ".ai-flow/reports/${date_dir}-${slug}-review.md" >/dev/null
+                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
+                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
+                write_review_report_fixture "$report_file" "$base_slug" "$plan_file" "regular" "1" "failed" "$title"
+                bash "$flow_state_script" record-review --slug "$effective_slug" --mode regular --result failed --report-file "$report_file" >/dev/null
                 ;;
             FIXING_REVIEW)
                 create_state_with_status "$flow_state_script" "$project_dir" "$slug" "REVIEW_FAILED" "$date_dir" "$title"
-                bash "$flow_state_script" start-fix "$slug" >/dev/null
+                bash "$flow_state_script" start-fix "$effective_slug" >/dev/null
                 ;;
             DONE)
-                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$slug" >/dev/null
-                write_review_report_fixture ".ai-flow/reports/${date_dir}-${slug}-review.md" "$slug" "$plan_file" "regular" "1" "passed" "$title"
-                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result passed --report-file ".ai-flow/reports/${date_dir}-${slug}-review.md" >/dev/null
+                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
+                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
+                write_review_report_fixture "$report_file" "$base_slug" "$plan_file" "regular" "1" "passed" "$title"
+                bash "$flow_state_script" record-review --slug "$effective_slug" --mode regular --result passed --report-file "$report_file" >/dev/null
                 ;;
             *)
                 fail "Unknown target status: $target_status"
@@ -1165,9 +1194,17 @@ create_workspace_state_fixture() {
     local target_status="$4"
     local date_dir="${5:-20260503}"
     local title="${6:-$slug}"
-    local plan_file=".ai-flow/plans/${date_dir}-${slug}.md"
+    local base_slug="$slug"
+    local effective_slug="$slug"
+    if [[ "$slug" =~ ^[0-9]{8}-(.+)$ ]]; then
+        base_slug="${BASH_REMATCH[1]}"
+    else
+        effective_slug="${date_dir}-${slug}"
+    fi
+    local plan_file=".ai-flow/plans/${date_dir}-${base_slug}.md"
+    local report_file=".ai-flow/reports/${date_dir}-${base_slug}-review.md"
     local repo_scope
-    create_plan_file "$workspace_root" "$slug" "$date_dir" "$title"
+    create_plan_file "$workspace_root" "$base_slug" "$date_dir" "$title"
     repo_scope="$(repo_scope_json "$workspace_root" "owner::." "repo-alpha::repo-alpha" "repo-beta::repo-beta")"
 
     (
@@ -1177,19 +1214,19 @@ create_workspace_state_fixture() {
         case "$target_status" in
             AWAITING_PLAN_REVIEW) ;;
             PLANNED)
-                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
                 ;;
             AWAITING_REVIEW)
-                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$slug" >/dev/null
+                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
+                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
                 ;;
             DONE)
-                bash "$flow_state_script" record-plan-review --slug "$slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$slug" >/dev/null
-                write_review_report_fixture ".ai-flow/reports/${date_dir}-${slug}-review.md" "$slug" "$plan_file" "regular" "1" "passed" "$title"
-                bash "$flow_state_script" record-review --slug "$slug" --mode regular --result passed --report-file ".ai-flow/reports/${date_dir}-${slug}-review.md" >/dev/null
+                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
+                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
+                write_review_report_fixture "$report_file" "$base_slug" "$plan_file" "regular" "1" "passed" "$title"
+                bash "$flow_state_script" record-review --slug "$effective_slug" --mode regular --result passed --report-file "$report_file" >/dev/null
                 ;;
             *)
                 fail "Unknown target status for workspace fixture: $target_status"

@@ -4,10 +4,11 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/testkit.bash"
 
 test_plan_repos_status_shows_repo_scope() {
-    local temp_root owner out state_script repo_scope
+    local temp_root owner out state_script repo_scope state_slug
     temp_root=$(make_temp_root)
     owner="$temp_root/owner"
     state_script="$SOURCE_FLOW_STATE_SCRIPT"
+    state_slug="20260503-multi-repo"
     setup_project_dirs "$owner" "20260503"
     setup_git_repo_clean "$owner"
     mkdir -p "$owner/repo-alpha/src" "$owner/repo-beta/src"
@@ -20,7 +21,7 @@ test_plan_repos_status_shows_repo_scope() {
         cd "$owner"
         bash "$state_script" create --slug multi-repo --title "multi-repo-status-test" --plan-file ".ai-flow/plans/20260503-multi-repo.md" \
             --repo-scope-json "$repo_scope" >/dev/null
-        bash "$state_script" record-plan-review --slug multi-repo --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$state_script" record-plan-review --slug "$state_slug" --result passed --engine Fixture --model fixture-model >/dev/null
     )
 
     (

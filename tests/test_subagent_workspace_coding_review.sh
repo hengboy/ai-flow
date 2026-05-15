@@ -139,9 +139,9 @@ test_workspace_coding_review_from_declared_subrepo_uses_workspace_root() {
     assert_protocol_field "$out" "RESULT" "success"
     assert_protocol_field "$out" "STATE" "DONE"
     report_file=$(protocol_field "$out" "ARTIFACT")
-    assert_equals ".ai-flow/reports/ws-subrepo-review.md" "$report_file"
+    assert_equals ".ai-flow/reports/20260503-ws-subrepo-review.md" "$report_file"
     assert_file_exists "$workspace/$report_file"
-    assert_file_not_exists "$workspace/repo-alpha/.ai-flow/reports/ws-subrepo-review.md"
+    assert_file_not_exists "$workspace/repo-alpha/.ai-flow/reports/20260503-ws-subrepo-review.md"
     assert_contains "$temp_root/codex.review.argv" "-C $(cd "$workspace" && pwd -P)"
     rm -rf "$temp_root"
 }
@@ -175,13 +175,14 @@ test_workspace_coding_review_prefers_ancestor_workspace_over_local_ai_flow_dir()
 }
 
 test_workspace_coding_review_from_undeclared_repo_keeps_single_repo_mode() {
-    local temp_root workspace runtime_script executor rc
+    local temp_root workspace runtime_script executor rc state_slug
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     write_fake_coding_review_agents "$temp_root"
     workspace="$temp_root/workspace"
     runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
+    state_slug="20260503-solo"
     setup_workspace_root "$workspace" "neighbour-ws"
     setup_workspace_git_repos "$workspace"
 
@@ -198,9 +199,9 @@ test_workspace_coding_review_from_undeclared_repo_keeps_single_repo_mode() {
         git commit -q -m init
         printf 'changed\n' > src/review-target.txt
         bash "$runtime_script" create --slug solo --title solo --plan-file .ai-flow/plans/20260503-solo.md >/dev/null
-        bash "$runtime_script" record-plan-review --slug solo --result passed --engine Fixture --model fixture-model >/dev/null
-        bash "$runtime_script" start-execute solo >/dev/null
-        bash "$runtime_script" finish-implementation solo >/dev/null
+        bash "$runtime_script" record-plan-review --slug "$state_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" start-execute "$state_slug" >/dev/null
+        bash "$runtime_script" finish-implementation "$state_slug" >/dev/null
     )
 
     (

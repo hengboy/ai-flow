@@ -131,7 +131,7 @@ test_plan_repo_state_rejects_invalid_repo_path() {
 }
 
 test_plan_repo_state_rejects_old_schema_normalize() {
-    local temp_root owner state_script rc
+    local temp_root owner state_script rc legacy_state
     temp_root=$(make_temp_root)
     owner="$temp_root/owner"
     state_script="$SOURCE_FLOW_STATE_SCRIPT"
@@ -141,7 +141,8 @@ test_plan_repo_state_rejects_old_schema_normalize() {
         cd "$owner"
         bash "$state_script" create --slug legacy --title "legacy" --plan-file .ai-flow/plans/20260503-legacy.md >/dev/null
     )
-    python3 - "$owner/.ai-flow/state/legacy.json" <<'PY'
+    legacy_state="$(resolve_state_file "$owner" "legacy")"
+    python3 - "$legacy_state" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -155,7 +156,7 @@ PY
     set +e
     (
         cd "$owner"
-        bash "$state_script" normalize --slug legacy >"$temp_root/legacy.out" 2>&1
+        bash "$state_script" normalize --slug 20260503-legacy >"$temp_root/legacy.out" 2>&1
     )
     rc=$?
     set -e

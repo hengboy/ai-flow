@@ -36,14 +36,15 @@ test_status_only_uses_state_files() {
 }
 
 test_status_surfaces_invalid_state_files() {
-    local temp_root project out
+    local temp_root project out broken_state
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "valid" "PLANNED" "20260503" "valid"
     create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "broken" "REVIEW_FAILED" "20260503" "broken"
+    broken_state="$(resolve_state_file "$project" "broken")"
 
-    python3 - "$project/.ai-flow/state/broken.json" <<'PY'
+    python3 - "$broken_state" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -63,7 +64,7 @@ PY
     assert_contains "$out" "--- 无效状态文件 ---"
     assert_contains "$out" "broken"
     assert_contains "$out" "coding_review_failed"
-    assert_contains "$out" "normalize --slug broken"
+    assert_contains "$out" "normalize --slug 20260503-broken"
     assert_contains "$out" "valid [PLANNED]"
     assert_contains "$out" "next: ai-flow-plan-coding"
     assert_contains "$out" "INVALID: 1"
