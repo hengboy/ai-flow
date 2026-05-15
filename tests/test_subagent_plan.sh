@@ -217,6 +217,8 @@ test_plan_generation_rewrites_full_implementation_plan_input() {
     assert_contains "$plan_file" "验收标准：生成的 plan 保留原始方案"
     assert_contains "$temp_root/codex-plan-prompt.log" "如果”需求描述”是一份完整实施方案"
     assert_contains "$temp_root/codex-plan-prompt.log" "全部映射到下方"
+    assert_contains "$temp_root/codex-plan-prompt.log" "先做头脑风暴式 intake"
+    assert_contains "$temp_root/codex-plan-prompt.log" "只要存在任何不确定项，必须先询问用户"
     rm -rf "$temp_root"
 }
 
@@ -272,6 +274,30 @@ test_plan_generation_injects_rule_prompt_and_required_reads() {
     rm -rf "$temp_root"
 }
 
+test_plan_generation_state_file_notice_uses_date_prefix() {
+    local temp_root project out today executor plan_file
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    setup_git_repo_clean "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+    today="$(date +%Y%m%d)"
+    plan_file="$project/.ai-flow/plans/${today}-dated-state.md"
+
+    (
+        cd "$project"
+        run_with_fake_plan_agents "$temp_root" bash "$executor" "验证状态文件日期前缀" dated-state >"$temp_root/dated-state.out"
+    )
+    out="$temp_root/dated-state.out"
+
+    assert_protocol_field "$out" "RESULT" "success"
+    assert_contains "$plan_file" ".ai-flow/state/${today}-dated-state.json"
+    assert_file_exists "$project/.ai-flow/state/${today}-dated-state.json"
+    rm -rf "$temp_root"
+}
+
 test_plan_generation_fails_when_required_read_missing() {
     local temp_root project executor
     temp_root=$(make_temp_root)
@@ -314,6 +340,28 @@ test_plan_missing_runtime_fails_deterministically() {
 
     assert_protocol_field "$temp_root/missing.out" "RESULT" "failed"
     assert_contains "$temp_root/missing.out" "缺少AI Flow runtime 脚本 flow-state.sh"
+    rm -rf "$temp_root"
+}
+
+test_flow_state_create_normalizes_slug_from_plan_file_date_prefix() {
+    local temp_root project state_script out
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    state_script="$SOURCE_FLOW_STATE_SCRIPT"
+    setup_project_dirs "$project" "20260503"
+    setup_git_repo_clean "$project"
+    create_plan_file "$project" "dated-demo" "20260503" "dated-demo"
+
+    (
+        cd "$project"
+        bash "$state_script" create --slug dated-demo --title "dated demo" --plan-file .ai-flow/plans/20260503-dated-demo.md >"$temp_root/create.out"
+    )
+    out="$temp_root/create.out"
+
+    assert_contains "$out" ".ai-flow/state/20260503-dated-demo.json"
+    assert_file_exists "$project/.ai-flow/state/20260503-dated-demo.json"
+    assert_file_not_exists "$project/.ai-flow/state/dated-demo.json"
+    assert_equals "20260503-dated-demo" "$(state_field "$project" "20260503-dated-demo" "slug")"
     rm -rf "$temp_root"
 }
 
@@ -360,5 +408,7 @@ test_plan_generation_allows_negative_tbd_references
 test_plan_generation_rewrites_full_implementation_plan_input
 test_plan_generation_allows_document_links_as_original_requirement
 test_plan_generation_injects_rule_prompt_and_required_reads
+test_plan_generation_state_file_notice_uses_date_prefix
 test_plan_generation_fails_when_required_read_missing
 test_plan_missing_runtime_fails_deterministically
+test_flow_state_create_normalizes_slug_from_plan_file_date_prefix

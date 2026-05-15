@@ -13,6 +13,7 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 
 SCHEMA_VERSION = 3
@@ -51,6 +52,7 @@ LEGACY_EVENT_ALIASES = {
     "coding_recheck_failed": "recheck_failed",
 }
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+DATED_SLUG_RE = re.compile(r"^\d{8}-[a-z0-9][a-z0-9-]*$")
 
 
 class FlowError(Exception):
@@ -112,6 +114,19 @@ def ensure_slug(slug: str) -> str:
     if not slug or not SLUG_RE.match(slug):
         raise FlowError(f"非法 slug: {slug!r}；只允许小写字母、数字和连字符")
     return slug
+
+
+def is_dated_slug(slug: str) -> bool:
+    return bool(slug and DATED_SLUG_RE.match(slug))
+
+
+def extract_slug_from_plan_file(plan_file: str) -> Optional[str]:
+    normalized = normalize_path(plan_file)
+    name = Path(normalized).name
+    match = re.fullmatch(r"(\d{8}-[a-z0-9][a-z0-9-]*)\.md", name)
+    if match:
+        return match.group(1)
+    return None
 
 
 def normalize_path(path_value: str) -> str:
@@ -647,12 +662,22 @@ def cmd_create(args):
     title = args.title.strip()
     if not title:
         raise FlowError("title 不能为空")
+    slug = ensure_slug(args.slug)
+    implied_slug = extract_slug_from_plan_file(plan_file)
+    if implied_slug is not None:
+        if is_dated_slug(slug):
+            if slug != implied_slug:
+                raise FlowError(
+                    f"slug 与 plan_file 日期前缀不一致: {slug} != {implied_slug}"
+                )
+        else:
+            slug = implied_slug
 
     exec_scope = build_execution_scope(repo_scope_json=getattr(args, "repo_scope_json", None))
 
     def mutator(state):
         if state is not None:
-            raise FlowError(f"状态文件已存在: {state_path_for_slug(args.slug)}")
+            raise FlowError(f"状态文件已存在: {state_path_for_slug(slug)}")
         at = now_iso()
         artifacts: dict = {"plan_file": plan_file}
         engine = (getattr(args, "engine", None) or "").strip()
@@ -664,7 +689,7 @@ def cmd_create(args):
 
         return {
             "schema_version": SCHEMA_VERSION,
-            "slug": ensure_slug(args.slug),
+            "slug": slug,
             "title": title,
             "current_status": "AWAITING_PLAN_REVIEW",
             "created_at": at,
@@ -690,8 +715,8 @@ def cmd_create(args):
             ],
         }
 
-    state = with_lock(args.slug, mutator)
-    print(f"已创建状态: {state_path_for_slug(args.slug)} -> {state['current_status']}")
+    state = with_lock(slug, mutator)
+    print(f"已创建状态: {state_path_for_slug(slug)} -> {state['current_status']}")
 
 
 def cmd_record_plan_review(args):

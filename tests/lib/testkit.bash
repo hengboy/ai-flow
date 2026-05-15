@@ -498,8 +498,12 @@ create_state_with_status() {
     local target_status="$4"
     local date_dir="${5:-20260503}"
     local title="${6:-$slug}"
-    local plan_file=".ai-flow/plans/${date_dir}-${slug}.md"
-    create_plan_file "$project_dir" "$slug" "$date_dir" "$title"
+    local base_slug="$slug"
+    if [[ "$slug" =~ ^[0-9]{8}-(.+)$ ]]; then
+        base_slug="${BASH_REMATCH[1]}"
+    fi
+    local plan_file=".ai-flow/plans/${date_dir}-${base_slug}.md"
+    create_plan_file "$project_dir" "$base_slug" "$date_dir" "$title"
     (
         cd "$project_dir" || exit 1
         if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -616,13 +620,14 @@ build_plan() {
 | `src/beta.txt` | repo-beta | Modify | beta 业务 | Step 1 |
 | `tests/run.sh` | repo-beta | Test | beta 验证 | Step 1 |'
     fi
+    date_prefix="$(date +%Y%m%d)"
     cat > "$out" <<PLAN
 # 实施计划：$slug
 
 > 创建日期：2026-05-03
 > 需求简称：$slug
 > 需求来源：测试
-> 状态文件：\`.ai-flow/state/$slug.json\`
+> 状态文件：\`.ai-flow/state/${date_prefix}-$slug.json\`
 > 文档角色：本文件仅记录实施证据与执行步骤；流程状态以 JSON 状态文件为准。
 $guard_note
 

@@ -1287,8 +1287,17 @@ from pathlib import Path
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 repo_ids = []
+
+def add_repo(candidate: str):
+    if candidate in {"", "-", "仓库"}:
+        return
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate) and candidate not in repo_ids:
+        repo_ids.append(candidate)
+
 for line in text.splitlines():
     if not line.startswith("|"):
+        for match in re.findall(r"(?<![A-Za-z0-9./-])([a-z0-9][a-z0-9-]*)/[^`\s|]+", line):
+            add_repo(match)
         continue
     cells = [cell.strip().strip("`") for cell in line.strip().split("|")[1:-1]]
     if len(cells) < 2:
@@ -1297,11 +1306,13 @@ for line in text.splitlines():
         continue
     if set(cells[0]) <= {"-"}:
         continue
-    for candidate in cells[1:2]:
-        if candidate in {"", "-", "仓库"}:
-            continue
-        if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate) and candidate not in repo_ids:
-            repo_ids.append(candidate)
+    add_repo(cells[1])
+    if cells[0] == "文件":
+        continue
+    if len(cells) >= 1:
+        for match in re.findall(r"(?<![A-Za-z0-9./-])([a-z0-9][a-z0-9-]*)/[^`\s|]+", cells[0]):
+            add_repo(match)
+
 for repo_id in repo_ids:
     print(repo_id)
 PY
@@ -1315,20 +1326,18 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
+from typing import Optional
 
 owner = Path(sys.argv[1]).resolve()
 plan = Path(sys.argv[2])
 text = plan.read_text(encoding="utf-8")
 repo_ids = []
-for line in text.splitlines():
-    if not line.startswith("|"):
-        continue
-    cells = [cell.strip().strip("`") for cell in line.strip().split("|")[1:-1]]
-    if len(cells) < 2 or cells[0] in {"模块", "文件"} or set(cells[0]) <= {"-"}:
-        continue
-    candidate = cells[1]
+path_candidate_pattern = re.compile(r"(?<![A-Za-z0-9./-])([a-z0-9][a-z0-9-]*)/[^`\s|]+")
+
+def add_repo(candidate: str):
     if candidate in {"", "-", "仓库"}:
-        continue
+        return
     if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate) and candidate not in repo_ids:
         repo_ids.append(candidate)
 
@@ -1361,6 +1370,21 @@ for child in sorted(owner.iterdir(), key=lambda item: item.name):
     if rel_path == "." or "/" in rel_path:
         continue
     discovered.setdefault(child.name, {"path": rel_path, "git_root": git_root})
+
+for line in text.splitlines():
+    if not line.startswith("|"):
+        for match in path_candidate_pattern.findall(line):
+            if match in discovered:
+                add_repo(match)
+        continue
+    cells = [cell.strip().strip("`") for cell in line.strip().split("|")[1:-1]]
+    if len(cells) < 2 or cells[0] in {"模块", "文件"} or set(cells[0]) <= {"-"}:
+        continue
+    add_repo(cells[1])
+    for cell in cells:
+        for match in path_candidate_pattern.findall(cell):
+            if match in discovered:
+                add_repo(match)
 
 repos = []
 for repo_id in repo_ids:
@@ -1431,23 +1455,60 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 plan = Path(sys.argv[1])
 state = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 owner = Path(sys.argv[3]).resolve()
 text = plan.read_text(encoding="utf-8")
 plan_repos = set()
+path_candidate_pattern = re.compile(r"(?<![A-Za-z0-9./-])([a-z0-9][a-z0-9-]*)/[^`\s|]+")
+
+def add_repo(candidate: str):
+    if candidate in {"", "-", "仓库"}:
+        return
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate):
+        plan_repos.add(candidate)
+
+def git_root_for(path: Path) -> Optional[Path]:
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    return Path(result.stdout.strip()).resolve()
+
+discovered_repo_ids = {"owner"}
+for child in sorted(owner.iterdir(), key=lambda item: item.name):
+    if not child.is_dir() or child.name.startswith(".") or child.name == ".ai-flow":
+        continue
+    git_root = git_root_for(child)
+    if git_root is None:
+        continue
+    try:
+        rel_path = git_root.relative_to(owner).as_posix()
+    except ValueError:
+        continue
+    if rel_path == child.name:
+        discovered_repo_ids.add(child.name)
+
 for line in text.splitlines():
     if not line.startswith("|"):
+        for match in path_candidate_pattern.findall(line):
+            if match in discovered_repo_ids:
+                add_repo(match)
         continue
     cells = [cell.strip().strip("`") for cell in line.strip().split("|")[1:-1]]
     if len(cells) < 2 or cells[0] in {"模块", "文件"} or set(cells[0]) <= {"-"}:
         continue
-    candidate = cells[1]
-    if candidate in {"", "-", "仓库"}:
-        continue
-    if re.fullmatch(r"[a-z0-9][a-z0-9-]*", candidate):
-        plan_repos.add(candidate)
+    add_repo(cells[1])
+    for cell in cells:
+        for match in path_candidate_pattern.findall(cell):
+            if match in discovered_repo_ids:
+                add_repo(match)
 if not plan_repos:
     plan_repos.add("owner")
 

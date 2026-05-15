@@ -58,15 +58,17 @@ __AI_FLOW_REPO_SCOPE_CONTEXT__
 - 其他模板中定义的子章节和字段必须保留
 
 ### 内容填充要求
-1. 先做轻量需求澄清（intake）：确认目标、非目标、约束、成功标准；如果需求包含多个独立子系统，在 plan 中先拆解边界和推荐顺序
+1. 先做头脑风暴式 intake：主动识别需求中的不确定项、潜在分歧点和会影响决策的边界条件；确认目标、非目标、约束、成功标准、仓库边界与验证方式
+2. 只要存在任何不确定项，必须先询问用户，不得自行猜测后直接写入 plan；询问时必须同时列出可行性、推荐选项和备选项，供用户交互式选择
+3. 如果需求包含多个独立子系统，必须先拆解边界和推荐顺序，再让用户确认优先级与范围
 2. 填充模板中的所有占位符，删除大括号标记
 2.1. `## 1. 需求概述` 中必须保留 `**原始需求（原文）**` 字段，并完整引用需求描述原文，不得改写；仅当输入是一个或多个文档地址时，可以直接引用这些文档地址作为原文
 2.2. `## 1. 需求概述` 中的 `**目标**`、`**背景**`、`**非目标**` 字段必须填充，不可省略
 3. 实施步骤要拆得足够细，每个 Step 先写目标和文件边界（file-boundary），文件路径必须精确，并补齐”本轮 review 预期关注面””本步关闭条件”
 4. 代码必须严格匹配上述检测到的技术栈，不要引入项目不使用的语言或框架
 5. 直接输出完整的计划 Markdown 内容，不要包含其他解释文字
-6. 本计划是证据文档，不承担流程状态语义；流程状态只写入 .ai-flow/state/__AI_FLOW_SLUG__.json
-   - 不得为 .ai-flow/state/__AI_FLOW_SLUG__.json 设计任何 JSON 结构、字段列表、样例内容或手工维护步骤
+6. 本计划是证据文档，不承担流程状态语义；流程状态只写入 .ai-flow/state/{YYYYMMDD}-__AI_FLOW_SLUG__.json
+   - 不得为 .ai-flow/state/{YYYYMMDD}-__AI_FLOW_SLUG__.json 设计任何 JSON 结构、字段列表、样例内容或手工维护步骤
    - 该状态文件只能由 flow-state.sh 维护，固定字段只有：schema_version、slug、title、current_status、created_at、updated_at、plan_file、review_rounds、latest_regular_review_file、latest_recheck_review_file、last_review、active_fix、transitions
    - 如果需要记录步骤进度、验证结果、变更登记，写在计划文档自身（Step 复选框、测试计划、需求变更记录），不要写进 state JSON 设计
 7. 所有规则、算法、接口结构必须自包含，不能引用 plan 外的代码或文档

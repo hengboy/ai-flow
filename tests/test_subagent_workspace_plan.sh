@@ -62,5 +62,28 @@ test_plan_scoped_artifacts_stay_at_owner_root() {
     rm -rf "$temp_root"
 }
 
+test_plan_scoped_multi_repo_discovers_repos_from_prefixed_paths() {
+    local temp_root workspace executor today state_slug
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    workspace="$temp_root/workspace"
+    setup_workspace_root "$workspace" "path-scan-ws"
+    setup_workspace_git_repos "$workspace"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+    today="$(date +%Y%m%d)"
+
+    (
+        cd "$workspace"
+        FAKE_PLAN_INCLUDE_PARTICIPANT_REPOS=1 run_with_fake_plan_agents "$temp_root" bash "$executor" "跨仓文件路径推断仓库" path-scan >"$temp_root/path-scan.out"
+    )
+
+    state_slug="${today}-path-scan"
+    assert_equals "repo-alpha" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.1.id")"
+    assert_equals "repo-beta" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.2.id")"
+    rm -rf "$temp_root"
+}
+
 test_plan_scoped_multi_repo_accepts_owner_root
 test_plan_scoped_artifacts_stay_at_owner_root
+test_plan_scoped_multi_repo_discovers_repos_from_prefixed_paths

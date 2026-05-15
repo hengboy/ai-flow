@@ -1,6 +1,6 @@
 # AI Flow
 
-> 通用 AI 协作编码工作流系统。为 Claude Code / Codex 提供"需求 → 计划 → 审核 → 编码 → 审查"全生命周期管理，流程状态由严格状态机驱动，唯一状态源是 `.ai-flow/state/<slug>.json`。
+> 通用 AI 协作编码工作流系统。为 Claude Code / Codex 提供"需求 → 计划 → 审核 → 编码 → 审查"全生命周期管理，流程状态由严格状态机驱动，唯一状态源是 `.ai-flow/state/{YYYYMMDD}-{slug}.json`。
 
 ## 目录
 
@@ -426,7 +426,7 @@ INCOMPLETE: <text>  (仅 partial 时)
 
 ### 状态 JSON 字段（schema v2）
 
-状态文件 `.ai-flow/state/<slug>.json` 完整字段列表：
+状态文件 `.ai-flow/state/{YYYYMMDD}-{slug}.json` 完整字段列表：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|

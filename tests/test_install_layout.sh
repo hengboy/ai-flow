@@ -23,6 +23,9 @@ test_default_install_layout() {
     assert_file_exists "$skills_root/ai-flow-git-commit/SKILL.md"
     assert_contains "$skills_root/ai-flow-plan/SKILL.md" 'plan-review 失败后重新进入 `/ai-flow-plan` 时，不得绕过配置选择逻辑'
     assert_contains "$skills_root/ai-flow-plan/SKILL.md" '禁止因为“修订”语义直接固定指派 `ai-flow-claude-plan`'
+    assert_contains "$skills_root/ai-flow-plan/SKILL.md" '先做一次头脑风暴式 intake'
+    assert_contains "$skills_root/ai-flow-plan/SKILL.md" '必须先向用户询问，不能直接把假设写进 plan'
+    assert_contains "$skills_root/ai-flow-plan/SKILL.md" '询问时必须给出可行性分析、推荐选项和备选项'
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "唯一合法执行入口是："
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "\$HOME/.config/ai-flow/scripts/flow-commit.sh"
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "第一执行动作必须是直接调用上面的 runtime 脚本"
@@ -70,7 +73,7 @@ test_default_install_layout() {
     assert_contains "$agents_root/ai-flow-codex-plan-coding-review/AGENT.md" "不得按用户工作区相对路径解析"
     assert_contains "$agents_root/ai-flow-claude-git-message/AGENT.md" "只负责生成 commit message"
     assert_contains "$agents_root/ai-flow-claude-git-message/AGENT.md" "不要输出 JSON。"
-    assert_file_not_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-review-executor.sh")"
+    assert_file_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-review-executor.sh")"
     assert_file_not_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "coding-review-executor.sh")"
     assert_file_not_exists "$agents_root/ai-flow-claude-git-message/bin"
     assert_file_not_exists "$(installed_subagent_asset "$temp_root" "ai-flow-codex-plan" "templates/review-template.md")"
@@ -114,6 +117,9 @@ test_custom_roots_install() {
     assert_file_exists "$onespace_skills/ai-flow-git-commit/SKILL.md"
     assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" 'plan-review 失败后重新进入 `/ai-flow-plan` 时，不得绕过配置选择逻辑'
     assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" '禁止因为“修订”语义直接固定指派 `ai-flow-claude-plan`'
+    assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" '先做一次头脑风暴式 intake'
+    assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" '必须先向用户询问，不能直接把假设写进 plan'
+    assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" '询问时必须给出可行性分析、推荐选项和备选项'
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "唯一合法执行入口是："
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "\$HOME/.config/ai-flow/scripts/flow-commit.sh"
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "第一执行动作必须是直接调用上面的 runtime 脚本"
@@ -139,7 +145,7 @@ test_custom_roots_install() {
     assert_contains "$claude_agents/ai-flow-codex-plan-coding-review/AGENT.md" "tools: Bash"
     assert_contains "$claude_agents/ai-flow-codex-plan-coding-review/AGENT.md" "不得按用户工作区相对路径解析"
     assert_contains "$claude_agents/ai-flow-claude-git-message/AGENT.md" "SUBJECT:"
-    assert_file_not_exists "$claude_agents/ai-flow-codex-plan/bin/plan-review-executor.sh"
+    assert_file_exists "$claude_agents/ai-flow-codex-plan/bin/plan-review-executor.sh"
     assert_file_not_exists "$claude_agents/ai-flow-codex-plan/bin/coding-review-executor.sh"
     assert_file_not_exists "$claude_agents/ai-flow-claude-git-message/bin"
     assert_file_not_exists "$claude_agents/index.yaml"
