@@ -14,12 +14,11 @@ from collections import OrderedDict
 prepared = json.loads(sys.argv[1])
 mode = sys.argv[2]
 repos = prepared.get("repos", [])
-session_id = prepared.get("session_id")
 
 def topdir(path: str) -> str:
     return path.split("/", 1)[0]
 
-output = {"session_id": session_id, "repos": []}
+output = {"repos": []}
 
 for repo_index, repo in enumerate(repos):
     repo_id = repo["repo_id"]
@@ -194,12 +193,19 @@ run_commit_with_generated_messages() {
         message_mode="$1"
         shift
     fi
-    local prepared_json groups_json validated_json message_map_json
+    local prepared_json groups_json validated_json message_map_json session_id
     prepared_json="$(bash "$commit_script" "$@" --prepare-json)"
+    session_id="$(python3 - "$prepared_json" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+print(payload["session_id"])
+PY
+)"
     groups_json="$(build_groups_json "$prepared_json" "$group_mode")"
-    validated_json="$(bash "$commit_script" "$@" --validate-groups-json "$groups_json")"
+    validated_json="$(bash "$commit_script" "$@" --session-id "$session_id" --validate-groups-json "$groups_json")"
     message_map_json="$(build_message_map_json "$validated_json" "$message_mode")"
-    bash "$commit_script" "$@" --groups-json "$validated_json" --message-map-json "$message_map_json" >"$output_file" 2>&1
+    bash "$commit_script" "$@" --session-id "$session_id" --groups-json "$validated_json" --message-map-json "$message_map_json" >"$output_file" 2>&1
     [ -s "$output_file" ] || fail "Expected commit output file to be non-empty: $output_file"
 }
 
@@ -252,7 +258,7 @@ PY
 }
 
 test_validate_groups_json_adds_group_id_and_staged_diff() {
-    local temp_root repo commit_script prepared_json groups_json validated_json
+    local temp_root repo commit_script prepared_json groups_json validated_json session_id
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "validate-shape")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -261,8 +267,13 @@ test_validate_groups_json_adds_group_id_and_staged_diff() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json")"
-        validated_json="$(bash "$commit_script" --validate-groups-json "$groups_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
         python3 - "$validated_json" <<'PY'
 import json
 import sys
@@ -287,7 +298,7 @@ PY
 }
 
 test_validate_groups_json_rejects_missing_file() {
-    local temp_root repo commit_script prepared_json groups_json rc
+    local temp_root repo commit_script prepared_json groups_json session_id rc
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "missing-file")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -299,8 +310,13 @@ test_validate_groups_json_rejects_missing_file() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json" missing-last-file)"
-        bash "$commit_script" --validate-groups-json "$groups_json" >"$temp_root/missing-file.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json" >"$temp_root/missing-file.out" 2>&1
     )
     rc=$?
     set -e
@@ -311,7 +327,7 @@ test_validate_groups_json_rejects_missing_file() {
 }
 
 test_validate_groups_json_rejects_duplicate_file() {
-    local temp_root repo commit_script prepared_json groups_json rc
+    local temp_root repo commit_script prepared_json groups_json session_id rc
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "duplicate-file")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -323,8 +339,13 @@ test_validate_groups_json_rejects_duplicate_file() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json" duplicate-file)"
-        bash "$commit_script" --validate-groups-json "$groups_json" >"$temp_root/duplicate-file.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json" >"$temp_root/duplicate-file.out" 2>&1
     )
     rc=$?
     set -e
@@ -335,7 +356,7 @@ test_validate_groups_json_rejects_duplicate_file() {
 }
 
 test_validate_groups_json_rejects_cross_repo_group() {
-    local temp_root workspace runtime_script commit_script scope state_slug prepared_json groups_json rc
+    local temp_root workspace runtime_script commit_script scope state_slug prepared_json groups_json session_id rc
     temp_root=$(make_temp_root)
     workspace="$temp_root/workspace"
     runtime_script="$SOURCE_FLOW_STATE_SCRIPT"
@@ -373,8 +394,13 @@ PY
     (
         cd "$workspace"
         prepared_json="$(bash "$commit_script" --slug "$state_slug" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json" cross-repo)"
-        bash "$commit_script" --slug "$state_slug" --validate-groups-json "$groups_json" >"$temp_root/cross-repo.out" 2>&1
+        bash "$commit_script" --slug "$state_slug" --session-id "$session_id" --validate-groups-json "$groups_json" >"$temp_root/cross-repo.out" 2>&1
     )
     rc=$?
     set -e
@@ -385,7 +411,7 @@ PY
 }
 
 test_validate_groups_json_rejects_empty_title() {
-    local temp_root repo commit_script prepared_json groups_json rc
+    local temp_root repo commit_script prepared_json groups_json session_id rc
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "empty-title")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -395,8 +421,13 @@ test_validate_groups_json_rejects_empty_title() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json" empty-title)"
-        bash "$commit_script" --validate-groups-json "$groups_json" >"$temp_root/empty-title.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json" >"$temp_root/empty-title.out" 2>&1
     )
     rc=$?
     set -e
@@ -407,7 +438,7 @@ test_validate_groups_json_rejects_empty_title() {
 }
 
 test_validate_groups_json_rejects_empty_reason() {
-    local temp_root repo commit_script prepared_json groups_json rc
+    local temp_root repo commit_script prepared_json groups_json session_id rc
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "empty-reason")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -417,8 +448,13 @@ test_validate_groups_json_rejects_empty_reason() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json" empty-reason)"
-        bash "$commit_script" --validate-groups-json "$groups_json" >"$temp_root/empty-reason.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json" >"$temp_root/empty-reason.out" 2>&1
     )
     rc=$?
     set -e
@@ -429,7 +465,7 @@ test_validate_groups_json_rejects_empty_reason() {
 }
 
 test_validate_groups_json_rejects_more_than_five_groups() {
-    local temp_root repo commit_script prepared_json groups_json rc
+    local temp_root repo commit_script prepared_json groups_json session_id rc
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "too-many-groups")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -445,8 +481,13 @@ test_validate_groups_json_rejects_more_than_five_groups() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json" too-many)"
-        bash "$commit_script" --validate-groups-json "$groups_json" >"$temp_root/too-many-groups.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json" >"$temp_root/too-many-groups.out" 2>&1
     )
     rc=$?
     set -e
@@ -457,7 +498,7 @@ test_validate_groups_json_rejects_more_than_five_groups() {
 }
 
 test_validate_groups_json_rejects_workspace_drift_after_prepare() {
-    local temp_root repo commit_script prepared_json groups_json rc
+    local temp_root repo commit_script prepared_json groups_json session_id rc
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "prepare-drift")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -467,9 +508,14 @@ test_validate_groups_json_rejects_workspace_drift_after_prepare() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         printf 'second change\n' > "$repo/src/other.txt"
         groups_json="$(build_groups_json "$prepared_json")"
-        bash "$commit_script" --validate-groups-json "$groups_json" >"$temp_root/prepare-drift.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json" >"$temp_root/prepare-drift.out" 2>&1
     )
     rc=$?
     set -e
@@ -480,7 +526,7 @@ test_validate_groups_json_rejects_workspace_drift_after_prepare() {
 }
 
 test_commit_rejects_tampered_validated_groups_json() {
-    local temp_root repo commit_script prepared_json groups_json validated_json message_map_json tampered_json rc
+    local temp_root repo commit_script prepared_json groups_json validated_json message_map_json tampered_json session_id rc
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "tampered-groups")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -490,8 +536,13 @@ test_commit_rejects_tampered_validated_groups_json() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json")"
-        validated_json="$(bash "$commit_script" --validate-groups-json "$groups_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
         tampered_json="$(python3 - "$validated_json" <<'PY'
 import json, sys
 payload = json.loads(sys.argv[1])
@@ -500,13 +551,95 @@ print(json.dumps(payload, ensure_ascii=False))
 PY
 )"
         message_map_json="$(build_message_map_json "$validated_json")"
-        bash "$commit_script" --groups-json "$tampered_json" --message-map-json "$message_map_json" >"$temp_root/tampered-groups.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --groups-json "$tampered_json" --message-map-json "$message_map_json" >"$temp_root/tampered-groups.out" 2>&1
     )
     rc=$?
     set -e
 
     [ "$rc" -ne 0 ] || fail "Expected commit to reject tampered validated groups json"
     assert_contains "$temp_root/tampered-groups.out" "必须使用 runtime 最近一次校验后的原样输出"
+    rm -rf "$temp_root"
+}
+
+test_validate_groups_json_accepts_explicit_session_id_without_json_top_level_session() {
+    local temp_root repo commit_script prepared_json groups_json validated_json session_id
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "explicit-session-validate")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(build_groups_json "$prepared_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
+        python3 - "$validated_json" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+assert payload["session_id"]
+assert payload["repos"][0]["groups"][0]["group_id"] == "owner-1"
+print("ok")
+PY
+    )
+
+    rm -rf "$temp_root"
+}
+
+test_validate_groups_json_rejects_session_id_mismatch_between_flag_and_json() {
+    local temp_root repo commit_script prepared_json groups_json session_id rc
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "session-mismatch-validate")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    set +e
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(python3 - "$(build_groups_json "$prepared_json")" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+payload["session_id"] = "wrong-session-id"
+print(json.dumps(payload, ensure_ascii=False))
+PY
+)"
+        bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json" >"$temp_root/session-mismatch-validate.out" 2>&1
+    )
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected validate-groups-json to reject mismatched session_id"
+    assert_contains "$temp_root/session-mismatch-validate.out" "--session-id 不匹配"
+    rm -rf "$temp_root"
+}
+
+test_prepare_json_rejects_session_id_flag() {
+    local temp_root repo commit_script rc
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "prepare-session-id")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    set +e
+    (
+        cd "$repo"
+        bash "$commit_script" --session-id invalid --prepare-json >"$temp_root/prepare-session-id.out" 2>&1
+    )
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected prepare-json to reject session-id flag"
+    assert_contains "$temp_root/prepare-session-id.out" "--prepare-json 阶段不允许传入 --session-id"
     rm -rf "$temp_root"
 }
 
@@ -578,7 +711,7 @@ EOF
 }
 
 test_commit_rejects_subject_verb_outside_whitelist() {
-    local temp_root repo commit_script prepared_json groups_json validated_json message_map_json rc
+    local temp_root repo commit_script prepared_json groups_json validated_json message_map_json session_id rc
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "invalid-verb")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -587,11 +720,16 @@ test_commit_rejects_subject_verb_outside_whitelist() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json")"
-        validated_json="$(bash "$commit_script" --validate-groups-json "$groups_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
         message_map_json="$(build_message_map_json "$validated_json" invalid-verb)"
         set +e
-        bash "$commit_script" --groups-json "$validated_json" --message-map-json "$message_map_json" >"$temp_root/invalid-verb.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --groups-json "$validated_json" --message-map-json "$message_map_json" >"$temp_root/invalid-verb.out" 2>&1
         rc=$?
         set -e
         [ "$rc" -ne 0 ] || fail "Expected invalid subject verb to fail"
@@ -876,7 +1014,7 @@ test_standalone_manual_conflict_requires_user_action() {
 }
 
 test_commit_rejects_missing_message_map_entry() {
-    local temp_root repo commit_script prepared_json groups_json validated_json message_map_json rc
+    local temp_root repo commit_script prepared_json groups_json validated_json message_map_json session_id rc
     temp_root=$(make_temp_root)
     repo="$(setup_git_remote_pair "$temp_root" "missing-message")"
     commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
@@ -888,10 +1026,15 @@ test_commit_rejects_missing_message_map_entry() {
     (
         cd "$repo"
         prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
         groups_json="$(build_groups_json "$prepared_json" split-topdir)"
-        validated_json="$(bash "$commit_script" --validate-groups-json "$groups_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
         message_map_json="$(build_message_map_json "$validated_json" missing)"
-        bash "$commit_script" --groups-json "$validated_json" --message-map-json "$message_map_json" >"$temp_root/missing-message.out" 2>&1
+        bash "$commit_script" --session-id "$session_id" --groups-json "$validated_json" --message-map-json "$message_map_json" >"$temp_root/missing-message.out" 2>&1
     )
     rc=$?
     set -e
@@ -989,6 +1132,9 @@ test_validate_groups_json_rejects_empty_reason
 test_validate_groups_json_rejects_more_than_five_groups
 test_validate_groups_json_rejects_workspace_drift_after_prepare
 test_commit_rejects_tampered_validated_groups_json
+test_validate_groups_json_accepts_explicit_session_id_without_json_top_level_session
+test_validate_groups_json_rejects_session_id_mismatch_between_flag_and_json
+test_prepare_json_rejects_session_id_flag
 test_standalone_commit_single_group
 test_commit_message_uses_diff_and_keeps_body_concise
 test_commit_rejects_subject_verb_outside_whitelist

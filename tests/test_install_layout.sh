@@ -33,6 +33,7 @@ test_default_install_layout() {
     assert_contains "$skills_root/ai-flow-plan/SKILL.md" '询问时必须给出可行性分析、推荐选项和备选项'
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "唯一合法执行入口是："
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "\$HOME/.config/ai-flow/scripts/flow-commit.sh"
+    assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "--session-id <session_id> --validate-groups-json"
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "第一执行动作必须是直接调用上面的 runtime 脚本"
     assert_contains "$skills_root/ai-flow-git-commit/SKILL.md" "不要先自行运行"
     assert_file_not_exists "$skills_root/ai-flow-plan/scripts"
@@ -86,6 +87,7 @@ test_default_install_layout() {
     assert_contains "$agents_root/ai-flow-claude-git-commit/AGENT.md" "mode=group 或 mode=message"
     assert_contains "$agents_root/ai-flow-claude-git-commit/AGENT.md" "每个文件必须出现且只能出现一次"
     assert_contains "$agents_root/ai-flow-claude-git-commit/AGENT.md" "每个 repo 最多只能返回 5 个 group"
+    assert_contains "$agents_root/ai-flow-claude-git-commit/AGENT.md" '不要回传顶层 `session_id`'
     assert_file_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-review-executor.sh")"
     assert_file_not_exists "$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "coding-review-executor.sh")"
     assert_file_not_exists "$agents_root/ai-flow-claude-git-commit/bin"
@@ -140,6 +142,7 @@ test_custom_roots_install() {
     assert_contains "$onespace_skills/ai-flow-plan/SKILL.md" '询问时必须给出可行性分析、推荐选项和备选项'
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "唯一合法执行入口是："
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "\$HOME/.config/ai-flow/scripts/flow-commit.sh"
+    assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "--session-id <session_id> --validate-groups-json"
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "第一执行动作必须是直接调用上面的 runtime 脚本"
     assert_contains "$onespace_skills/ai-flow-git-commit/SKILL.md" "不要先自行运行"
     assert_file_exists "$runtime_root/scripts/flow-state.sh"
@@ -166,6 +169,7 @@ test_custom_roots_install() {
     assert_contains "$claude_agents/ai-flow-claude-git-commit/AGENT.md" "mode=group"
     assert_contains "$claude_agents/ai-flow-claude-git-commit/AGENT.md" "SUBJECT:"
     assert_contains "$claude_agents/ai-flow-claude-git-commit/AGENT.md" "每个 repo 最多只能返回 5 个 group"
+    assert_contains "$claude_agents/ai-flow-claude-git-commit/AGENT.md" '不要回传顶层 `session_id`'
     assert_file_exists "$claude_agents/ai-flow-codex-plan/bin/plan-review-executor.sh"
     assert_file_not_exists "$claude_agents/ai-flow-codex-plan/bin/coding-review-executor.sh"
     assert_file_not_exists "$claude_agents/ai-flow-claude-git-commit/bin"

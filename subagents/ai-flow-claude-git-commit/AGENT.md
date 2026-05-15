@@ -32,7 +32,6 @@ color: orange
 
 ```json
 {
-  "session_id": "<session_id>",
   "repo_id": "<repo_id>",
   "groups": [
     {
@@ -45,7 +44,8 @@ color: orange
 ```
 
 - 约束：
-  - `session_id`、`repo_id` 必须与调用方输入保持一致
+  - `repo_id` 必须与调用方输入保持一致
+  - 不要回传顶层 `session_id`；session 绑定由调用方通过 runtime `--session-id` 负责
   - 只能处理当前 repo 的文件
   - 每个文件必须出现且只能出现一次
   - 每个 repo 最多只能返回 5 个 group；超过时必须主动合并

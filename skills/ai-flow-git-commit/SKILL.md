@@ -43,8 +43,8 @@ $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode ma
 
 ```bash
 $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --prepare-json
-$HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --validate-groups-json '<json>'
-$HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --groups-json '<json>' --message-map-json '<json>'
+$HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <session_id> --validate-groups-json '<json>'
+$HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <session_id> --groups-json '<json>' --message-map-json '<json>'
 ```
 
 默认 `--conflict-mode manual`。
@@ -88,20 +88,24 @@ $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode ma
 }
 ```
 
-4. 将第 3 步的结果组装为：
+4. 记录 `prepare-json` 返回的 `session_id`，后续两阶段都必须显式透传为 `--session-id`。
+
+5. 将第 3 步的结果组装为：
 
 ```json
 {
-  "session_id": "<prepare-json 返回的 session_id>",
   "repos": [...]
 }
 ```
 
-5. 调用 `--validate-groups-json`。如果校验失败：
+   - `groups-json` 顶层不再要求必须携带 `session_id`
+   - 如为兼容旧调用，允许保留顶层 `session_id`，但不得与 `--session-id` 不一致
+
+6. 调用 `--validate-groups-json`。如果校验失败：
    - 当前 repo 只重试 `mode=group` 1 次
    - 仍失败则整体停止
 
-6. runtime 校验通过后会返回规范化结果。每组至少包含：
+7. runtime 校验通过后会返回规范化结果。每组至少包含：
    - `repo_id`
    - `group_id`
    - `group_title`
@@ -110,7 +114,7 @@ $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode ma
    - `staged_diff`
    - `message_agent_input`
 
-7. 按 `repo -> group` 顺序逐个调用 `ai-flow-claude-git-commit`。
+8. 按 `repo -> group` 顺序逐个调用 `ai-flow-claude-git-commit`。
    - 调用参数必须直接使用 runtime 返回的 `message_agent_input`
    - 不得手工改写 `staged_diff`、`group_id`、`reason` 或 `files`
    - 输出只能是固定文本协议：
@@ -123,7 +127,7 @@ FOOTER:
 ...
 ```
 
-8. 解析子代理输出并组装成：
+9. 解析子代理输出并组装成：
 
 ```json
 {
@@ -137,12 +141,13 @@ FOOTER:
 }
 ```
 
-9. 调用 `--groups-json '<validated-json>' --message-map-json '<json>'` 执行提交。
+10. 调用 `--session-id '<prepare-json.session_id>' --groups-json '<validated-json>' --message-map-json '<json>'` 执行提交。
 
 ## 子代理约束
 
 - commit 子代理固定使用 `ai-flow-claude-git-commit`
 - `mode=group` 与 `mode=message` 的输入都必须原样转发 runtime 产出的 agent input，禁止 skill 层自行补充边界信息
+- `session_id` 只允许来自 `prepare-json` 返回值；不得自行生成、改写或遗漏
 - `mode=message` 必须同步 runtime 当前 message 校验规则：
   - emoji 白名单：`:sparkles:`、`:bug:`、`:memo:`、`:art:`、`:recycle:`、`:zap:`、`:white_check_mark:`、`:package:`、`:construction_worker:`、`:wrench:`、`:rewind:`
   - subject 动词白名单：`添加`、`修复`、`更新`、`调整`、`重构`、`优化`、`补充`、`回滚`

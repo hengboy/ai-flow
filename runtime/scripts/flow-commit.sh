@@ -10,12 +10,13 @@ usage() {
     cat <<'EOF'
 用法:
   flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --prepare-json
-  flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --validate-groups-json '<json>'
-  flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --groups-json '<json>' --message-map-json '<json>'
+  flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <id> --validate-groups-json '<json>'
+  flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <id> --groups-json '<json>' --message-map-json '<json>'
 
 说明:
   --slug                  绑定 AI Flow 状态；仅允许状态为 DONE
   --conflict-mode         冲突处理方式，默认 manual
+  --session-id            指定 prepare 阶段返回的 session_id；validate/commit 阶段推荐显式传入
   --prepare-json          输出 repo 级分组上下文，不执行提交
   --validate-groups-json  校验模型返回的分组并补全 group_id/staged_diff
   --groups-json           提供已校验分组结果
@@ -1071,22 +1072,29 @@ validate_groups_json_for_session() {
     local session_json="$1"
     local groups_json="$2"
     local current_repo_state_json="$3"
-    python3 - "$session_json" "$groups_json" "$current_repo_state_json" <<'PY'
+    local expected_session_id="${4:-}"
+    python3 - "$session_json" "$groups_json" "$current_repo_state_json" "$expected_session_id" <<'PY'
 import json
 import sys
 
 session = json.loads(sys.argv[1])
 groups_payload = json.loads(sys.argv[2])
 current_repo_state = json.loads(sys.argv[3])
+expected_session_id = (sys.argv[4] or "").strip()
 
 saved_state = session.get("repo_state", {})
 if saved_state != current_repo_state:
     raise SystemExit("prepare 之后工作区已变化，请重新执行 --prepare-json")
 
 session_id = groups_payload.get("session_id")
-if not isinstance(session_id, str) or not session_id.strip():
-    raise SystemExit("groups-json 缺少 session_id")
-if session_id != session.get("session_id"):
+resolved_session_id = expected_session_id
+if not resolved_session_id:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise SystemExit("groups-json 缺少 session_id；请通过 --session-id 显式传入，或在 JSON 顶层保留 session_id")
+    resolved_session_id = session_id.strip()
+elif isinstance(session_id, str) and session_id.strip() and session_id.strip() != resolved_session_id:
+    raise SystemExit("groups-json 的 session_id 与 --session-id 不匹配")
+if resolved_session_id != session.get("session_id"):
     raise SystemExit("groups-json 的 session_id 与 prepare 阶段不匹配")
 
 repos = groups_payload.get("repos")
@@ -1130,22 +1138,29 @@ normalize_commit_groups_json_for_session() {
     local session_json="$1"
     local groups_json="$2"
     local current_repo_state_json="$3"
-    python3 - "$session_json" "$groups_json" "$current_repo_state_json" <<'PY'
+    local expected_session_id="${4:-}"
+    python3 - "$session_json" "$groups_json" "$current_repo_state_json" "$expected_session_id" <<'PY'
 import json
 import sys
 
 session = json.loads(sys.argv[1])
 groups_payload = json.loads(sys.argv[2])
 current_repo_state = json.loads(sys.argv[3])
+expected_session_id = (sys.argv[4] or "").strip()
 
 saved_state = session.get("repo_state", {})
 if saved_state != current_repo_state:
     raise SystemExit("prepare 之后工作区已变化，请重新执行 --prepare-json")
 
 session_id = groups_payload.get("session_id")
-if not isinstance(session_id, str) or not session_id.strip():
-    raise SystemExit("groups-json 缺少 session_id")
-if session_id != session.get("session_id"):
+resolved_session_id = expected_session_id
+if not resolved_session_id:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise SystemExit("groups-json 缺少 session_id；请通过 --session-id 显式传入，或在 JSON 顶层保留 session_id")
+    resolved_session_id = session_id.strip()
+elif isinstance(session_id, str) and session_id.strip() and session_id.strip() != resolved_session_id:
+    raise SystemExit("groups-json 的 session_id 与 --session-id 不匹配")
+if resolved_session_id != session.get("session_id"):
     raise SystemExit("groups-json 的 session_id 与 prepare 阶段不匹配")
 
 saved_validated = session.get("validated_payload")
@@ -1275,6 +1290,7 @@ PY
 
 STATE_SLUG=""
 CONFLICT_MODE="manual"
+SESSION_ID=""
 PREPARE_JSON=0
 VALIDATE_GROUPS_JSON=""
 GROUPS_JSON=""
@@ -1291,6 +1307,11 @@ while [ "$#" -gt 0 ]; do
         --conflict-mode)
             [ $# -ge 2 ] || { usage >&2; exit 1; }
             CONFLICT_MODE="$2"
+            shift 2
+            ;;
+        --session-id)
+            [ $# -ge 2 ] || { usage >&2; exit 1; }
+            SESSION_ID="$2"
             shift 2
             ;;
         --prepare-json)
@@ -1340,6 +1361,11 @@ fi
 
 if [ "$MODE_COUNT" -gt 1 ]; then
     usage >&2
+    exit 1
+fi
+
+if [ "$PREPARE_JSON" -eq 1 ] && [ -n "$SESSION_ID" ]; then
+    echo "--prepare-json 阶段不允许传入 --session-id" >&2
     exit 1
 fi
 
@@ -1646,10 +1672,12 @@ if [ -n "$VALIDATE_GROUPS_JSON" ]; then
         echo "无法读取当前仓库变更状态。" >&2
         exit 1
     }
-    SESSION_ID="$(extract_json_field "$VALIDATE_GROUPS_JSON" "session_id")"
-    [ -n "$SESSION_ID" ] || { echo "groups-json 缺少 session_id" >&2; exit 1; }
+    if [ -z "$SESSION_ID" ]; then
+        SESSION_ID="$(extract_json_field "$VALIDATE_GROUPS_JSON" "session_id")"
+    fi
+    [ -n "$SESSION_ID" ] || { echo "缺少 --session-id，且 groups-json 顶层未提供 session_id" >&2; exit 1; }
     SESSION_JSON="$(load_session_record_json "$SESSION_ID")" || { echo "prepare session 不存在或已过期" >&2; exit 1; }
-    NORMALIZED_GROUPS_JSON="$(validate_groups_json_for_session "$SESSION_JSON" "$VALIDATE_GROUPS_JSON" "$(cat "$REPO_STATE_FILE")")"
+    NORMALIZED_GROUPS_JSON="$(validate_groups_json_for_session "$SESSION_JSON" "$VALIDATE_GROUPS_JSON" "$(cat "$REPO_STATE_FILE")" "$SESSION_ID")"
     VALIDATED_PAYLOAD_JSON="$(validate_groups_json_payload "$REPO_STATE_FILE" "$NORMALIZED_GROUPS_JSON")"
     VALIDATED_OUTPUT_JSON="$(validated_payload_with_session "$SESSION_ID" "$VALIDATED_PAYLOAD_JSON")"
     VALIDATED_GROUPS_HASH="$(json_sha256 "$VALIDATED_OUTPUT_JSON")"
@@ -1662,8 +1690,10 @@ collect_repo_change_state "$CONTEXT_FILE" "0" "$REPO_STATE_FILE" >/dev/null 2>&1
     fail_protocol "无法读取当前仓库变更状态。"
 }
 
-SESSION_ID="$(extract_json_field "$GROUPS_JSON" "session_id")"
-[ -n "$SESSION_ID" ] || fail_protocol "groups-json 缺少 session_id。"
+if [ -z "$SESSION_ID" ]; then
+    SESSION_ID="$(extract_json_field "$GROUPS_JSON" "session_id")"
+fi
+[ -n "$SESSION_ID" ] || fail_protocol "缺少 --session-id，且 groups-json 顶层未提供 session_id。"
 SESSION_JSON="$(load_session_record_json "$SESSION_ID")" || fail_protocol "prepare session 不存在或已过期。"
 
 if [ "$PROTOCOL_SCOPE" = "bound" ]; then
@@ -1681,7 +1711,7 @@ PY
     fi
 fi
 
-SESSION_COMMIT_GROUPS_JSON="$(normalize_commit_groups_json_for_session "$SESSION_JSON" "$GROUPS_JSON" "$(cat "$REPO_STATE_FILE")")" || {
+SESSION_COMMIT_GROUPS_JSON="$(normalize_commit_groups_json_for_session "$SESSION_JSON" "$GROUPS_JSON" "$(cat "$REPO_STATE_FILE")" "$SESSION_ID")" || {
     PROTOCOL_DETAIL="groups-json 无效"
     fail_protocol "已校验分组与当前工作区不匹配。"
 }
