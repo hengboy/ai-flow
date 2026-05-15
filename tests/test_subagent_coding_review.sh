@@ -25,11 +25,40 @@ test_regular_passed_with_notes_to_done() {
     assert_protocol_field "$temp_root/review-notes.out" "REVIEW_RESULT" "passed_with_notes"
     assert_protocol_field "$temp_root/review-notes.out" "STATE" "DONE"
     assert_protocol_field "$temp_root/review-notes.out" "NEXT" "none"
+    assert_contains "$project/.ai-flow/reports/20260503-demo-review.md" "> 审查时间："
+    assert_contains "$project/.ai-flow/reports/20260503-demo-review.md" "> 审查工具："
+    assert_contains "$project/.ai-flow/reports/20260503-demo-review.md" "> 规则标识：\`review\`、\`fix-review\`、\`verify-before-done\`"
     assert_equals "review_passed" "$(state_field "$project" "demo" "transitions.4.event")"
     assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "demo" "transitions.4.actor")"
     assert_equals "passed_with_notes" "$(state_field "$project" "demo" "transitions.4.artifacts.result")"
     assert_equals "1" "$(wc -l < "$temp_root/codex.review.calls" | tr -d ' ')"
     assert_file_not_exists "$temp_root/opencode.review.calls"
+    rm -rf "$temp_root"
+}
+
+test_regular_review_fails_when_header_metadata_missing() {
+    local temp_root project runtime_script executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_coding_review_agents "$temp_root"
+    runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-coding-review" "coding-review-executor.sh")"
+    project="$temp_root/project"
+    setup_project_dirs "$project" "20260503"
+    create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_REVIEW" "20260503" "demo"
+    setup_git_repo_with_change "$project"
+
+    set +e
+    (
+        cd "$project"
+        FAKE_CODE_REVIEW_OMIT_TIME=1 FAKE_CODE_REVIEW_RESULT=passed run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/review-missing-header.out"
+    )
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected missing review header metadata to fail"
+    assert_protocol_field "$temp_root/review-missing-header.out" "RESULT" "failed"
+    assert_contains "$temp_root/review-missing-header.out" "缺少头部元数据字段: 审查时间"
     rm -rf "$temp_root"
 }
 
@@ -395,13 +424,14 @@ cat > "$out" <<'REPORT'
 # 审查报告：20260503-demo
 
 > 审查日期：2026-05-03
+> 审查时间：00:00:00
 > 需求简称：20260503-demo
 > 审查模式：regular
 > 审查轮次：1
 > 审查结果：passed
 > 对比计划：`.ai-flow/plans/20260503-demo.md`
 > 审查工具：Codex (test xhigh)
-> 规则标识：`review`
+> 规则标识：`review`、`fix-review`、`verify-before-done`
 
 ## 1. 总体评价
 
@@ -543,13 +573,14 @@ cat > "$out" <<'REPORT'
 # 审查报告：20260503-demo
 
 > 审查日期：2026-05-03
+> 审查时间：00:00:00
 > 需求简称：20260503-demo
 > 审查模式：regular
 > 审查轮次：1
 > 审查结果：passed_with_notes
 > 对比计划：`.ai-flow/plans/20260503-demo.md`
 > 审查工具：Codex (test xhigh)
-> 规则标识：`review`
+> 规则标识：`review`、`fix-review`、`verify-before-done`
 
 ## 1. 总体评价
 
@@ -691,13 +722,14 @@ cat > "$out" <<'REPORT'
 # 审查报告：20260503-demo
 
 > 审查日期：2026-05-03
+> 审查时间：00:00:00
 > 需求简称：20260503-demo
 > 审查模式：regular
 > 审查轮次：1
 > 审查结果：passed_with_notes
 > 对比计划：`.ai-flow/plans/20260503-demo.md`
 > 审查工具：Codex (test xhigh)
-> 规则标识：`review`
+> 规则标识：`review`、`fix-review`、`verify-before-done`
 
 ## 1. 总体评价
 
@@ -986,6 +1018,7 @@ p.write_text(json.dumps(c, indent=2, ensure_ascii=False))
 }
 
 test_regular_passed_with_notes_to_done
+test_regular_review_fails_when_header_metadata_missing
 test_regular_failed_to_review_failed
 test_regular_failed_routes_to_optimize_when_all_blockers_are_optimize
 test_regular_failed_routes_to_coding_when_blockers_are_mixed

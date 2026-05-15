@@ -28,13 +28,83 @@ color: purple
 ## 调用契约
 
 - 调用参数：`"需求描述" [slug]`。需求描述必填；`slug` 可选。
-- 必须在可识别项目根目录运行。多仓模式下在 owner repo 的 Git 根目录运行，跨仓范围在 plan 文件中声明。
+- 必须在可识别项目根目录运行。多仓模式下在 owner 文件夹的根目录运行（owner 本身可以不是 Git 仓库，仅作为多个子仓库的容器目录）；跨仓范围在 plan 文件中声明。
 - 允许新建 draft plan，或在 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED` 状态下原地修订同名 draft plan；其他状态、非法 slug、重名冲突或关联 plan 缺失时直接失败。
 - 禁止复用旧 plan：不得搜索 `.ai-flow/plans/` 下历史计划并沿用，必须根据当前需求重新生成或修订。
 - 必须读取共享提示词和模板：`plan-generation.md` / `plan-revision.md`、`plan-template.md`。
 - plan 必须落到 `.ai-flow/plans/{YYYYMMDD}-{slug}.md`，并包含 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等强制结构；不得包含未填充 `TBD`、`TODO`。
-- 状态只能通过 `$HOME/.config/ai-flow/scripts/flow-state.sh create` 创建或更新，初始或修订后状态为 `AWAITING_PLAN_REVIEW`。
-- 本代理不使用外部 CLI（`codex exec` / `opencode run`），直接使用内置能力完成工作；与 `ai-flow-codex-plan` 形成降级配对。
+- plan 文件头部元数据必须完整保留以下 12 项，不得省略、改名或改成其他格式：`创建日期`、`创建时间`、`需求简称`、`需求来源`、`执行范围`、`Plan 参与仓库`、`状态文件`、`文档角色`、`状态文件约束`、`执行约定`、`验证约定`、`规则标识`。
+
+### 构建 --repo-scope-json
+
+在调用 `flow-state.sh create` 之前，必须先构建并传入 `--repo-scope-json` 参数，用于将 plan 中声明的所有参与仓库写入 state.json 的 `execution_scope.repos` 列表。
+
+#### 1. 扫描子仓库
+
+从当前工作目录（owner 根目录）扫描所有直接子目录中的 Git 仓库：
+
+```bash
+python3 - <<'PY'
+import json, os, subprocess
+from pathlib import Path
+
+owner = Path(os.getcwd()).resolve()
+discovered = {"owner": {"path": ".", "git_root": str(owner)}}
+for child in sorted(owner.iterdir(), key=lambda c: c.name):
+    if not child.is_dir() or child.name.startswith("."):
+        continue
+    result = subprocess.run(
+        ["git", "-C", str(child), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        git_root = Path(result.stdout.strip()).resolve()
+        try:
+            rel_path = git_root.relative_to(owner).as_posix()
+        except ValueError:
+            continue
+        if rel_path == "." or "/" in rel_path:
+            continue
+        discovered.setdefault(child.name, {"path": rel_path, "git_root": str(git_root)})
+
+with open("/tmp/_ai_flow_discovered_repos.json", "w") as f:
+    json.dump(discovered, f, ensure_ascii=False)
+print(json.dumps({"mode": "plan_repos", "repos": []}, ensure_ascii=False))  # placeholder
+PY
+```
+
+#### 2. 从 plan 提取 repo id
+
+扫描生成的 plan 文件，提取 `| 仓库 |` / `| 子项目 |` 表格第二列的 repo id（小写字母/数字/连字符组成的 slug），同时匹配 `repo_id/path/to/file` 形式的引用。提取后与步骤 1 扫描结果取交集——只有当前工作目录下实际存在的子仓库才会被纳入 scope。
+
+#### 3. 构建 JSON 并传入
+
+将步骤 1 发现的仓库与步骤 2 提取到的 repo id 合并，构建如下格式的 JSON 并通过 `--repo-scope-json` 传入：
+
+```json
+{
+  "mode": "plan_repos",
+  "repos": [
+    {"id": "owner", "path": ".", "git_root": "/absolute/path/to/owner", "role": "owner"},
+    {"id": "repo-a", "path": "repo-a", "git_root": "/absolute/path/to/repo-a", "role": "participant"},
+    {"id": "repo-b", "path": "repo-b", "git_root": "/absolute/path/to/repo-b", "role": "participant"}
+  ]
+}
+```
+
+- owner 仓库的 `id` 必须为 `owner`，`role` 必须为 `owner`，`path` 必须为 `.`
+- 子仓库的 `role` 为 `participant`，`path` 为相对于 owner 的子目录名
+- 必须保证 **有且仅有一个** `role=owner` 的仓库
+
+最终调用 `flow-state.sh create` 时必须包含 `--repo-scope-json`：
+
+```bash
+$HOME/.config/ai-flow/scripts/flow-state.sh create \
+  --slug "${DATE_PREFIX}-${SLUG}" \
+  --title "$PLAN_TITLE" \
+  --plan-file "$PLAN_FILE" \
+  --repo-scope-json "$REPO_SCOPE_JSON"
+```
 
 ### 固定输出协议
 ```text

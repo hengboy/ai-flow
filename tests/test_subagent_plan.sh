@@ -26,10 +26,40 @@ test_plan_generation_protocol_and_state() {
     assert_protocol_field "$out" "STATE" "AWAITING_PLAN_REVIEW"
     assert_protocol_field "$out" "NEXT" "ai-flow-plan-review"
     assert_file_exists "$project/.ai-flow/plans/${today}-user-permission.md"
+    assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 创建时间："
+    assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 执行范围：plan_repos"
+    assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> Plan 参与仓库：owner (path: ., role: owner)"
+    assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 状态文件约束："
+    assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 验证约定："
+    assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 规则标识："
     assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "${today}-user-permission" "current_status")"
     assert_file_not_exists "$project/.ai-flow/workspace.json"
     assert_equals "plan_repos" "$(state_field "$project" "${today}-user-permission" "execution_scope.mode")"
     assert_equals "owner" "$(state_field "$project" "${today}-user-permission" "execution_scope.repos.0.id")"
+    rm -rf "$temp_root"
+}
+
+test_plan_generation_fails_when_header_metadata_missing() {
+    local temp_root project executor
+    temp_root=$(make_temp_root)
+    install_ai_flow "$temp_root"
+    write_fake_plan_agents "$temp_root"
+    project="$temp_root/project"
+    setup_project_root "$project"
+    setup_git_repo_clean "$project"
+    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
+
+    set +e
+    (
+        cd "$project"
+        FAKE_PLAN_OMIT_CREATE_TIME=1 run_with_fake_plan_agents "$temp_root" bash "$executor" "新增用户权限管理模块" missing-header >"$temp_root/missing-header.out"
+    )
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected missing header metadata to fail"
+    assert_protocol_field "$temp_root/missing-header.out" "RESULT" "failed"
+    assert_contains "$temp_root/missing-header.out" "缺少头部元数据字段: 创建时间"
     rm -rf "$temp_root"
 }
 
@@ -397,6 +427,7 @@ p.write_text(json.dumps(c, indent=2, ensure_ascii=False))
 }
 
 test_plan_generation_protocol_and_state
+test_plan_generation_fails_when_header_metadata_missing
 test_plan_without_slug_auto_generates_new_plan
 test_plan_revision_after_failed_review
 test_plan_degraded_when_codex_unavailable

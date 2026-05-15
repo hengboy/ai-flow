@@ -117,6 +117,7 @@ render_template_content() {
         -e "s/{审查轮次}/$(escape_sed_replacement "$CURRENT_ROUND")/g" \
         -e "s#{计划文件}#$(escape_sed_replacement "$PLAN_FILE")#g" \
         -e "s/{YYYY-MM-DD}/$(date +%Y-%m-%d)/g" \
+        -e "s/{HH:MM:SS}/$(date +%H:%M:%S)/g" \
         -e "s/{模型名}/$(escape_sed_replacement "$model_name")/g" \
         -e "s/{推理强度}/$(escape_sed_replacement "$reasoning")/g" \
         -e "s/{审查工具}/$(escape_sed_replacement "$tool_label")/g" \
@@ -1426,11 +1427,13 @@ EOF
 # 审查报告：standalone review
 
 > 审查日期：${STANDALONE_TODAY}
+> 审查时间：$(date +%H:%M:%S)
 > 需求简称：standalone
 > 审查模式：standalone
 > 审查轮次：1
 > 审查结果：passed
 > 对比计划：无（未绑定计划）
+> 审查工具：${ACTIVE_ENGINE} (${MODEL} ${REASONING})
 
 请审查当前未提交的 Git 变更，使用简化 standalone 模式生成审查报告。
 
@@ -1500,8 +1503,24 @@ FIRST_LINE=$(head -1 "$REPORT_FILE")
 if ! echo "$FIRST_LINE" | grep -qE '^# 审查报告：'; then
     ERRORS="${ERRORS}首行必须是 '# 审查报告：...'\n"
 fi
+if ! head -20 "$REPORT_FILE" | grep -q '^> '; then
+    ERRORS="${ERRORS}文件头部元数据必须使用 '> ' 引用块格式\n"
+fi
 
 if [ "$IS_STANDALONE" -eq 1 ]; then
+    STANDALONE_REQUIRED_METADATA_FIELDS=(
+        "审查日期"
+        "审查时间"
+        "审查模式"
+        "审查结果"
+        "对比计划"
+        "审查工具"
+    )
+    for metadata_field in "${STANDALONE_REQUIRED_METADATA_FIELDS[@]}"; do
+        if ! grep -q "^> ${metadata_field}：" "$REPORT_FILE"; then
+            ERRORS="${ERRORS}缺少头部元数据字段: ${metadata_field}\n"
+        fi
+    done
     for section in "## 1\. " "## 1\.1 " "## 1\.2 " "## 2\. " "## 2\.1 " "## 3\." "## 4\."; do
         if ! grep -qE "$section" "$REPORT_FILE"; then
             section_label=${section//\\/}
@@ -1510,6 +1529,7 @@ if [ "$IS_STANDALONE" -eq 1 ]; then
     done
     STANDALONE_PLACEHOLDERS=(
         "{YYYY-MM-DD}"
+        "{HH:MM:SS}"
         "{审查结果}"
         "{审查工具}"
         "{总体通过 / 总体通过（附建议） / 需要修复}"
@@ -1522,6 +1542,22 @@ if [ "$IS_STANDALONE" -eq 1 ]; then
         fi
     done
 else
+    REQUIRED_METADATA_FIELDS=(
+        "审查日期"
+        "审查时间"
+        "需求简称"
+        "审查模式"
+        "审查轮次"
+        "审查结果"
+        "对比计划"
+        "审查工具"
+        "规则标识"
+    )
+    for metadata_field in "${REQUIRED_METADATA_FIELDS[@]}"; do
+        if ! grep -q "^> ${metadata_field}：" "$REPORT_FILE"; then
+            ERRORS="${ERRORS}缺少头部元数据字段: ${metadata_field}\n"
+        fi
+    done
     for section in "## 1\. " "## 2\. " "## 2\.1 " "## 3\." "## 4\." "## 5\." "## 6\."; do
         if ! grep -qE "$section" "$REPORT_FILE"; then
             section_label=${section//\\/}
@@ -1538,6 +1574,7 @@ else
     REPORT_PLACEHOLDERS=(
         "{需求名称}"
         "{YYYY-MM-DD}"
+        "{HH:MM:SS}"
         "{需求简称}"
         "{审查模式}"
         "{审查轮次}"

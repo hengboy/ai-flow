@@ -124,6 +124,16 @@ has_project_root_marker() {
     if [ -d "$dir/src" ] || [ -d "$dir/src/main" ]; then
         return 0
     fi
+    # Multi-repo workspace container: owner itself isn't a git repo
+    # but has independent git subdirectories (e.g., isp/ containing isp-auth/, isp-build/, etc.)
+    local sub
+    for sub in "$dir"/*/; do
+        [ -d "$sub" ] || continue
+        sub="${sub%/}"
+        if [ -d "$sub/.git" ]; then
+            return 0
+        fi
+    done
     return 1
 }
 
@@ -203,6 +213,8 @@ render_plan_template_content() {
     AI_FLOW_TEMPLATE_REQUIREMENT_NAME="$requirement_name" \
     AI_FLOW_TEMPLATE_SLUG="$SLUG" \
     AI_FLOW_TEMPLATE_DATE="$(date +%Y-%m-%d)" \
+    AI_FLOW_TEMPLATE_TIME="$(date +%H:%M:%S)" \
+    AI_FLOW_TEMPLATE_DATE_PREFIX="$DATE_PREFIX" \
     AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL="需求描述" \
     AI_FLOW_TEMPLATE_REQUIREMENT_TEXT="$requirement_text" \
     AI_FLOW_TEMPLATE_EXEC_SCOPE="$exec_scope_label" \
@@ -217,9 +229,11 @@ replacements = {
     "{需求名称}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_NAME"],
     "{需求简称}": os.environ["AI_FLOW_TEMPLATE_SLUG"],
     "{YYYY-MM-DD}": os.environ["AI_FLOW_TEMPLATE_DATE"],
+    "{HH:MM:SS}": os.environ["AI_FLOW_TEMPLATE_TIME"],
+    "{YYYYMMDD}": os.environ["AI_FLOW_TEMPLATE_DATE_PREFIX"],
     "{需求文档/口头描述/Jira 等}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL"],
     "{原始需求原文}": os.environ["AI_FLOW_TEMPLATE_REQUIREMENT_TEXT"],
-    "执行范围：single_repo": f"执行范围：{os.environ['AI_FLOW_TEMPLATE_EXEC_SCOPE']}",
+    "执行范围：plan_repos": f"执行范围：{os.environ['AI_FLOW_TEMPLATE_EXEC_SCOPE']}",
     "Plan 参与仓库：owner (path: ., role: owner)": f"Plan 参与仓库：{os.environ['AI_FLOW_TEMPLATE_REPO_LIST']}",
 }
 for needle, value in replacements.items():
@@ -528,9 +542,29 @@ validate_plan_structure() {
         if ! echo "$first_line" | grep -qE '^# 实施计划：'; then
             errors="${errors}首行必须是 '# 实施计划：...'\n"
         fi
-        if ! head -10 "$plan_file" | grep -q '^> '; then
+        if ! head -20 "$plan_file" | grep -q '^> '; then
             errors="${errors}文件头部元数据必须使用 '> ' 引用块格式\n"
         fi
+        local -a required_metadata_fields=(
+            "创建日期"
+            "创建时间"
+            "需求简称"
+            "需求来源"
+            "执行范围"
+            "Plan 参与仓库"
+            "状态文件"
+            "文档角色"
+            "状态文件约束"
+            "执行约定"
+            "验证约定"
+            "规则标识"
+        )
+        local metadata_field
+        for metadata_field in "${required_metadata_fields[@]}"; do
+            if ! grep -q "^> ${metadata_field}：" "$plan_file"; then
+                errors="${errors}缺少头部元数据字段: ${metadata_field}\n"
+            fi
+        done
         for section in \
             "## 1. 需求概述" \
             "## 2. 技术分析" \
@@ -687,6 +721,8 @@ PY
             "{需求名称}"
             "{需求简称}"
             "{YYYY-MM-DD}"
+            "{YYYYMMDD}"
+            "{HH:MM:SS}"
             "{需求文档/口头描述/Jira 等}"
             "{一句话说明要交付什么能力}"
             "{简要描述业务背景、目标用户、预期效果}"
