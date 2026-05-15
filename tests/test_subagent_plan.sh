@@ -4,7 +4,7 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/testkit.bash"
 
 test_plan_generation_protocol_and_state() {
-    local temp_root project out today executor
+    local temp_root project out today executor created_at created_date created_time created_prefix
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     write_fake_plan_agents "$temp_root"
@@ -33,6 +33,15 @@ test_plan_generation_protocol_and_state() {
     assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 验证约定："
     assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 规则标识："
     assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "${today}-user-permission" "current_status")"
+    created_at="$(state_field "$project" "${today}-user-permission" "created_at")"
+    local created_parts
+    created_parts="$(parse_iso_to_local_parts "$created_at")"
+    created_date="$(printf '%s\n' "$created_parts" | sed -n '1p')"
+    created_time="$(printf '%s\n' "$created_parts" | sed -n '2p')"
+    created_prefix="$(printf '%s\n' "$created_parts" | sed -n '3p')"
+    assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 创建日期：$created_date"
+    assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 创建时间：$created_time"
+    assert_contains "$project/.ai-flow/plans/${today}-user-permission.md" "> 状态文件：\`.ai-flow/state/${created_prefix}-user-permission.json\`"
     assert_file_not_exists "$project/.ai-flow/workspace.json"
     assert_equals "plan_repos" "$(state_field "$project" "${today}-user-permission" "execution_scope.mode")"
     assert_equals "owner" "$(state_field "$project" "${today}-user-permission" "execution_scope.repos.0.id")"

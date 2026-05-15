@@ -174,6 +174,19 @@ print(value)
 PY
 }
 
+parse_iso_to_local_parts() {
+    local iso_value="$1"
+    python3 - "$iso_value" <<'PY'
+import sys
+from datetime import datetime
+
+dt = datetime.fromisoformat(sys.argv[1]).astimezone()
+print(dt.strftime("%Y-%m-%d"))
+print(dt.strftime("%H:%M:%S"))
+print(dt.strftime("%Y%m%d"))
+PY
+}
+
 resolve_state_file() {
     local project_dir="$1"
     local slug="$2"
@@ -646,7 +659,26 @@ fi
 build_plan() {
     local module_rows='| `src/review-target.txt` | owner | fixture | 修改 |'
     local file_rows='| `src/review-target.txt` | owner | Modify | fixture | review-target-step |'
-    local create_time_line='> 创建时间：00:00:00'
+    local created_at="${FAKE_PLAN_CREATED_AT:-$(python3 - <<'PY'
+from datetime import datetime
+print(datetime.now().astimezone().isoformat(timespec="seconds"))
+PY
+)}"
+    local created_date created_time date_prefix created_parts
+    created_parts="$(python3 - "$created_at" <<'PY'
+import sys
+from datetime import datetime
+
+dt = datetime.fromisoformat(sys.argv[1]).astimezone()
+print(dt.strftime("%Y-%m-%d"))
+print(dt.strftime("%H:%M:%S"))
+print(dt.strftime("%Y%m%d"))
+PY
+)"
+    created_date="$(printf '%s\n' "$created_parts" | sed -n '1p')"
+    created_time="$(printf '%s\n' "$created_parts" | sed -n '2p')"
+    date_prefix="$(printf '%s\n' "$created_parts" | sed -n '3p')"
+    local create_time_line="> 创建时间：$created_time"
     if [ "${FAKE_PLAN_INCLUDE_PARTICIPANT_REPOS:-0}" = "1" ]; then
         module_rows='| `src/review-target.txt` | owner | fixture | 修改 |
 | `src/alpha.txt` | repo-alpha | alpha 业务 | 修改 |
@@ -657,14 +689,13 @@ build_plan() {
 | `src/beta.txt` | repo-beta | Modify | beta 业务 | review-target-step |
 | `tests/run.sh` | repo-beta | Test | beta 验证 | review-target-step |'
     fi
-    date_prefix="$(date +%Y%m%d)"
     if [ "${FAKE_PLAN_OMIT_CREATE_TIME:-0}" = "1" ]; then
         create_time_line=""
     fi
     cat > "$out" <<PLAN
 # 实施计划：$slug
 
-> 创建日期：2026-05-03
+> 创建日期：$created_date
 $create_time_line
 > 需求简称：$slug
 > 需求来源：测试
@@ -853,6 +884,7 @@ run_with_fake_plan_agents() {
         HOME="$temp_root/home" \
         AI_FLOW_HOME="${AI_FLOW_HOME:-$temp_root/home/.config/ai-flow}" \
         FAKE_PLAN_TEMP_ROOT="$temp_root" \
+        FAKE_PLAN_CREATED_AT="${FAKE_PLAN_CREATED_AT:-}" \
         "$@"
 }
 
