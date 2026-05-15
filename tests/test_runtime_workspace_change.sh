@@ -15,7 +15,7 @@ test_workspace_change_updates_workspace_owned_plan() {
 
     (
         cd "$workspace"
-        bash "$SOURCE_FLOW_CHANGE_SCRIPT" ws-change "[新增] workspace 扩展功能 — 影响步骤: Step 1" >/dev/null
+        bash "$SOURCE_FLOW_CHANGE_SCRIPT" ws-change "[新增] workspace 扩展功能 — 影响步骤: review-target-step" >/dev/null
     )
 
     assert_contains "$plan_file" "[新增] workspace 扩展功能"
@@ -35,7 +35,7 @@ test_workspace_change_from_declared_subrepo_updates_workspace_plan() {
 
     (
         cd "$workspace/repo-alpha"
-        bash "$SOURCE_FLOW_CHANGE_SCRIPT" ws-change "[修改] 从子仓记录变更 — 影响步骤: Step 1" >/dev/null
+        bash "$SOURCE_FLOW_CHANGE_SCRIPT" ws-change "[修改] 从子仓记录变更 — 影响步骤: review-target-step" >/dev/null
     )
 
     assert_contains "$plan_file" "[修改] 从子仓记录变更"

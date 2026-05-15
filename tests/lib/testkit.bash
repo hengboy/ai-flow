@@ -248,7 +248,7 @@ create_plan_file() {
 > 状态文件：\`.ai-flow/state/${date_dir}-$slug.json\`
 > 文档角色：本文件仅记录实施证据与执行步骤；流程状态以 JSON 状态文件为准。
 > 状态文件约束：\`.ai-flow/state/${date_dir}-$slug.json\` 只能使用 \`flow-state.sh\` 的固定 schema；不得在 plan 中设计 \`requirement_key\`、\`status\`、\`steps\`、\`verification_results\`、\`change_register\` 等自定义字段。
-> 执行约定：使用 \`/ai-flow-plan-coding\` 按 Step 顺序执行；每个 Step 内的动作使用 \`- [ ]\` 复选框追踪进度。
+> 执行约定：使用 \`/ai-flow-plan-coding\` 按 Step 顺序执行；Step 标题不使用可见序号，统一通过 \`Step ID\` 引用；每个 Step 内的动作使用 \`- [ ]\` 复选框追踪进度。
 > 验证约定：代码行为变更默认使用测试优先顺序；完成前必须运行本计划列出的验证命令并记录结果。
 > 规则标识：\`intake\`、\`plan-writing\`、\`file-boundary\`、\`step-run\`、\`test-first\`、\`verify-before-done\`、\`change-register\`
 
@@ -285,9 +285,9 @@ $requirement
 
 ### 2.5 文件边界总览
 
-| 文件 | 仓库 | 操作 | 职责 | 对应步骤 |
+| 文件 | 仓库 | 操作 | 职责 | 对应 Step ID |
 |------|------|------|------|----------|
-| \`src/review-target.txt\` | owner | Modify | 提供最小变更面 | Step 1 |
+| \`src/review-target.txt\` | owner | Modify | 提供最小变更面 | review-target-step |
 
 ### 2.6 高风险路径与缺陷族
 
@@ -297,7 +297,9 @@ $requirement
 
 ## 3. 实施步骤
 
-### Step 1: 示例
+### 示例
+
+**Step ID**：\`review-target-step\`
 
 **目标**：生成最小测试上下文
 
@@ -308,7 +310,7 @@ $requirement
 - 测试/证据 缺陷族，以及 review-target 变更是否被定向验证覆盖
 
 **执行动作**：
-- [ ] **1.1 运行通过验证**
+- [ ] **运行通过验证**
   - 命令：\`bash tests/run.sh\`
   - 预期：PASS
 
@@ -448,7 +450,7 @@ $overall
 
 | 实施步骤 | 状态 | 备注 |
 |----------|------|------|
-| Step 1: 示例 | 已实现 | ok |
+| review-target-step (示例) | 已实现 | ok |
 
 **覆盖率**：100%
 
@@ -643,17 +645,17 @@ if [ "${FAKE_PLAN_INCLUDE_NEGATIVE_TBD:-0}" = "1" ]; then
 fi
 build_plan() {
     local module_rows='| `src/review-target.txt` | owner | fixture | 修改 |'
-    local file_rows='| `src/review-target.txt` | owner | Modify | fixture | Step 1 |'
+    local file_rows='| `src/review-target.txt` | owner | Modify | fixture | review-target-step |'
     local create_time_line='> 创建时间：00:00:00'
     if [ "${FAKE_PLAN_INCLUDE_PARTICIPANT_REPOS:-0}" = "1" ]; then
         module_rows='| `src/review-target.txt` | owner | fixture | 修改 |
 | `src/alpha.txt` | repo-alpha | alpha 业务 | 修改 |
 | `src/beta.txt` | repo-beta | beta 业务 | 修改 |'
-        file_rows='| `src/review-target.txt` | owner | Modify | fixture | Step 1 |
-| `src/alpha.txt` | repo-alpha | Modify | alpha 业务 | Step 1 |
-| `tests/run.sh` | repo-alpha | Test | alpha 验证 | Step 1 |
-| `src/beta.txt` | repo-beta | Modify | beta 业务 | Step 1 |
-| `tests/run.sh` | repo-beta | Test | beta 验证 | Step 1 |'
+        file_rows='| `src/review-target.txt` | owner | Modify | fixture | review-target-step |
+| `src/alpha.txt` | repo-alpha | Modify | alpha 业务 | review-target-step |
+| `tests/run.sh` | repo-alpha | Test | alpha 验证 | review-target-step |
+| `src/beta.txt` | repo-beta | Modify | beta 业务 | review-target-step |
+| `tests/run.sh` | repo-beta | Test | beta 验证 | review-target-step |'
     fi
     date_prefix="$(date +%Y%m%d)"
     if [ "${FAKE_PLAN_OMIT_CREATE_TIME:-0}" = "1" ]; then
@@ -671,7 +673,7 @@ $create_time_line
 > 状态文件：\`.ai-flow/state/${date_prefix}-$slug.json\`
 > 文档角色：本文件仅记录实施证据与执行步骤；流程状态以 JSON 状态文件为准。
 > 状态文件约束：\`.ai-flow/state/${date_prefix}-$slug.json\` 只能使用 \`flow-state.sh\` 的固定 schema；不得在 plan 中设计 \`requirement_key\`、\`status\`、\`steps\`、\`verification_results\`、\`change_register\` 等自定义字段。
-> 执行约定：使用 \`/ai-flow-plan-coding\` 按 Step 顺序执行；每个 Step 内的动作使用 \`- [ ]\` 复选框追踪进度。
+> 执行约定：使用 \`/ai-flow-plan-coding\` 按 Step 顺序执行；Step 标题不使用可见序号，统一通过 \`Step ID\` 引用；每个 Step 内的动作使用 \`- [ ]\` 复选框追踪进度。
 > 验证约定：代码行为变更默认使用测试优先顺序；完成前必须运行本计划列出的验证命令并记录结果。
 > 规则标识：\`intake\`、\`plan-writing\`、\`file-boundary\`、\`step-run\`、\`test-first\`、\`verify-before-done\`、\`change-register\`
 $guard_note
@@ -709,7 +711,7 @@ $module_rows
 
 ### 2.5 文件边界总览
 
-| 文件 | 仓库 | 操作 | 职责 | 对应步骤 |
+| 文件 | 仓库 | 操作 | 职责 | 对应 Step ID |
 |------|------|------|------|----------|
 $file_rows
 
@@ -721,7 +723,9 @@ $file_rows
 
 ## 3. 实施步骤
 
-### Step 1: fake
+### fake
+
+**Step ID**：\`fake-step\`
 
 **目标**：生成可执行草案
 
@@ -732,7 +736,7 @@ $file_rows
 - 状态机/流程
 
 **执行动作**：
-- [ ] **1.1 运行通过验证**
+- [ ] **运行通过验证**
   - 命令：\`bash tests/run.sh\`
   - 预期：PASS
 
@@ -1030,7 +1034,7 @@ $verification_rows
 
 | 实施步骤 | 状态 | 备注 |
 |----------|------|------|
-| Step 1: 示例 | 已实现 | ok |
+| review-target-step (示例) | 已实现 | ok |
 
 **覆盖率**：100%
 
@@ -1342,7 +1346,7 @@ write_plan_repos_commit_plan() {
 > 状态文件：\`.ai-flow/state/${date_dir}-$slug.json\`
 > 文档角色：本文件仅记录实施证据与执行步骤；流程状态以 JSON 状态文件为准。
 > 状态文件约束：\`.ai-flow/state/${date_dir}-$slug.json\` 只能使用 \`flow-state.sh\` 的固定 schema；不得在 plan 中设计 \`requirement_key\`、\`status\`、\`steps\`、\`verification_results\`、\`change_register\` 等自定义字段。
-> 执行约定：使用 \`/ai-flow-plan-coding\` 按 Step 顺序执行；每个 Step 内的动作使用 \`- [ ]\` 复选框追踪进度。
+> 执行约定：使用 \`/ai-flow-plan-coding\` 按 Step 顺序执行；Step 标题不使用可见序号，统一通过 \`Step ID\` 引用；每个 Step 内的动作使用 \`- [ ]\` 复选框追踪进度。
 > 验证约定：代码行为变更默认使用测试优先顺序；完成前必须运行本计划列出的验证命令并记录结果。
 > 规则标识：\`intake\`、\`plan-writing\`、\`file-boundary\`、\`step-run\`、\`test-first\`、\`verify-before-done\`、\`change-register\`
 
@@ -1380,12 +1384,12 @@ write_plan_repos_commit_plan() {
 
 ### 2.5 文件边界总览
 
-| 文件 | 仓库 | 操作 | 职责 | 对应步骤 |
+| 文件 | 仓库 | 操作 | 职责 | 对应 Step ID |
 |------|------|------|------|----------|
-| \`src/alpha.txt\` | repo-alpha | Modify | alpha 业务 | Step 1 |
-| \`tests/run.sh\` | repo-alpha | Test | alpha 验证 | Step 1 |
-| \`src/beta.txt\` | repo-beta | Modify | beta 业务 | Step 2 |
-| \`tests/run.sh\` | repo-beta | Test | beta 验证 | Step 2 |
+| \`src/alpha.txt\` | repo-alpha | Modify | alpha 业务 | alpha-submit |
+| \`tests/run.sh\` | repo-alpha | Test | alpha 验证 | alpha-submit |
+| \`src/beta.txt\` | repo-beta | Modify | beta 业务 | beta-submit |
+| \`tests/run.sh\` | repo-beta | Test | beta 验证 | beta-submit |
 PLAN
     if [ "$include_dependency_table" = "1" ]; then
         cat >> "$workspace_root/.ai-flow/plans/${date_dir}-${slug}.md" <<'PLAN'
@@ -1407,7 +1411,9 @@ PLAN
 
 ## 3. 实施步骤
 
-### Step 1: 提交 alpha 业务
+### 提交 alpha 业务
+
+**Step ID**：\`alpha-submit\`
 
 **目标**：提交 repo-alpha 变更
 
@@ -1419,7 +1425,7 @@ PLAN
 - alpha 业务完整性
 
 **执行动作**：
-- [ ] **1.1 运行通过验证**
+- [ ] **运行通过验证**
   - 命令：`bash tests/run.sh`
   - 预期：PASS
 
@@ -1429,7 +1435,9 @@ PLAN
 **阻塞条件**：
 - 无
 
-### Step 2: 提交 beta 业务
+### 提交 beta 业务
+
+**Step ID**：\`beta-submit\`
 
 **目标**：提交 repo-beta 变更
 
@@ -1441,7 +1449,7 @@ PLAN
 - beta 业务完整性
 
 **执行动作**：
-- [ ] **2.1 运行通过验证**
+- [ ] **运行通过验证**
   - 命令：`bash tests/run.sh`
   - 预期：PASS
 

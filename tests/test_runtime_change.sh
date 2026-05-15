@@ -13,7 +13,7 @@ test_change_appends_audit_rows() {
 
     (
         cd "$project"
-        bash "$SOURCE_FLOW_CHANGE_SCRIPT" demo "[新增] 扩展测试覆盖 — 影响步骤: Step 1" >/dev/null
+        bash "$SOURCE_FLOW_CHANGE_SCRIPT" demo "[新增] 扩展测试覆盖 — 影响步骤: review-target-step" >/dev/null
         bash "$SOURCE_FLOW_CHANGE_SCRIPT" demo "[root-cause-review-loop] 根因：遗漏缺陷族；受影响缺陷族：测试/证据；前两轮遗漏原因：只看单点；补充验证：bash tests/run.sh" >/dev/null
     )
 
