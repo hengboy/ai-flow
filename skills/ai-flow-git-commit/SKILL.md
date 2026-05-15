@@ -63,6 +63,7 @@ $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode ma
    - 调用参数必须直接使用 runtime 返回的 `group_agent_input`
    - 不得手工拼接、裁剪、补写或跨 repo 合并输入
    - 输出必须是 JSON
+   - 每个 repo 最多返回 5 个 group；超出时必须先按业务关联性合并
    - 每组至少包含：
      - `group_title`
      - `reason`
