@@ -28,7 +28,10 @@ else
     SLUG="${2:-}"
 fi
 
-DATE_PREFIX="$(date +%Y%m%d)"
+PLAN_CREATED_AT=""
+PLAN_CREATED_DATE=""
+PLAN_CREATED_TIME=""
+DATE_PREFIX=""
 PLANS_DIR="$FLOW_DIR/plans"
 OWNER_GIT_ROOT=""
 REPO_SCOPE_JSON=""
@@ -205,6 +208,47 @@ ensure_project_root_context() {
 
 validate_installed_resources
 
+capture_plan_created_context() {
+    local created_at
+    created_at="$(python3 - <<'PY'
+from datetime import datetime
+print(datetime.now().astimezone().isoformat(timespec="seconds"))
+PY
+)"
+    PLAN_CREATED_AT="$created_at"
+    PLAN_CREATED_DATE="${created_at%%T*}"
+    local time_and_zone="${created_at#*T}"
+    PLAN_CREATED_TIME="${time_and_zone:0:8}"
+    DATE_PREFIX="$(printf '%s' "$PLAN_CREATED_DATE" | tr -d '-')"
+}
+
+sync_plan_header_metadata() {
+    local plan_file="$1"
+    python3 - "$plan_file" "$PLAN_CREATED_DATE" "$PLAN_CREATED_TIME" "$SLUG" "$DATE_PREFIX" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+created_date = sys.argv[2]
+created_time = sys.argv[3]
+slug = sys.argv[4]
+date_prefix = sys.argv[5]
+
+text = path.read_text(encoding="utf-8")
+replacements = {
+    r"(?m)^> 创建日期：.*$": f"> 创建日期：{created_date}",
+    r"(?m)^> 创建时间：.*$": f"> 创建时间：{created_time}",
+    r"(?m)^> 需求简称：.*$": f"> 需求简称：{slug}",
+    r"(?m)^> 状态文件：.*$": f"> 状态文件：`.ai-flow/state/{date_prefix}-{slug}.json`",
+}
+for pattern, replacement in replacements.items():
+    text = re.sub(pattern, replacement, text, count=1)
+
+path.write_text(text, encoding="utf-8")
+PY
+}
+
 render_plan_template_content() {
     local requirement_name="$1"
     local requirement_text="$2"
@@ -212,8 +256,8 @@ render_plan_template_content() {
     local repo_list="owner (path: ., role: owner)"
     AI_FLOW_TEMPLATE_REQUIREMENT_NAME="$requirement_name" \
     AI_FLOW_TEMPLATE_SLUG="$SLUG" \
-    AI_FLOW_TEMPLATE_DATE="$(date +%Y-%m-%d)" \
-    AI_FLOW_TEMPLATE_TIME="$(date +%H:%M:%S)" \
+    AI_FLOW_TEMPLATE_DATE="$PLAN_CREATED_DATE" \
+    AI_FLOW_TEMPLATE_TIME="$PLAN_CREATED_TIME" \
     AI_FLOW_TEMPLATE_DATE_PREFIX="$DATE_PREFIX" \
     AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL="需求描述" \
     AI_FLOW_TEMPLATE_REQUIREMENT_TEXT="$requirement_text" \
@@ -1626,6 +1670,7 @@ PY
 }
 
 ensure_project_root_context
+capture_plan_created_context
 mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports" "$STATE_DIR"
 
 PLAN_PROMPT_TEMPLATE_RENDERED="$(mktemp)"
@@ -1995,6 +2040,7 @@ else
             exit 0
         fi
     fi
+    sync_plan_header_metadata "$PLAN_FILE"
     ensure_requirement_literal "$PLAN_FILE"
     echo ""
     echo ">>> 校验 draft plan 结构..."
@@ -2030,11 +2076,12 @@ else
         fi
     fi
     mv "$second_stage_output" "$PLAN_FILE"
+    sync_plan_header_metadata "$PLAN_FILE"
     ensure_requirement_literal "$PLAN_FILE"
     validate_plan_structure "$PLAN_FILE" "draft"
 
     echo ">>> 初始化状态文件..."
-    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "${DATE_PREFIX}-${SLUG}" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE" --repo-scope-json "$REPO_SCOPE_JSON"
+    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "${DATE_PREFIX}-${SLUG}" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE" --created-at "$PLAN_CREATED_AT" --repo-scope-json "$REPO_SCOPE_JSON"
     PLAN_STATUS=$("$FLOW_STATE_SH" show "${DATE_PREFIX}-${SLUG}" --field current_status)
     echo "    状态已验证为 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"
