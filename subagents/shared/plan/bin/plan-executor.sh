@@ -304,12 +304,28 @@ steps = []
 current = None
 in_file_boundary = False
 
+def parse_step_header(line: str):
+    if not line.startswith("### "):
+        return None
+    if re.match(r"^### \d+\.\d+\s+", line):
+        return None
+    title = line.replace("### ", "", 1).strip()
+    if not title:
+        return None
+    return {
+        "label": "Step",
+        "title": title,
+        "raw": title,
+    }
+
 for line in lines:
-    if line.startswith("### Step "):
+    header = parse_step_header(line)
+    if header:
         if current:
             steps.append(current)
         current = {
-            "title": line.replace("### ", "", 1).strip(),
+            "title": header["raw"],
+            "step_id": "",
             "goal": "",
             "files": [],
             "commands": [],
@@ -318,6 +334,10 @@ for line in lines:
         continue
 
     if current is None:
+        continue
+
+    if line.startswith("**Step ID**："):
+        current["step_id"] = line.replace("**Step ID**：", "", 1).strip().strip("`")
         continue
 
     if line.startswith("**目标**："):
@@ -356,6 +376,7 @@ if not steps:
 
 for step in steps:
     parts = []
+    label = f"{step['step_id']} / {step['title']}" if step["step_id"] else step["title"]
     if step["goal"]:
         parts.append(f"目标是{step['goal']}")
     if step["files"]:
@@ -367,7 +388,7 @@ for step in steps:
     if step["commands"]:
         parts.append(f"关键验证命令：{step['commands'][0]}")
     summary = "；".join(parts) if parts else "请按该 Step 的文件边界和执行动作执行。"
-    print(f"- {step['title']}：{summary}")
+    print(f"- {label}：{summary}")
 PY
 }
 
@@ -605,7 +626,7 @@ validate_plan_structure() {
                 errors="${errors}## 1. 需求概述缺少强制字段: $field\n"
             fi
         done
-        if ! grep -q '^### Step ' "$plan_file"; then
+        if ! grep -q '^### ' "$plan_file"; then
             errors="${errors}缺少可执行 Step\n"
         fi
         if ! grep -q '^- \[ \]' "$plan_file"; then
@@ -626,18 +647,18 @@ validate_plan_structure() {
         if ! grep -q '\*\*阻塞条件\*\*' "$plan_file"; then
             errors="${errors}缺少 Step 级别的阻塞条件\n"
         fi
-        # Per-step sub-field validation: each Step must have all 9 required fields
+        # Per-step sub-field validation: each Step must have all required fields
         if ! python3 - "$plan_file" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-# Split into sections between ### Step headers and the next ### Step or ##
-step_sections = re.split(r'(?=^### Step )', text, flags=re.M)
-step_sections = [s for s in step_sections if s.startswith('### Step ')]
+step_sections = re.split(r'(?=^### (?!\d+\.\d+\s))', text, flags=re.M)
+step_sections = [s for s in step_sections if re.match(r'^### (?!\d+\.\d+\s)', s)]
 
 required_fields = [
+    '**Step ID**',
     '**目标**',
     '**文件边界**',
     '**本轮 review 预期关注面**',
@@ -649,11 +670,10 @@ required_fields = [
 
 all_ok = True
 for section in step_sections:
-    title_match = re.match(r'### Step (\d+): (.+)', section)
+    title_match = re.match(r'### (.+)', section)
     title = title_match.group(0) if title_match else 'unknown step'
     # Check for Create/Modify/Test in file boundary area
     if '**文件边界**' in section:
-        boundary_part = section.split('**文件边界**')[1].split('**')[0] if '**文件边界**' in section else ''
         if not re.search(r'(Create|Modify|Test):', section):
             print(f"Step 缺少 Create/Modify/Test 文件边界行")
             all_ok = False
@@ -672,12 +692,12 @@ import re
 import sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-step_sections = re.split(r'(?=^### Step )', text, flags=re.M)
-step_sections = [s for s in step_sections if s.startswith('### Step ')]
-required_fields = ['**目标**', '**文件边界**', '**本轮 review 预期关注面**', '**执行动作**', '**本步验收**', '**本步关闭条件**', '**阻塞条件**']
+step_sections = re.split(r'(?=^### (?!\d+\.\d+\s))', text, flags=re.M)
+step_sections = [s for s in step_sections if re.match(r'^### (?!\d+\.\d+\s)', s)]
+required_fields = ['**Step ID**', '**目标**', '**文件边界**', '**本轮 review 预期关注面**', '**执行动作**', '**本步验收**', '**本步关闭条件**', '**阻塞条件**']
 msgs = []
 for section in step_sections:
-    title_match = re.match(r'### Step (\d+): (.+)', section)
+    title_match = re.match(r'### (.+)', section)
     title = title_match.group(0) if title_match else 'unknown step'
     if '**文件边界**' in section and not re.search(r'(Create|Modify|Test):', section):
         msgs.append(f"{title}: 文件边界缺少 Create/Modify/Test")
@@ -740,6 +760,7 @@ PY
             "{缺陷族名称}"
             "{test-compile / 单测 / Mapper / 集成 / build / 人工验证}"
             "{步骤标题}"
+            "{step_id}"
             "{这一步完成后系统具备什么能力}"
             "{新文件职责；没有则删除本行}"
             "{修改点；没有则删除本行}"
