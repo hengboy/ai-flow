@@ -452,7 +452,7 @@ test_validate_groups_json_rejects_more_than_five_groups() {
     set -e
 
     [ "$rc" -ne 0 ] || fail "Expected validate-groups-json to reject more than five groups"
-    assert_contains "$temp_root/too-many-groups.out" "分组数量超过上限 5"
+    assert_contains "$temp_root/too-many-groups.out" "分组数量超过上限 5，请按业务关联性合并为最多 5 组后重试"
     rm -rf "$temp_root"
 }
 
