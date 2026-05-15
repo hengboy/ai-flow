@@ -25,8 +25,9 @@ color: cyan
 
 ## 调用契约
 
-- 调用参数：`<slug> [推理强度] [轮次覆盖]`。`slug` 必填，未提供时必须报错退出，不得进入任何降级模式。
-- `regular review` 仅允许状态 `AWAITING_REVIEW`；`recheck review` 仅允许状态 `DONE`。其他状态、slug 匹配失败或轮次不一致时直接失败。
+- 调用参数：`<slug> [推理强度] [轮次覆盖]` 或 `--standalone [推理强度]`。
+- 绑定模式下：`regular review` 仅允许状态 `AWAITING_REVIEW`；`recheck review` 仅允许状态 `DONE`。其他状态、slug 匹配失败或轮次不一致时直接失败。
+- `--standalone` 模式下：不得绑定任何 slug，不推进 `.ai-flow/state/*.json`，仅审查当前未提交的 Git 变更。
 - 单仓模式要求当前目录是 Git 仓库且存在非 `.ai-flow/` 的可审查变更。workspace 模式要求 workspace manifest 有效、声明 repo 均可用，且至少一个 repo 有可审查变更。
 - workspace 模式必须从 workspace 根聚合 manifest 声明仓库的 `status/diff` 与未跟踪文件；禁止在 workspace 根直接运行裸 `git status` / `git diff`；报告路径必须带 `repo_id/` 前缀。
 - `regular` 第 3 轮及以后，必须先在计划变更记录中存在晚于第 2 轮失败时间的 `[root-cause-review-loop]` 记录。

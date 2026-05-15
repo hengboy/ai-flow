@@ -380,6 +380,23 @@ bash install.sh
 - 每个仓库内部按业务关联性或改动关联性拆分多个 commit group，而不是按目录机械拆分或整仓一次提交
 - 提交前会自动暂存本地变更、同步远程最新代码、恢复本地改动，并在每个 group 提交前运行最小必要验证
 
+### DONE 后独立处理 Minor 建议
+
+如果某个 plan 已经处于 `DONE`，但你仍想独立处理 review 留下的 Minor 建议，推荐链路是：
+
+```bash
+/ai-flow-code-optimize "优化描述"
+# 或
+/ai-flow-bug-fix "修复描述"
+
+/ai-flow-plan-coding-review --standalone
+/ai-flow-git-commit
+```
+
+- 这条链路不重新绑定原 `DONE` plan
+- review 阶段使用 `standalone review`
+- commit 阶段使用无 `slug` 的独立提交模式
+
 ### 结果摘要协议
 
 除 `ai-flow-claude-git-message` 外，其他 subagent 完成后都返回统一协议。该协议用于 skill/subagent 间解析、状态推进和自动化汇总，不是面向用户的主要阅读内容；最终给用户的回复应优先使用自然语言摘要和下一步提示，除非用户明确要求查看协议字段，否则不直接暴露协议块。`ai-flow-claude-git-message` 只返回固定的 `SUBJECT/BODY/FOOTER` 结构，且同样不直接展示给最终用户。
@@ -546,13 +563,13 @@ DONE 后提交流程编排：
 
 - `AWAITING_REVIEW` 走 regular review
 - `DONE` 走 recheck（审查后状态仍是 `DONE` 或降级到 `REVIEW_FAILED`）
-- 无 `slug` 时走 adhoc review（不推进状态，`STATE` 固定为 `none`），报告写入 `.ai-flow/reports/adhoc/{YYYYMMDD}-adhoc-review-{N}.md`
+- 显式 `--standalone` 时走 standalone review；未显式指定时仍优先按 state 自动绑定，只有 0 个状态文件时才回落到 standalone review（不推进状态，`STATE` 固定为 `none`），报告写入 `.ai-flow/reports/standalone/{YYYYMMDD}-standalone-review-{N}.md`
 - 要求存在非 `.ai-flow/` 的 Git 未提交变更
 - 缺陷严重度推导：Critical / Important / Minor
 - 审查报告中的阻塞缺陷必须声明 `修复流向`：`ai-flow-plan-coding` 或 `ai-flow-code-optimize`
 - 当 failed 且全部阻塞缺陷都路由到 `ai-flow-code-optimize` 时，下一步回 optimize；只要混入任一 `ai-flow-plan-coding` 阻塞缺陷，就统一回 coding
 - 只能通过 `flow-state.sh record-review` 推进状态
-- 审查 `mode` 取值：`regular`（常规审查）、`recheck`（DONE 状态复验）
+- 审查 `mode` 取值：`regular`（常规审查）、`recheck`（DONE 状态复验）、`standalone`（独立审查）
 - 审查 `result` 取值：`passed`、`passed_with_notes`、`failed`
 - regular 第 3 轮仍失败时，要求已有 `[root-cause-review-loop]` 审计记录才允许继续
 - 当前已硬化的 rule.yaml review 约束包括：`required_reads`、`protected_paths`、`forbidden_changes`、`test_policy.require_tests_for_code_change`、`review.required_evidence`
@@ -577,7 +594,7 @@ bash tests/run.sh
 | `test_install_layout.sh` | 安装后目录布局、自定义路径 |
 | `test_subagent_plan.sh` | Plan 生成/修订、fallback、摘要协议 |
 | `test_subagent_plan_review.sh` | 审核通过/失败、第 8 章回写、协议一致性 |
-| `test_subagent_coding_review.sh` | Regular review/recheck/adhoc、root-cause gate、引擎降级、DONE 后提交提示 |
+| `test_subagent_coding_review.sh` | Regular review/recheck/standalone、root-cause gate、引擎降级、DONE 后提交提示 |
 | `test_runtime_commit.sh` | Git 提交流程、业务分组、依赖顺序、冲突处理 |
 | `test_runtime_workspace_state.sh` | Workspace 模式 state 创建与 manifest 校验 |
 | `test_runtime_workspace_status.sh` | Workspace 模式 status 展示 |
@@ -651,7 +668,7 @@ ai-flow/
 .ai-flow/
 ├── plans/{YYYYMMDD}-{slug}.md              # 实施计划（8 章模板）
 ├── reports/{YYYYMMDD}-{slug}-review*.md    # Coding Review 审查报告（6 章模板，扁平存放）
-├── reports/adhoc/{YYYYMMDD}-*.md         # Adhoc 审查报告
+├── reports/standalone/{YYYYMMDD}-*.md    # Standalone 审查报告
 ├── state/{YYYYMMDD}-{slug}.json                   # 流程状态（schema v2）
 ```
 

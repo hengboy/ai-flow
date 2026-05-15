@@ -1,8 +1,8 @@
-# 审查报告：adhoc review
+# 审查报告：standalone review
 
 > 审查日期：{YYYY-MM-DD}
 > 审查时间：{HH:MM:SS}
-> 审查模式：adhoc
+> 审查模式：standalone
 > 审查结果：{审查结果}
 > 对比计划：无（未绑定计划）
 > 审查工具：{审查工具}

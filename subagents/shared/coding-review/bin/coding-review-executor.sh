@@ -108,7 +108,7 @@ render_template_content() {
     local model_name="$2"
     local reasoning="$3"
     local tool_label="${engine} (${model_name} ${reasoning})"
-    local slug_val="${SLUG:-adhoc}"
+    local slug_val="${SLUG:-standalone}"
 
     sed \
         -e "s/{需求名称}/$(escape_sed_replacement "$PLAN_TITLE")/g" \
@@ -1121,81 +1121,119 @@ if missing:
 PY
 }
 
-IS_ADHOC=0
-ADHOC_DATE=""
-ADHOC_REPORT_DIR=""
-ADHOC_SEQ_NUM=""
+IS_STANDALONE=0
+STANDALONE_DATE=""
+STANDALONE_REPORT_DIR=""
+STANDALONE_SEQ_NUM=""
 PLAN_FILE_ABS="none"
 PREV_REVIEW_ABS=""
 STATE_FILE_ABS=""
-if [ -z "${1:-}" ]; then
-    IS_ADHOC=1
-    ADHOC_DATE="$(date +%Y%m%d)"
-    ADHOC_REPORT_DIR="$REPORTS_DIR/adhoc"
-    mkdir -p "$ADHOC_REPORT_DIR"
-else
+REQUEST_KEY=""
+if [ "${1:-}" = "--standalone" ]; then
+    IS_STANDALONE=1
+    shift
+elif [ -n "${1:-}" ]; then
     REQUEST_KEY="$1"
+    shift
 fi
 MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
 REASONING="$(default_reasoning_for_engine "$AGENT_ENGINE")"
 ROUND_OVERRIDE=""
+ARG1="${1:-}"
 ARG2="${2:-}"
 ARG3="${3:-}"
-ARG4="${4:-}"
 STATE_FILE=""
 
-if [ "$IS_ADHOC" -eq 0 ]; then
-    find_owner_err="$(mktemp)"
-    owner_dir="$(find_owner_dir_for_state_keyword "$REQUEST_KEY" 2>"$find_owner_err" || true)"
-    if [ -z "${owner_dir:-}" ]; then
-        if [ -s "$find_owner_err" ]; then
-            fail_protocol "$(cat "$find_owner_err")"
-        fi
-        fail_protocol "找不到匹配 slug '$REQUEST_KEY' 的状态文件"
+if [ "$IS_STANDALONE" -eq 1 ]; then
+    STANDALONE_DATE="$(date +%Y%m%d)"
+    STANDALONE_REPORT_DIR="$REPORTS_DIR/standalone"
+    mkdir -p "$STANDALONE_REPORT_DIR"
+    apply_review_arg_compat "$ARG1" "$ARG2" "$ARG3"
+    if [ -n "$ROUND_OVERRIDE" ]; then
+        fail_protocol "standalone review 不支持轮次覆盖"
     fi
-    rm -f "$find_owner_err"
-    PROJECT_DIR="$owner_dir"
-    FLOW_DIR="$PROJECT_DIR/.ai-flow"
-    REPORTS_DIR="$FLOW_DIR/reports"
-    cd "$PROJECT_DIR"
-    MATCHED_STATES=()
-    while IFS= read -r -d '' f; do
-        MATCHED_STATES+=("$f")
-    done < <(find "$FLOW_DIR/state" -name "*${REQUEST_KEY}*.json" -type f -print0 2>/dev/null)
+else
+    if [ -z "$REQUEST_KEY" ]; then
+        MATCHED_STATES=()
+        while IFS= read -r -d '' f; do
+            MATCHED_STATES+=("$f")
+        done < <(find "$FLOW_DIR/state" -name '*.json' -type f -print0 2>/dev/null)
 
-    if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
-        fail_protocol "找不到匹配 slug '$REQUEST_KEY' 的状态文件"
-    elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
-        fail_protocol "slug '$REQUEST_KEY' 匹配到多个状态文件，请使用精确 slug"
+        if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
+            IS_STANDALONE=1
+            STANDALONE_DATE="$(date +%Y%m%d)"
+            STANDALONE_REPORT_DIR="$REPORTS_DIR/standalone"
+            mkdir -p "$STANDALONE_REPORT_DIR"
+            apply_review_arg_compat "$ARG1" "$ARG2" "$ARG3"
+            if [ -n "$ROUND_OVERRIDE" ]; then
+                fail_protocol "standalone review 不支持轮次覆盖"
+            fi
+        elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
+            fail_protocol "匹配到多个状态文件，请显式指定 slug 或使用 --standalone。"
+        else
+            STATE_FILE="${MATCHED_STATES[0]}"
+            STATE_FILE_ABS="$(resolve_project_path "$STATE_FILE")"
+            apply_review_arg_compat "$ARG1" "$ARG2" "$ARG3"
+            load_plan_repo_scope "$STATE_FILE_ABS"
+            rule_repo_args=()
+            for i in "${!PLAN_REPO_IDS[@]}"; do
+                rule_repo_args+=("${PLAN_REPO_IDS[$i]}::${PLAN_REPO_GIT_ROOTS[$i]}")
+            done
+            load_rule_bundle_for_scope "coding_review" "ai-flow-plan-coding-review" "$AGENT_NAME" "${rule_repo_args[@]}"
+        fi
     else
-        STATE_FILE="${MATCHED_STATES[0]}"
-        STATE_FILE_ABS="$(resolve_project_path "$STATE_FILE")"
-        apply_review_arg_compat "$ARG2" "$ARG3" "$ARG4"
-        load_plan_repo_scope "$STATE_FILE_ABS"
-        rule_repo_args=()
-        for i in "${!PLAN_REPO_IDS[@]}"; do
-            rule_repo_args+=("${PLAN_REPO_IDS[$i]}::${PLAN_REPO_GIT_ROOTS[$i]}")
-        done
-        load_rule_bundle_for_scope "coding_review" "ai-flow-plan-coding-review" "$AGENT_NAME" "${rule_repo_args[@]}"
+        find_owner_err="$(mktemp)"
+        owner_dir="$(find_owner_dir_for_state_keyword "$REQUEST_KEY" 2>"$find_owner_err" || true)"
+        if [ -z "${owner_dir:-}" ]; then
+            if [ -s "$find_owner_err" ]; then
+                fail_protocol "$(cat "$find_owner_err")"
+            fi
+            fail_protocol "找不到匹配 slug '$REQUEST_KEY' 的状态文件"
+        fi
+        rm -f "$find_owner_err"
+        PROJECT_DIR="$owner_dir"
+        FLOW_DIR="$PROJECT_DIR/.ai-flow"
+        REPORTS_DIR="$FLOW_DIR/reports"
+        cd "$PROJECT_DIR"
+        MATCHED_STATES=()
+        while IFS= read -r -d '' f; do
+            MATCHED_STATES+=("$f")
+        done < <(find "$FLOW_DIR/state" -name "*${REQUEST_KEY}*.json" -type f -print0 2>/dev/null)
+
+        if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
+            fail_protocol "找不到匹配 slug '$REQUEST_KEY' 的状态文件"
+        elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
+            fail_protocol "slug '$REQUEST_KEY' 匹配到多个状态文件，请使用精确 slug"
+        else
+            STATE_FILE="${MATCHED_STATES[0]}"
+            STATE_FILE_ABS="$(resolve_project_path "$STATE_FILE")"
+            apply_review_arg_compat "$ARG1" "$ARG2" "$ARG3"
+            load_plan_repo_scope "$STATE_FILE_ABS"
+            rule_repo_args=()
+            for i in "${!PLAN_REPO_IDS[@]}"; do
+                rule_repo_args+=("${PLAN_REPO_IDS[$i]}::${PLAN_REPO_GIT_ROOTS[$i]}")
+            done
+            load_rule_bundle_for_scope "coding_review" "ai-flow-plan-coding-review" "$AGENT_NAME" "${rule_repo_args[@]}"
+        fi
     fi
 fi
 
-if [ "$IS_ADHOC" -eq 1 ]; then
+if [ "$IS_STANDALONE" -eq 1 ]; then
     load_rule_bundle_for_scope "coding_review" "ai-flow-plan-coding-review" "$AGENT_NAME" "owner::${PROJECT_DIR}"
 fi
 
-if [ "$IS_ADHOC" -eq 1 ]; then
-    ADHOC_SEQ_NUM=$(find "$ADHOC_REPORT_DIR" -maxdepth 1 -name '*-adhoc-review*.md' -type f 2>/dev/null | wc -l | tr -d ' ')
-    ADHOC_SEQ_NUM=$((ADHOC_SEQ_NUM + 1))
-    REPORT_FILE="$ADHOC_REPORT_DIR/${ADHOC_DATE}-adhoc-review-${ADHOC_SEQ_NUM}.md"
-    TEMPLATE="$AGENT_DIR/templates/adhoc-review-template.md"
+if [ "$IS_STANDALONE" -eq 1 ]; then
+    STANDALONE_SEQ_NUM=$(find "$STANDALONE_REPORT_DIR" -maxdepth 1 -name '*-standalone-review-*.md' -type f 2>/dev/null | wc -l | tr -d ' ')
+    STANDALONE_SEQ_NUM=$((STANDALONE_SEQ_NUM + 1))
+    REPORT_FILE="$STANDALONE_REPORT_DIR/${STANDALONE_DATE}-standalone-review-${STANDALONE_SEQ_NUM}.md"
+    TEMPLATE="$AGENT_DIR/templates/standalone-review-template.md"
     PROTOCOL_STATE="none"
     PROTOCOL_NEXT="none"
     CURRENT_ROUND=1
-    REVIEW_MODE="adhoc"
+    REVIEW_MODE="standalone"
     PLAN_FILE="none"
     PLAN_FILE_ABS="none"
-    PLAN_TITLE="adhoc review"
+    PLAN_TITLE="standalone review"
     PREV_REVIEW=""
     PREV_REVIEW_ABS=""
 else
@@ -1239,7 +1277,7 @@ else
     fi
 fi
 
-if [ "$IS_ADHOC" -eq 0 ]; then
+if [ "$IS_STANDALONE" -eq 0 ]; then
     if [ "$CURRENT_ROUND" -eq 1 ]; then
         REPORT_FILE="$(dirname "$PLAN_FILE" | sed 's#^\.ai-flow/plans#'"$REPORTS_DIR"'#')/${BASE_NAME}.md"
     else
@@ -1257,7 +1295,7 @@ if [ -e "$REPORT_FILE" ]; then
     fail_protocol "报告文件已存在，拒绝覆盖: $REPORT_FILE"
 fi
 
-if [ "$IS_ADHOC" -eq 0 ]; then
+if [ "$IS_STANDALONE" -eq 0 ]; then
     if [ "$LAST_REVIEW_RESULT" = "failed" ] && [ -n "$LAST_REVIEW_FILE" ]; then
         PREV_REVIEW="$LAST_REVIEW_FILE"
     elif [ "$REVIEW_MODE" = "recheck" ]; then
@@ -1283,7 +1321,7 @@ if ! rule_constraint_error="$(validate_rule_constraints_before_review "$CHANGED_
     fail_protocol "$(extract_rule_loader_error "$rule_constraint_error")"
 fi
 
-if [ "$IS_ADHOC" -eq 0 ]; then
+if [ "$IS_STANDALONE" -eq 0 ]; then
     PLAN_CONTENT=$(cat "$PLAN_FILE_ABS")
     REASONING=$(review_reasoning "$(count_reviewable_git_paths)" "$(printf '%s\n' "$PLAN_CONTENT" | wc -l | tr -d ' ')" "$CURRENT_ROUND" "$( [ -n "$PREV_REVIEW_ABS" ] && echo 1 || echo 0 )")
 else
@@ -1301,8 +1339,8 @@ if ! command -v codex >/dev/null 2>&1; then
     ACTIVE_ENGINE="Codex(unavailable)"
 fi
 
-if [ "$IS_ADHOC" -eq 1 ]; then
-    echo ">>> Adhoc review（未绑定计划）"
+if [ "$IS_STANDALONE" -eq 1 ]; then
+    echo ">>> Standalone review（未绑定计划）"
 else
     echo ">>> 匹配到状态: $SLUG [$PLAN_STATUS]"
     echo "    对比计划: $PLAN_FILE"
@@ -1320,7 +1358,7 @@ for required_file in "$FLOW_STATE_SH" "$TEMPLATE"; do
         fail_protocol "缺少运行时资源: $required_file"
     fi
 done
-if [ "$IS_ADHOC" -eq 0 ] && [ ! -f "$PROMPT_TEMPLATE" ]; then
+if [ "$IS_STANDALONE" -eq 0 ] && [ ! -f "$PROMPT_TEMPLATE" ]; then
     fail_protocol "缺少运行时资源: $PROMPT_TEMPLATE"
 fi
 TEMPLATE_CONTENT=$(render_template_content "$ACTIVE_ENGINE" "$ACTIVE_MODEL" "$ACTIVE_REASONING")
@@ -1338,14 +1376,14 @@ case "$REVIEW_MODE:$CURRENT_ROUND" in
     recheck:*)
         REVIEW_SCOPE_GUIDANCE="这是 recheck review：确认 DONE 后新增变更没有引入回归，同时复核与本次变更直接相关的缺陷族和关键路径。"
         ;;
-    adhoc:*)
-        REVIEW_SCOPE_GUIDANCE="这是 adhoc review：未绑定任何 AI Flow 计划。请审查当前未提交的 Git 变更，关注代码质量、安全性和正确性。"
+    standalone:*)
+        REVIEW_SCOPE_GUIDANCE="这是 standalone review：未绑定任何 AI Flow 计划。请审查当前未提交的 Git 变更，关注代码质量、安全性和正确性。"
         ;;
 esac
 
 HISTORY_CONTEXT=""
 HISTORY_RULES=""
-if [ "$IS_ADHOC" -eq 0 ]; then
+if [ "$IS_STANDALONE" -eq 0 ]; then
     HISTORY_RULES=$'5. 如果本轮发现缺陷，按严重级别写入"4. 缺陷清单"，并同步更新"6. 缺陷修复追踪"。\n6. "3.6 缺陷族覆盖度"至少要覆盖 plan 中与本次变更相关的缺陷族，并说明已覆盖 / 未覆盖 / 需人工验证。'
 fi
 if [ -n "$PREV_REVIEW_ABS" ] && [ -f "$PREV_REVIEW_ABS" ]; then
@@ -1373,11 +1411,11 @@ EOF
 )
 fi
 
-if [ "$IS_ADHOC" -eq 1 ]; then
-    ADHOC_TODAY="$(date +%Y-%m-%d)"
-    ADHOC_CHANGE_SUMMARY="$(list_plan_repo_change_summary 2>/dev/null || true)"
+if [ "$IS_STANDALONE" -eq 1 ]; then
+    STANDALONE_TODAY="$(date +%Y-%m-%d)"
+    STANDALONE_CHANGE_SUMMARY="$(list_plan_repo_change_summary 2>/dev/null || true)"
     if [ "$IS_PLAN_REPOS_MODE" -eq 0 ]; then
-        ADHOC_CHANGE_SUMMARY=$(
+        STANDALONE_CHANGE_SUMMARY=$(
             cat <<EOF
 $(git diff --staged --name-only 2>/dev/null || true)
 $(git diff --name-only 2>/dev/null || true)
@@ -1385,25 +1423,25 @@ EOF
         )
     fi
     REVIEW_PROMPT=$(cat <<PROMPT
-# 审查报告：adhoc review
+# 审查报告：standalone review
 
-> 审查日期：${ADHOC_TODAY}
-> 需求简称：adhoc
-> 审查模式：adhoc
+> 审查日期：${STANDALONE_TODAY}
+> 需求简称：standalone
+> 审查模式：standalone
 > 审查轮次：1
 > 审查结果：passed
 > 对比计划：无（未绑定计划）
 
-请审查当前未提交的 Git 变更，使用简化 adhoc 模式生成审查报告。
+请审查当前未提交的 Git 变更，使用简化 standalone 模式生成审查报告。
 
 当前变更摘要（git diff --staged + git diff）：
-$ADHOC_CHANGE_SUMMARY
+$STANDALONE_CHANGE_SUMMARY
 
-请使用 adhoc-review-template.md 模板生成审查报告。
+请使用 standalone-review-template.md 模板生成审查报告。
 要求：
-1. 报告首行必须以 "# 审查报告：adhoc review" 开头
-2. 元数据中的需求简称填写 "adhoc"
-3. 审查模式填写 "adhoc"
+1. 报告首行必须以 "# 审查报告：standalone review" 开头
+2. 元数据中的需求简称填写 "standalone"
+3. 审查模式填写 "standalone"
 4. 审查结果必须为 passed、passed_with_notes 或 failed 之一
 5. 对比计划填写 "无（未绑定计划）"
 6. 重点关注代码质量、安全性和正确性
@@ -1463,14 +1501,14 @@ if ! echo "$FIRST_LINE" | grep -qE '^# 审查报告：'; then
     ERRORS="${ERRORS}首行必须是 '# 审查报告：...'\n"
 fi
 
-if [ "$IS_ADHOC" -eq 1 ]; then
+if [ "$IS_STANDALONE" -eq 1 ]; then
     for section in "## 1\. " "## 1\.1 " "## 1\.2 " "## 2\. " "## 2\.1 " "## 3\." "## 4\."; do
         if ! grep -qE "$section" "$REPORT_FILE"; then
             section_label=${section//\\/}
             ERRORS="${ERRORS}缺少章节: $section_label\n"
         fi
     done
-    ADHOC_PLACEHOLDERS=(
+    STANDALONE_PLACEHOLDERS=(
         "{YYYY-MM-DD}"
         "{审查结果}"
         "{审查工具}"
@@ -1478,7 +1516,7 @@ if [ "$IS_ADHOC" -eq 1 ]; then
         "{exact_command}"
         "{为什么执行、结果说明什么}"
     )
-    for placeholder in "${ADHOC_PLACEHOLDERS[@]}"; do
+    for placeholder in "${STANDALONE_PLACEHOLDERS[@]}"; do
         if grep -Fq "$placeholder" "$REPORT_FILE"; then
             ERRORS="${ERRORS}报告中仍有未替换的模板占位符: $placeholder\n"
         fi
@@ -1544,7 +1582,7 @@ META_MODE=$(meta_value "审查模式")
 META_ROUND=$(meta_value "审查轮次")
 META_RESULT=$(meta_value "审查结果")
 META_PLAN_FILE=$(meta_value "对比计划")
-if [ "$IS_ADHOC" -eq 0 ]; then
+if [ "$IS_STANDALONE" -eq 0 ]; then
     if [ "$META_SLUG" != "$SLUG" ]; then
         ERRORS="${ERRORS}需求简称与状态文件不一致: 期望 ${SLUG}，实际 ${META_SLUG}\n"
     fi
@@ -1569,7 +1607,7 @@ OVERALL_SECTION=$(awk '
 ' "$REPORT_FILE")
 VERIFICATION_SECTION=$(report_section_between "$REPORT_FILE" '^### 1\.2 ' '^## 2\. ')
 
-if [ "$IS_ADHOC" -eq 1 ]; then
+if [ "$IS_STANDALONE" -eq 1 ]; then
     CONCLUSION_SECTION=$(awk '
         /^## 4\./ {in_section=1; next}
         /^## [5-9]\./ && in_section {exit}
@@ -1587,7 +1625,7 @@ if [ -z "$(printf '%s\n' "$VERIFICATION_SECTION" | sed '/^[[:space:]]*$/d')" ]; 
     ERRORS="${ERRORS}1.2 定向验证执行证据不能为空\n"
 fi
 
-if [ "$IS_ADHOC" -eq 0 ]; then
+if [ "$IS_STANDALONE" -eq 0 ]; then
     FAMILY_SECTION=$(report_section_between "$REPORT_FILE" '^### 3\.6 ' '^## 4\. ')
     if [ -z "$(printf '%s\n' "$FAMILY_SECTION" | sed '/^[[:space:]]*$/d')" ]; then
         ERRORS="${ERRORS}3.6 缺陷族覆盖度不能为空\n"
@@ -1755,17 +1793,17 @@ if [ "$RESULT" = "failed" ]; then
     fi
 fi
 
-if [ "$IS_ADHOC" -eq 1 ]; then
-    echo ">>> Adhoc review 完成，不更新状态文件"
+if [ "$IS_STANDALONE" -eq 1 ]; then
+    echo ">>> Standalone review 完成，不更新状态文件"
     case "$RESULT" in
         passed)
-            PROTOCOL_SUMMARY="adhoc 审查通过，无状态绑定。"
+            PROTOCOL_SUMMARY="standalone 审查通过，无状态绑定。"
             ;;
         passed_with_notes)
-            PROTOCOL_SUMMARY="adhoc 审查通过（附 Minor 建议），无状态绑定。"
+            PROTOCOL_SUMMARY="standalone 审查通过（附 Minor 建议），无状态绑定。"
             ;;
         failed)
-            PROTOCOL_SUMMARY="adhoc 审查未通过，发现问题，无状态绑定。"
+            PROTOCOL_SUMMARY="standalone 审查未通过，发现问题，无状态绑定。"
             ;;
     esac
     PROTOCOL_REVIEW_RESULT="$RESULT"
