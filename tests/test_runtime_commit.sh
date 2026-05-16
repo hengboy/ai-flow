@@ -302,6 +302,76 @@ PY
     rm -rf "$temp_root"
 }
 
+test_validate_groups_json_accepts_runtime_enriched_fields() {
+    local temp_root repo commit_script prepared_json groups_json validated_json revalidated_json session_id
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "validate-enriched-fields")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(build_groups_json "$prepared_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
+        revalidated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$validated_json")"
+        python3 - "$revalidated_json" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+repo = payload["repos"][0]
+group = repo["groups"][0]
+assert repo["repo_id"] == "owner"
+assert repo["repo_git_root"]
+assert group["group_id"] == "owner-1"
+assert group["group_title"] == "主改动"
+assert "local change" in group["staged_diff"]
+assert group["message_agent_input"]["mode"] == "message"
+print("ok")
+PY
+    )
+
+    rm -rf "$temp_root"
+}
+
+test_validate_groups_json_rejects_unknown_fields() {
+    local temp_root repo commit_script prepared_json groups_json session_id rc
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "validate-unknown-fields")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    set +e
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(python3 - "$(build_groups_json "$prepared_json")" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+payload["repos"][0]["unknown_runtime_field"] = True
+print(json.dumps(payload, ensure_ascii=False))
+PY
+)"
+        bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json" >"$temp_root/unknown-fields.out" 2>&1
+    )
+    rc=$?
+    set -e
+
+    [ "$rc" -ne 0 ] || fail "Expected validate-groups-json to reject unknown fields"
+    assert_contains "$temp_root/unknown-fields.out" "非法字段: unknown_runtime_field"
+    rm -rf "$temp_root"
+}
+
 test_validate_groups_json_rejects_missing_file() {
     local temp_root repo commit_script prepared_json groups_json session_id rc
     temp_root=$(make_temp_root)
@@ -563,6 +633,56 @@ PY
 
     [ "$rc" -ne 0 ] || fail "Expected commit to reject tampered validated groups json"
     assert_contains "$temp_root/tampered-groups.out" "必须使用 runtime 最近一次校验后的原样输出"
+    rm -rf "$temp_root"
+}
+
+test_commit_accepts_reassembled_validated_groups_json() {
+    local temp_root repo commit_script prepared_json groups_json validated_json reassembled_json message_map_json session_id output_file
+    temp_root=$(make_temp_root)
+    repo="$(setup_git_remote_pair "$temp_root" "reassembled-groups")"
+    commit_script="$SOURCE_FLOW_COMMIT_SCRIPT"
+    output_file="$temp_root/reassembled-groups.out"
+    printf 'local change\n' > "$repo/src/app.txt"
+
+    (
+        cd "$repo"
+        prepared_json="$(bash "$commit_script" --prepare-json)"
+        session_id="$(python3 - "$prepared_json" <<'PY'
+import json, sys
+print(json.loads(sys.argv[1])["session_id"])
+PY
+)"
+        groups_json="$(build_groups_json "$prepared_json")"
+        validated_json="$(bash "$commit_script" --session-id "$session_id" --validate-groups-json "$groups_json")"
+        reassembled_json="$(python3 - "$validated_json" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+print(json.dumps({
+    "repos": [
+        {
+            "groups": [
+                {
+                    "staged_diff": group["staged_diff"],
+                    "files": group["files"],
+                    "reason": group["reason"],
+                    "group_title": group["group_title"],
+                    "group_id": group["group_id"],
+                }
+                for group in repo["groups"]
+            ],
+            "repo_id": repo["repo_id"],
+        }
+        for repo in payload["repos"]
+    ]
+}, ensure_ascii=False))
+PY
+)"
+        message_map_json="$(build_message_map_json "$validated_json")"
+        bash "$commit_script" --session-id "$session_id" --groups-json "$reassembled_json" --message-map-json "$message_map_json" >"$output_file" 2>&1
+    )
+
+    assert_protocol_field "$output_file" "RESULT" "success"
+    assert_protocol_field "$output_file" "COMMITS" "1"
     rm -rf "$temp_root"
 }
 
@@ -1327,6 +1447,8 @@ test_stash_pop_conflict_auto_resolve_cleans_up_stash() {
 
 test_prepare_json_returns_repo_context_not_groups
 test_validate_groups_json_adds_group_id_and_staged_diff
+test_validate_groups_json_accepts_runtime_enriched_fields
+test_validate_groups_json_rejects_unknown_fields
 test_validate_groups_json_rejects_missing_file
 test_validate_groups_json_rejects_duplicate_file
 test_validate_groups_json_rejects_cross_repo_group
@@ -1335,6 +1457,7 @@ test_validate_groups_json_rejects_empty_reason
 test_validate_groups_json_rejects_more_than_five_groups
 test_validate_groups_json_rejects_workspace_drift_after_prepare
 test_commit_rejects_tampered_validated_groups_json
+test_commit_accepts_reassembled_validated_groups_json
 test_validate_groups_json_persists_raw_validated_output
 test_validate_groups_json_accepts_explicit_session_id_without_json_top_level_session
 test_validate_groups_json_rejects_session_id_mismatch_between_flag_and_json

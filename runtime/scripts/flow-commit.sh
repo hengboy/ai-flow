@@ -1305,7 +1305,8 @@ for repo in repos:
     if not isinstance(repo, dict):
         raise SystemExit("groups-json 的 repo 条目必须是对象")
     allowed_repo_keys = {"repo_id", "groups"}
-    extra_keys = sorted(set(repo.keys()) - allowed_repo_keys)
+    runtime_repo_keys = {"repo_git_root", "role"}
+    extra_keys = sorted(set(repo.keys()) - allowed_repo_keys - runtime_repo_keys)
     if extra_keys:
         raise SystemExit(f"groups-json repo 条目存在非法字段: {extra_keys[0]}")
     groups = repo.get("groups")
@@ -1316,7 +1317,8 @@ for repo in repos:
         if not isinstance(group, dict):
             raise SystemExit(f"repo_id={repo.get('repo_id', '')} group[{idx}] 必须是对象")
         allowed_group_keys = {"group_title", "reason", "files"}
-        extra_group_keys = sorted(set(group.keys()) - allowed_group_keys)
+        runtime_group_keys = {"group_id", "staged_diff", "message_agent_input"}
+        extra_group_keys = sorted(set(group.keys()) - allowed_group_keys - runtime_group_keys)
         if extra_group_keys:
             raise SystemExit(f"repo_id={repo.get('repo_id', '')} group[{idx}] 存在非法字段: {extra_group_keys[0]}")
         clean_groups.append({
@@ -1368,10 +1370,47 @@ if not isinstance(saved_validated, dict):
 
 saved_repos = saved_validated.get("repos")
 repos = groups_payload.get("repos")
-if saved_repos != repos:
+if not isinstance(saved_repos, list) or not isinstance(repos, list):
     raise SystemExit("groups-json 必须使用 runtime 最近一次校验后的原样输出")
 
-print(json.dumps(groups_payload, ensure_ascii=False))
+def equivalent_to_saved(saved, provided) -> bool:
+    if len(saved) != len(provided):
+        return False
+    allowed_repo_keys = {"repo_id", "repo_git_root", "role", "groups"}
+    allowed_group_keys = {"group_id", "group_title", "reason", "files", "staged_diff", "message_agent_input"}
+    for saved_repo, repo in zip(saved, provided):
+        if not isinstance(saved_repo, dict) or not isinstance(repo, dict):
+            return False
+        if set(repo.keys()) - allowed_repo_keys:
+            return False
+        for key in ("repo_id",):
+            if repo.get(key) != saved_repo.get(key):
+                return False
+        for optional_key in ("repo_git_root", "role"):
+            if optional_key in repo and repo.get(optional_key) != saved_repo.get(optional_key):
+                return False
+        saved_groups = saved_repo.get("groups")
+        groups = repo.get("groups")
+        if not isinstance(saved_groups, list) or not isinstance(groups, list):
+            return False
+        if len(saved_groups) != len(groups):
+            return False
+        for saved_group, group in zip(saved_groups, groups):
+            if not isinstance(saved_group, dict) or not isinstance(group, dict):
+                return False
+            if set(group.keys()) - allowed_group_keys:
+                return False
+            for key in ("group_id", "group_title", "reason", "files", "staged_diff"):
+                if group.get(key) != saved_group.get(key):
+                    return False
+            if "message_agent_input" in group and group.get("message_agent_input") != saved_group.get("message_agent_input"):
+                return False
+    return True
+
+if not equivalent_to_saved(saved_repos, repos):
+    raise SystemExit("groups-json 必须使用 runtime 最近一次校验后的原样输出")
+
+print(json.dumps(saved_validated, ensure_ascii=False))
 PY
 }
 
