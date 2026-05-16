@@ -24,7 +24,7 @@ color: purple
 - 调用参数：`"需求描述" [slug]`。需求描述必填；`slug` 可选，由执行器负责生成、校验和关联。
 - 允许新建 draft plan，或在 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED` 状态下原地修订同名 draft plan；其他状态、非法 slug、关联文件缺失或 runtime 缺失均直接失败。
 - 禁止复用旧 plan：不得搜索 `.ai-flow/plans/` 下历史计划并沿用，必须根据当前需求重新生成或按执行器规则修订。
-- 必须运行当前已安装 agent 目录中的 `bin/plan-executor.sh`；该路径必须相对本 `AGENT.md` 所在目录解析，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
+- 必须运行当前已安装 agent 目录中的 `bin/plan-executor.sh`；定位时只能探测 HARD-GATE 中列出的绝对候选路径，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
 - 不得手工生成 plan 或手工维护状态文件。状态只能由 `$HOME/.config/ai-flow/scripts/flow-state.sh` 创建或更新。
 - 必须保留并校验 plan 的强制结构，包括 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等关键章节。
 - frontmatter 中的 `model` 只是宿主 agent 元数据；实际模型、推理强度和降级路径由 `bin/plan-executor.sh` 决定。
