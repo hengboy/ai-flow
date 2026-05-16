@@ -59,6 +59,20 @@ resolve_flow_root() {
     return 1
 }
 
+resolve_json_file_arg() {
+    local value="$1"
+    if [[ "$value" == @* ]]; then
+        local filepath="${value:1}"
+        if [ ! -f "$filepath" ]; then
+            echo "JSON 文件不存在: $filepath" >&2
+            return 1
+        fi
+        cat "$filepath"
+    else
+        printf '%s' "$value"
+    fi
+}
+
 say() {
     [ "${QUIET_STDOUT:-0}" -eq 1 ] && return 0
     echo ">>> $*"
@@ -1626,6 +1640,17 @@ fi
 if [ -n "$GROUPS_JSON" ] && [ -z "$MESSAGE_MAP_JSON" ]; then
     echo "缺少 --message-map-json，无法执行提交。" >&2
     exit 1
+fi
+
+# 支持 @filepath 语法从文件读取 JSON，避免 shell 转义破坏转义字符
+if [ -n "$GROUPS_JSON" ]; then
+    GROUPS_JSON="$(resolve_json_file_arg "$GROUPS_JSON")" || exit 1
+fi
+if [ -n "$MESSAGE_MAP_JSON" ]; then
+    MESSAGE_MAP_JSON="$(resolve_json_file_arg "$MESSAGE_MAP_JSON")" || exit 1
+fi
+if [ -n "$VALIDATE_GROUPS_JSON" ]; then
+    VALIDATE_GROUPS_JSON="$(resolve_json_file_arg "$VALIDATE_GROUPS_JSON")" || exit 1
 fi
 
 FLOW_ROOT="$(resolve_flow_root)" || true

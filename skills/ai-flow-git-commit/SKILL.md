@@ -44,11 +44,13 @@ $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode ma
 ```bash
 $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --prepare-json
 $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <session_id> --validate-groups-json '<json>'
-$HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <session_id> --groups-json '<json>' --message-map-json '<json>'
+$HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <session_id> --groups-json '@<file>' --message-map-json '@<file>'
 $HOME/.config/ai-flow/scripts/flow-commit.sh [--slug <slug>] [--conflict-mode manual|auto] --session-id <session_id> --resume-commit
 ```
 
 默认 `--conflict-mode manual`。
+
+**注意**：最终提交阶段（第三行）必须将 JSON 写入临时文件后通过 `@filepath` 语法传递，避免 shell 参数中 `\n`、`\"` 等转义字符被破坏。`--validate-groups-json` 阶段仍可直接传 JSON 字符串（输出较小）。
 
 ## 编排顺序
 
@@ -142,8 +144,9 @@ FOOTER:
 }
 ```
 
-10. 调用 `--session-id '<prepare-json.session_id>' --groups-json '<validated-json>' --message-map-json '<json>'` 执行提交。
+10. 将 `--validate-groups-json` 的原样输出与 `message-map-json` 分别写入临时文件，调用 `--session-id '<prepare-json.session_id>' --groups-json '@<validated-json-file>' --message-map-json '@<message-map-file>'` 执行提交。
    - `groups-json` 必须直接使用 `--validate-groups-json` 的原样输出，禁止重新组装、裁剪字段或重新序列化后再提交
+   - 必须通过 `@filepath` 语法传递，避免 shell 转义破坏 `\n`、`\"` 等字符
    - runtime 会在最终提交前持久化 `message-map-json`；若最终提交阶段失败，优先使用 `--resume-commit` 恢复，不要手工重组 `groups-json`
 
 11. 如果最终提交阶段已经生成 message、但在提交前失败：
