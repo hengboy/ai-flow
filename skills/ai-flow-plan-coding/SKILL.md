@@ -23,6 +23,7 @@ $HOME/.config/ai-flow/scripts/flow-plan-coding.sh {YYYYMMDD}-{slug}
 - 该脚本同时负责执行前的 `rule.yaml` 门禁：`required_reads`、`protected_paths`、`forbidden_changes`
 - 如果 runtime 返回失败，必须直接向用户转述失败摘要并停止；不得绕过脚本自行推进状态
 - 如果 runtime 返回成功，再继续执行下面的计划读取、编码实现、计划勾选和后续收尾
+
 ### 1. 确定 slug
 
 运行 `ls .ai-flow/state/*.json 2>/dev/null` 列出所有状态文件：
