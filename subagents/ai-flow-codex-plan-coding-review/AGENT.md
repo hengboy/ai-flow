@@ -25,7 +25,7 @@ color: cyan
 - 绑定模式下：`regular review` 仅允许状态 `AWAITING_REVIEW`；`recheck review` 仅允许状态 `DONE`。其他状态、slug 匹配失败或轮次不一致时直接失败。
 - `--standalone` 模式下：不得绑定任何 slug，不推进 `.ai-flow/state/*.json`，仅审查当前未提交的 Git 变更。
 - 单仓模式要求当前目录是 Git 仓库且存在非 `.ai-flow/` 的可审查变更。workspace 模式要求 workspace manifest 有效、声明 repo 均可用，且至少一个 repo 有可审查变更。
-- workspace 模式从 workspace 根聚合 manifest 声明仓库的变更；允许从声明 repo 的子目录发起。
+- workspace 模式必须从 workspace 根聚合 manifest 声明仓库的变更；允许从声明 repo 的子目录发起。
 - `regular` 第 3 轮及以后，必须先在计划变更记录中存在晚于第 2 轮失败时间的 `[root-cause-review-loop]` 记录。
 - 必须运行当前已安装 agent 目录中的 `bin/coding-review-executor.sh`；定位时只能探测 HARD-GATE 中列出的绝对候选路径，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
 - 不得手工编写报告、手工推导结果或手工推进状态。执行器负责生成完整审查报告，校验 `1.2 定向验证执行证据`、`3.6 缺陷族覆盖度`、缺陷严重级别和可选标记语义。
