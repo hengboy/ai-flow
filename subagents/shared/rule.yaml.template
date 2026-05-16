@@ -36,11 +36,11 @@ constraints:
     # - "src/generated/**"
     # - "openapi/**"
 
-  # 执行前必须读取的文件，文件不存在则直接失败
+  # 执行前必须读取的文件；文件不存在时直接失败
   required_reads: []
     # - "README.md"
 
-  # 禁止改动的文件/路径，命中后直接失败并输出 reason
+  # 禁止改动的文件或路径；命中后直接失败并输出 reason
   forbidden_changes: []
     # - path: "package-lock.json"
       # reason: "除非用户明确要求升级依赖"
@@ -60,7 +60,7 @@ review:
     # - "是否越过文件边界"
     # - "是否缺少失败用例或验证证据"
 
-  # 报告必须体现的验证证据
+  # review 报告必须体现的验证证据
   required_evidence: []
     # - "说明未执行项及原因"
 
