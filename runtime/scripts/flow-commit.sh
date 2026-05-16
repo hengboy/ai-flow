@@ -59,6 +59,8 @@ resolve_flow_root() {
     return 1
 }
 
+JSON_FILES_TO_CLEAN=()
+
 resolve_json_file_arg() {
     local value="$1"
     if [[ "$value" == @* ]]; then
@@ -67,6 +69,7 @@ resolve_json_file_arg() {
             echo "JSON 文件不存在: $filepath" >&2
             return 1
         fi
+        JSON_FILES_TO_CLEAN+=("$filepath")
         cat "$filepath"
     else
         printf '%s' "$value"
@@ -1675,6 +1678,7 @@ PROTOCOL_CONFLICT_MODE="$CONFLICT_MODE"
 PROTOCOL_DETAIL=""
 COMMIT_LOG_LINES=""
 COMMIT_COUNT=0
+JSON_FILES_TO_CLEAN=()
 MESSAGE_FILES_TO_CLEAN=()
 
 finish_protocol() {
@@ -1732,6 +1736,12 @@ REPO_STATE_FILE="$(mktemp)"
 NORMALIZED_GROUPS_FILE="$(mktemp)"
 cleanup() {
     rm -f "$CONTEXT_FILE" "$REPO_STATE_FILE" "$NORMALIZED_GROUPS_FILE"
+    if [ "${#JSON_FILES_TO_CLEAN[@]}" -gt 0 ]; then
+        local json_file
+        for json_file in "${JSON_FILES_TO_CLEAN[@]}"; do
+            [ -n "$json_file" ] && rm -f "$json_file"
+        done
+    fi
     if [ "${#MESSAGE_FILES_TO_CLEAN[@]}" -gt 0 ]; then
         local message_file
         for message_file in "${MESSAGE_FILES_TO_CLEAN[@]}"; do
