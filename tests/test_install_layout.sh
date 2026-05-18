@@ -107,7 +107,7 @@ test_default_install_layout() {
     rc=$?
     set -e
     [ "$rc" -eq 1 ] || fail "Expected no legacy review event references in installed user-facing assets"
-    assert_contains "$runtime_root/scripts/flow-state.sh" "\"coding_review_failed\": \"review_failed\""
+    assert_contains "$runtime_root/scripts/flow-state.sh" "flow_state_cli.py"
     assert_contains "$temp_root/install.out" "Installed AI Flow runtime"
     rm -rf "$temp_root"
 }

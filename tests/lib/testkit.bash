@@ -148,30 +148,10 @@ state_field() {
     local project_dir="$1"
     local slug="$2"
     local field="$3"
-    local state_file
-    state_file="$(resolve_state_file "$project_dir" "$slug")"
-    python3 - "$state_file" "$field" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-value = state
-for part in sys.argv[2].split("."):
-    if value is None:
-        break
-    if isinstance(value, dict):
-        value = value.get(part)
-    elif isinstance(value, list) and part.isdigit():
-        index = int(part)
-        value = value[index] if 0 <= index < len(value) else None
-    else:
-        value = None
-        break
-if value is None:
-    sys.exit(1)
-print(value)
-PY
+    (
+        cd "$project_dir" || exit 1
+        bash "$SOURCE_FLOW_STATE_SCRIPT" show --slug "$slug" --field "$field"
+    )
 }
 
 parse_iso_to_local_parts() {
@@ -562,42 +542,49 @@ create_state_with_status() {
             git add .
             git commit -q -m init
         fi
-        bash "$flow_state_script" create --slug "$slug" --title "$title" --plan-file "$plan_file" >/dev/null
+        local repo_scope
+        repo_scope="$(repo_scope_json "$project_dir" "owner::.")"
+        bash "$flow_state_script" transition \
+            --slug "$effective_slug" \
+            --event plan_created \
+            --title "$title" \
+            --plan-file "$plan_file" \
+            --repo-scope-json "$repo_scope" >/dev/null
         case "$target_status" in
             AWAITING_PLAN_REVIEW)
                 ;;
             PLAN_REVIEW_FAILED)
-                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result failed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event plan_review_failed --result failed --engine Fixture --model fixture-model >/dev/null
                 ;;
             PLANNED)
-                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
                 ;;
             IMPLEMENTING)
-                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event execute_started >/dev/null
                 ;;
             AWAITING_REVIEW)
-                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event execute_started >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event implementation_completed >/dev/null
                 ;;
             REVIEW_FAILED)
-                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event execute_started >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event implementation_completed >/dev/null
                 write_review_report_fixture "$report_file" "$base_slug" "$plan_file" "regular" "1" "failed" "$title"
-                bash "$flow_state_script" record-review --slug "$effective_slug" --mode regular --result failed --report-file "$report_file" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event review_failed --result failed --report-file "$report_file" --engine Fixture --model fixture-model >/dev/null
                 ;;
             FIXING_REVIEW)
                 create_state_with_status "$flow_state_script" "$project_dir" "$slug" "REVIEW_FAILED" "$date_dir" "$title"
-                bash "$flow_state_script" start-fix "$effective_slug" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event fix_started >/dev/null
                 ;;
             DONE)
-                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event execute_started >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event implementation_completed >/dev/null
                 write_review_report_fixture "$report_file" "$base_slug" "$plan_file" "regular" "1" "passed" "$title"
-                bash "$flow_state_script" record-review --slug "$effective_slug" --mode regular --result passed --report-file "$report_file" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event review_passed --result passed --report-file "$report_file" --engine Fixture --model fixture-model >/dev/null
                 ;;
             *)
                 fail "Unknown target status: $target_status"
@@ -1266,24 +1253,24 @@ create_workspace_state_fixture() {
 
     (
         cd "$workspace_root" || exit 1
-        bash "$flow_state_script" create --slug "$slug" --title "$title" --plan-file "$plan_file" \
+        bash "$flow_state_script" transition --slug "$effective_slug" --event plan_created --title "$title" --plan-file "$plan_file" \
             --repo-scope-json "$repo_scope" >/dev/null
         case "$target_status" in
             AWAITING_PLAN_REVIEW) ;;
             PLANNED)
-                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
                 ;;
             AWAITING_REVIEW)
-                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event execute_started >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event implementation_completed >/dev/null
                 ;;
             DONE)
-                bash "$flow_state_script" record-plan-review --slug "$effective_slug" --result passed --engine Fixture --model fixture-model >/dev/null
-                bash "$flow_state_script" start-execute "$effective_slug" >/dev/null
-                bash "$flow_state_script" finish-implementation "$effective_slug" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event execute_started >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event implementation_completed >/dev/null
                 write_review_report_fixture "$report_file" "$base_slug" "$plan_file" "regular" "1" "passed" "$title"
-                bash "$flow_state_script" record-review --slug "$effective_slug" --mode regular --result passed --report-file "$report_file" >/dev/null
+                bash "$flow_state_script" transition --slug "$effective_slug" --event review_passed --result passed --report-file "$report_file" --engine Fixture --model fixture-model >/dev/null
                 ;;
             *)
                 fail "Unknown target status for workspace fixture: $target_status"
