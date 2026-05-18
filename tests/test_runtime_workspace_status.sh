@@ -19,9 +19,9 @@ test_plan_repos_status_shows_repo_scope() {
     create_plan_file "$owner" "multi-repo" "20260503" "multi-repo-status-test"
     (
         cd "$owner"
-        bash "$state_script" create --slug multi-repo --title "multi-repo-status-test" --plan-file ".ai-flow/plans/20260503-multi-repo.md" \
+        bash "$state_script" transition --slug "$state_slug" --event plan_created --title "multi-repo-status-test" --plan-file ".ai-flow/plans/20260503-multi-repo.md" \
             --repo-scope-json "$repo_scope" >/dev/null
-        bash "$state_script" record-plan-review --slug "$state_slug" --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$state_script" transition --slug "$state_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
     )
 
     (
@@ -50,7 +50,7 @@ test_plan_repos_status_shows_execution_scope() {
     create_plan_file "$owner" "exec-scope" "20260503" "exec-scope-test"
     (
         cd "$owner"
-        bash "$state_script" create --slug exec-scope --title "exec-scope-test" --plan-file ".ai-flow/plans/20260503-exec-scope.md" \
+        bash "$state_script" transition --slug 20260503-exec-scope --event plan_created --title "exec-scope-test" --plan-file ".ai-flow/plans/20260503-exec-scope.md" \
             --repo-scope-json "$repo_scope" >/dev/null
     )
 

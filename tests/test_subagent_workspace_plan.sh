@@ -26,7 +26,7 @@ test_plan_scoped_multi_repo_accepts_owner_root() {
     assert_file_exists "$workspace/.ai-flow/plans/${today}-workspace-perms.md"
 
     state_slug="${today}-workspace-perms"
-    assert_equals "3" "$(state_field "$workspace" "$state_slug" "schema_version")"
+    assert_equals "4" "$(state_field "$workspace" "$state_slug" "schema_version")"
     assert_equals "plan_repos" "$(state_field "$workspace" "$state_slug" "execution_scope.mode")"
     assert_equals "owner" "$(state_field "$workspace" "$state_slug" "execution_scope.repos.0.id")"
     assert_equals "." "$(state_field "$workspace" "$state_slug" "execution_scope.repos.0.path")"

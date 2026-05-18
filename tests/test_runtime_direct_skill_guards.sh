@@ -83,13 +83,13 @@ path.write_text(text, encoding='utf-8')
 PY
     (
         cd "$project"
-        bash "$state_script" record-review --slug "$state_slug" --mode regular --result failed --report-file ".ai-flow/reports/20260503-demo-review.md" >/dev/null
+        bash "$state_script" transition --slug "$state_slug" --event review_failed --result failed --report-file ".ai-flow/reports/20260503-demo-review.md" --engine Fixture --model fixture-model >/dev/null
         bash "$runtime_script" demo >"$temp_root/opt-fix.out"
     )
 
     assert_protocol_field "$temp_root/opt-fix.out" "RESULT" "success"
     assert_protocol_field "$temp_root/opt-fix.out" "STATE" "FIXING_REVIEW"
-    assert_equals "FIXING_REVIEW" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "FIXING_REVIEW" "$(state_field "$project" "20260503-demo" "current_status")"
     rm -rf "$temp_root"
 }
 
@@ -123,7 +123,7 @@ PY
 
     [ "$rc" -ne 0 ] || fail "Expected mixed blocking routes to fail"
     assert_contains "$temp_root/opt-mixed.out" "不能直接进入代码优化"
-    assert_equals "REVIEW_FAILED" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "REVIEW_FAILED" "$(state_field "$project" "20260503-demo" "current_status")"
     rm -rf "$temp_root"
 }
 

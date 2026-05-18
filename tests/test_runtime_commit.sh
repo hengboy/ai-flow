@@ -452,15 +452,12 @@ test_validate_groups_json_rejects_cross_repo_group() {
     scope="$(repo_scope_json "$workspace" "owner::." "repo-alpha::repo-alpha" "repo-beta::repo-beta")"
     (
         cd "$workspace"
-        bash "$runtime_script" create --slug cross-repo --title "cross repo" --plan-file ".ai-flow/plans/20260503-cross-repo.md" --repo-scope-json "$scope" >/dev/null
-        python3 - ".ai-flow/state/${state_slug}.json" <<'PY'
-import json, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-s = json.loads(p.read_text())
-s["current_status"] = "DONE"
-p.write_text(json.dumps(s))
-PY
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_created --title "cross repo" --plan-file ".ai-flow/plans/20260503-cross-repo.md" --repo-scope-json "$scope" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event execute_started >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event implementation_completed >/dev/null
+        write_review_report_fixture ".ai-flow/reports/20260503-cross-repo-review.md" "cross-repo" ".ai-flow/plans/20260503-cross-repo.md" "regular" "1" "passed" "cross repo"
+        bash "$runtime_script" transition --slug "$state_slug" --event review_passed --result passed --report-file ".ai-flow/reports/20260503-cross-repo-review.md" --engine Fixture --model fixture-model >/dev/null
     )
     printf 'alpha local\n' > "$workspace/repo-alpha/src/alpha.txt"
     printf 'beta local\n' > "$workspace/repo-beta/src/beta.txt"
@@ -1027,12 +1024,12 @@ test_plan_repos_commit_uses_dependency_order() {
     scope="$(repo_scope_json "$workspace" "owner::." "repo-alpha::repo-alpha" "repo-beta::repo-beta")"
     (
         cd "$workspace"
-        bash "$runtime_script" create --slug multi-demo --title "multi demo" --plan-file ".ai-flow/plans/20260503-multi-demo.md" --repo-scope-json "$scope" >/dev/null
-        bash "$runtime_script" record-plan-review --slug "$state_slug" --result passed --engine Fixture --model fixture-model >/dev/null
-        bash "$runtime_script" start-execute "$state_slug" >/dev/null
-        bash "$runtime_script" finish-implementation "$state_slug" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_created --title "multi demo" --plan-file ".ai-flow/plans/20260503-multi-demo.md" --repo-scope-json "$scope" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event execute_started >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event implementation_completed >/dev/null
         write_review_report_fixture ".ai-flow/reports/20260503-multi-demo-review.md" "multi-demo" ".ai-flow/plans/20260503-multi-demo.md" "regular" "1" "passed" "multi-demo"
-        bash "$runtime_script" record-review --slug "$state_slug" --mode regular --result passed --report-file ".ai-flow/reports/20260503-multi-demo-review.md" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event review_passed --result passed --report-file ".ai-flow/reports/20260503-multi-demo-review.md" --engine Fixture --model fixture-model >/dev/null
     )
     printf 'alpha local\n' > "$workspace/repo-alpha/src/alpha.txt"
     printf 'beta local\n' > "$workspace/repo-beta/src/beta.txt"
@@ -1079,12 +1076,12 @@ test_plan_repos_commit_falls_back_to_scope_order_without_dependency_table() {
     scope="$(repo_scope_json "$workspace" "owner::." "repo-alpha::repo-alpha" "repo-beta::repo-beta")"
     (
         cd "$workspace"
-        bash "$runtime_script" create --slug multi-no-dep --title "multi no dep" --plan-file ".ai-flow/plans/20260503-multi-no-dep.md" --repo-scope-json "$scope" >/dev/null
-        bash "$runtime_script" record-plan-review --slug "$state_slug" --result passed --engine Fixture --model fixture-model >/dev/null
-        bash "$runtime_script" start-execute "$state_slug" >/dev/null
-        bash "$runtime_script" finish-implementation "$state_slug" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_created --title "multi no dep" --plan-file ".ai-flow/plans/20260503-multi-no-dep.md" --repo-scope-json "$scope" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event execute_started >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event implementation_completed >/dev/null
         write_review_report_fixture ".ai-flow/reports/20260503-multi-no-dep-review.md" "multi-no-dep" ".ai-flow/plans/20260503-multi-no-dep.md" "regular" "1" "passed" "multi-no-dep"
-        bash "$runtime_script" record-review --slug "$state_slug" --mode regular --result passed --report-file ".ai-flow/reports/20260503-multi-no-dep-review.md" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event review_passed --result passed --report-file ".ai-flow/reports/20260503-multi-no-dep-review.md" --engine Fixture --model fixture-model >/dev/null
     )
     printf 'alpha local\n' > "$workspace/repo-alpha/src/alpha.txt"
     printf 'beta local\n' > "$workspace/repo-beta/src/beta.txt"
@@ -1122,15 +1119,12 @@ test_bound_prepare_skips_repo_without_changes() {
     scope="$(repo_scope_json "$workspace" "owner::." "repo-alpha::repo-alpha" "repo-beta::repo-beta")"
     (
         cd "$workspace"
-        bash "$runtime_script" create --slug skip-empty --title "skip empty" --plan-file ".ai-flow/plans/20260503-skip-empty.md" --repo-scope-json "$scope" >/dev/null
-        python3 - ".ai-flow/state/${state_slug}.json" <<'PY'
-import json, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-s = json.loads(p.read_text())
-s["current_status"] = "DONE"
-p.write_text(json.dumps(s))
-PY
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_created --title "skip empty" --plan-file ".ai-flow/plans/20260503-skip-empty.md" --repo-scope-json "$scope" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event execute_started >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event implementation_completed >/dev/null
+        write_review_report_fixture ".ai-flow/reports/20260503-skip-empty-review.md" "skip-empty" ".ai-flow/plans/20260503-skip-empty.md" "regular" "1" "passed" "skip empty"
+        bash "$runtime_script" transition --slug "$state_slug" --event review_passed --result passed --report-file ".ai-flow/reports/20260503-skip-empty-review.md" --engine Fixture --model fixture-model >/dev/null
     )
     (
         cd "$workspace/repo-alpha"
@@ -1400,15 +1394,12 @@ EOF
     write_plan_repos_commit_plan "$workspace" "non-git-root" "20260514" "1"
     (
         cd "$workspace"
-        bash "$runtime_script" create --slug non-git-root --title "non-git-root" --plan-file ".ai-flow/plans/20260514-non-git-root.md" --repo-scope-json "$scope" >/dev/null
-        python3 - ".ai-flow/state/${state_slug}.json" <<'PY'
-import json, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-s = json.loads(p.read_text())
-s["current_status"] = "DONE"
-p.write_text(json.dumps(s))
-PY
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_created --title "non-git-root" --plan-file ".ai-flow/plans/20260514-non-git-root.md" --repo-scope-json "$scope" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event execute_started >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event implementation_completed >/dev/null
+        write_review_report_fixture ".ai-flow/reports/20260514-non-git-root-review.md" "non-git-root" ".ai-flow/plans/20260514-non-git-root.md" "regular" "1" "passed" "non-git-root"
+        bash "$runtime_script" transition --slug "$state_slug" --event review_passed --result passed --report-file ".ai-flow/reports/20260514-non-git-root-review.md" --engine Fixture --model fixture-model >/dev/null
     )
     printf 'alpha change\n' > "$workspace/repo-alpha/src/alpha.txt"
     printf 'beta change\n' > "$workspace/repo-beta/src/beta.txt"

@@ -21,7 +21,7 @@ test_plan_coding_runtime_starts_execute_from_planned() {
     assert_protocol_field "$temp_root/plan-coding.out" "RESULT" "success"
     assert_protocol_field "$temp_root/plan-coding.out" "STATE" "IMPLEMENTING"
     assert_protocol_field "$temp_root/plan-coding.out" "NEXT" "ai-flow-plan-coding"
-    assert_equals "IMPLEMENTING" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "IMPLEMENTING" "$(state_field "$project" "20260503-demo" "current_status")"
     rm -rf "$temp_root"
 }
 
@@ -42,7 +42,7 @@ test_plan_coding_runtime_starts_fix_from_review_failed() {
 
     assert_protocol_field "$temp_root/fix-coding.out" "RESULT" "success"
     assert_protocol_field "$temp_root/fix-coding.out" "STATE" "FIXING_REVIEW"
-    assert_equals "FIXING_REVIEW" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "FIXING_REVIEW" "$(state_field "$project" "20260503-demo" "current_status")"
     rm -rf "$temp_root"
 }
 
@@ -68,7 +68,7 @@ test_plan_coding_runtime_rejects_missing_required_reads() {
     [ "$rc" -ne 0 ] || fail "Expected missing required_reads to fail"
     assert_protocol_field "$temp_root/missing-read.out" "RESULT" "failed"
     assert_contains "$temp_root/missing-read.out" "required_reads 文件不存在"
-    assert_equals "PLANNED" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "PLANNED" "$(state_field "$project" "20260503-demo" "current_status")"
     rm -rf "$temp_root"
 }
 
@@ -94,7 +94,7 @@ test_plan_coding_runtime_rejects_protected_path_in_plan_boundary() {
     [ "$rc" -ne 0 ] || fail "Expected protected_paths to fail"
     assert_protocol_field "$temp_root/protected.out" "RESULT" "failed"
     assert_contains "$temp_root/protected.out" "命中 protected_paths"
-    assert_equals "PLANNED" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "PLANNED" "$(state_field "$project" "20260503-demo" "current_status")"
     rm -rf "$temp_root"
 }
 
@@ -120,7 +120,7 @@ test_plan_coding_runtime_uses_workspace_scope_rules() {
 
     [ "$rc" -ne 0 ] || fail "Expected workspace required_reads to fail"
     assert_contains "$temp_root/workspace-required.out" "required_reads 文件不存在"
-    assert_equals "PLANNED" "$(state_field "$workspace" "ws-demo" "current_status")"
+    assert_equals "PLANNED" "$(state_field "$workspace" "20260503-ws-demo" "current_status")"
     rm -rf "$temp_root"
 }
 

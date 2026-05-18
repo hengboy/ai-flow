@@ -382,7 +382,7 @@ test_plan_missing_runtime_fails_deterministically() {
     rm -rf "$temp_root"
 }
 
-test_flow_state_create_normalizes_slug_from_plan_file_date_prefix() {
+test_flow_state_requires_full_dated_slug() {
     local temp_root project state_script out
     temp_root=$(make_temp_root)
     project="$temp_root/project"
@@ -393,14 +393,17 @@ test_flow_state_create_normalizes_slug_from_plan_file_date_prefix() {
 
     (
         cd "$project"
-        bash "$state_script" create --slug dated-demo --title "dated demo" --plan-file .ai-flow/plans/20260503-dated-demo.md >"$temp_root/create.out"
-    )
+        set +e
+        bash "$state_script" transition --slug dated-demo --event plan_created --title "dated demo" --plan-file .ai-flow/plans/20260503-dated-demo.md --repo-scope-json "$(repo_scope_json "$project" "owner::.")" >"$temp_root/create.out" 2>&1
+        rc=$?
+        set -e
+        [ "$rc" -ne 0 ] || fail "Expected undated slug to be rejected"
+    ) || true
     out="$temp_root/create.out"
 
-    assert_contains "$out" ".ai-flow/state/20260503-dated-demo.json"
-    assert_file_exists "$project/.ai-flow/state/20260503-dated-demo.json"
+    assert_contains "$out" "slug 必须是完整 dated slug"
+    assert_file_not_exists "$project/.ai-flow/state/20260503-dated-demo.json"
     assert_file_not_exists "$project/.ai-flow/state/dated-demo.json"
-    assert_equals "20260503-dated-demo" "$(state_field "$project" "20260503-dated-demo" "slug")"
     rm -rf "$temp_root"
 }
 
@@ -451,4 +454,4 @@ test_plan_generation_injects_rule_prompt_and_required_reads
 test_plan_generation_state_file_notice_uses_date_prefix
 test_plan_generation_fails_when_required_read_missing
 test_plan_missing_runtime_fails_deterministically
-test_flow_state_create_normalizes_slug_from_plan_file_date_prefix
+test_flow_state_requires_full_dated_slug

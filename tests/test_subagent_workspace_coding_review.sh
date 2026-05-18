@@ -112,7 +112,7 @@ test_workspace_coding_review_produces_single_report() {
 
     report_file=$(protocol_field "$out" "ARTIFACT")
     assert_file_exists "$workspace/$report_file"
-    assert_equals "DONE" "$(state_field "$workspace" "ws-report" "current_status")"
+    assert_equals "DONE" "$(state_field "$workspace" "20260503-ws-report" "current_status")"
     rm -rf "$temp_root"
 }
 
@@ -198,10 +198,10 @@ test_workspace_coding_review_from_undeclared_repo_keeps_single_repo_mode() {
         git add .
         git commit -q -m init
         printf 'changed\n' > src/review-target.txt
-        bash "$runtime_script" create --slug solo --title solo --plan-file .ai-flow/plans/20260503-solo.md >/dev/null
-        bash "$runtime_script" record-plan-review --slug "$state_slug" --result passed --engine Fixture --model fixture-model >/dev/null
-        bash "$runtime_script" start-execute "$state_slug" >/dev/null
-        bash "$runtime_script" finish-implementation "$state_slug" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_created --title solo --plan-file .ai-flow/plans/20260503-solo.md --repo-scope-json "$(repo_scope_json "$workspace/standalone" "owner::.")" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event plan_review_passed --result passed --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event execute_started >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event implementation_completed >/dev/null
     )
 
     (

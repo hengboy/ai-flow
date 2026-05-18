@@ -20,7 +20,7 @@ test_regular_passed_with_notes_to_done() {
         FAKE_CODE_REVIEW_RESULT=passed_with_notes run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/review-notes.out"
     )
 
-    assert_equals "DONE" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "DONE" "$(state_field "$project" "20260503-demo" "current_status")"
     assert_protocol_field "$temp_root/review-notes.out" "RESULT" "success"
     assert_protocol_field "$temp_root/review-notes.out" "REVIEW_RESULT" "passed_with_notes"
     assert_protocol_field "$temp_root/review-notes.out" "STATE" "DONE"
@@ -28,9 +28,9 @@ test_regular_passed_with_notes_to_done() {
     assert_contains "$project/.ai-flow/reports/20260503-demo-review.md" "> 审查时间："
     assert_contains "$project/.ai-flow/reports/20260503-demo-review.md" "> 审查工具："
     assert_contains "$project/.ai-flow/reports/20260503-demo-review.md" "> 规则标识：\`review\`、\`fix-review\`、\`verify-before-done\`"
-    assert_equals "review_passed" "$(state_field "$project" "demo" "transitions.4.event")"
-    assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "demo" "transitions.4.actor")"
-    assert_equals "passed_with_notes" "$(state_field "$project" "demo" "transitions.4.artifacts.result")"
+    assert_equals "review_passed" "$(state_field "$project" "20260503-demo" "transitions.4.event")"
+    assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "20260503-demo" "transitions.4.actor")"
+    assert_equals "passed_with_notes" "$(state_field "$project" "20260503-demo" "transitions.4.payload.result")"
     assert_equals "1" "$(wc -l < "$temp_root/codex.review.calls" | tr -d ' ')"
     assert_file_not_exists "$temp_root/opencode.review.calls"
     rm -rf "$temp_root"
@@ -79,11 +79,11 @@ test_regular_failed_to_review_failed() {
         FAKE_CODE_REVIEW_RESULT=failed run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/review-failed.out"
     )
 
-    assert_equals "REVIEW_FAILED" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "REVIEW_FAILED" "$(state_field "$project" "20260503-demo" "current_status")"
     assert_protocol_field "$temp_root/review-failed.out" "REVIEW_RESULT" "failed"
     assert_protocol_field "$temp_root/review-failed.out" "NEXT" "ai-flow-plan-coding"
-    assert_equals "review_failed" "$(state_field "$project" "demo" "transitions.4.event")"
-    assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "demo" "transitions.4.actor")"
+    assert_equals "review_failed" "$(state_field "$project" "20260503-demo" "transitions.4.event")"
+    assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "20260503-demo" "transitions.4.actor")"
     rm -rf "$temp_root"
 }
 
@@ -105,7 +105,7 @@ test_regular_failed_routes_to_optimize_when_all_blockers_are_optimize() {
             run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/review-failed-optimize.out"
     )
 
-    assert_equals "REVIEW_FAILED" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "REVIEW_FAILED" "$(state_field "$project" "20260503-demo" "current_status")"
     assert_protocol_field "$temp_root/review-failed-optimize.out" "REVIEW_RESULT" "failed"
     assert_protocol_field "$temp_root/review-failed-optimize.out" "NEXT" "ai-flow-code-optimize"
     rm -rf "$temp_root"
@@ -129,7 +129,7 @@ test_regular_failed_routes_to_coding_when_blockers_are_mixed() {
             run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/review-failed-mixed.out"
     )
 
-    assert_equals "REVIEW_FAILED" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "REVIEW_FAILED" "$(state_field "$project" "20260503-demo" "current_status")"
     assert_protocol_field "$temp_root/review-failed-mixed.out" "REVIEW_RESULT" "failed"
     assert_protocol_field "$temp_root/review-failed-mixed.out" "NEXT" "ai-flow-plan-coding"
     rm -rf "$temp_root"
@@ -152,10 +152,10 @@ test_recheck_pass_keeps_done() {
         FAKE_CODE_REVIEW_RESULT=passed run_with_fake_coding_review_agents "$temp_root" bash "$executor" demo >"$temp_root/recheck.out"
     )
 
-    assert_equals "DONE" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "DONE" "$(state_field "$project" "20260503-demo" "current_status")"
     assert_protocol_field "$temp_root/recheck.out" "REVIEW_RESULT" "passed"
-    assert_equals "recheck_passed" "$(state_field "$project" "demo" "transitions.5.event")"
-    assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "demo" "transitions.5.actor")"
+    assert_equals "recheck_passed" "$(state_field "$project" "20260503-demo" "transitions.5.event")"
+    assert_equals "ai-flow-codex-plan-coding-review" "$(state_field "$project" "20260503-demo" "transitions.5.actor")"
     rm -rf "$temp_root"
 }
 
@@ -179,7 +179,7 @@ test_passed_with_notes_ignores_status_guide_text() {
     assert_protocol_field "$temp_root/review-status-note.out" "RESULT" "success"
     assert_protocol_field "$temp_root/review-status-note.out" "REVIEW_RESULT" "passed_with_notes"
     assert_protocol_field "$temp_root/review-status-note.out" "STATE" "DONE"
-    assert_equals "DONE" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "DONE" "$(state_field "$project" "20260503-demo" "current_status")"
     rm -rf "$temp_root"
 }
 
@@ -249,7 +249,7 @@ test_single_state_without_slug_still_binds_and_rechecks() {
     assert_protocol_field "$temp_root/auto-bind-recheck.out" "STATE" "DONE"
     assert_protocol_field "$temp_root/auto-bind-recheck.out" "REVIEW_RESULT" "passed"
     assert_not_contains "$temp_root/auto-bind-recheck.out" "standalone"
-    assert_equals "recheck_passed" "$(state_field "$project" "demo" "transitions.5.event")"
+    assert_equals "recheck_passed" "$(state_field "$project" "20260503-demo" "transitions.5.event")"
     rm -rf "$temp_root"
 }
 
@@ -274,7 +274,7 @@ test_explicit_standalone_review_ignores_existing_state_files() {
     assert_protocol_field "$temp_root/standalone-explicit.out" "NEXT" "none"
     assert_contains "$temp_root/standalone-explicit.out" "standalone"
     assert_file_exists "$project/.ai-flow/reports/standalone/$(basename "$(protocol_field "$temp_root/standalone-explicit.out" "ARTIFACT")")"
-    assert_equals "DONE" "$(state_field "$project" "demo" "current_status")"
+    assert_equals "DONE" "$(state_field "$project" "20260503-demo" "current_status")"
     rm -rf "$temp_root"
 }
 
@@ -880,18 +880,17 @@ test_root_cause_gate_and_fallback() {
     (
         cd "$project"
         write_review_report_fixture ".ai-flow/reports/20260503-demo-review.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "1" "failed" "demo"
-        bash "$runtime_script" record-review --slug "$state_slug" --mode regular --result failed --report-file .ai-flow/reports/20260503-demo-review.md >/dev/null || true
+        bash "$runtime_script" transition --slug "$state_slug" --event review_failed --result failed --report-file .ai-flow/reports/20260503-demo-review.md --engine Fixture --model fixture-model >/dev/null || true
     ) >/dev/null 2>&1 || true
 
     (
         cd "$project"
-        bash "$runtime_script" repair --slug "$state_slug" --status REVIEW_FAILED --note "fixture align" >/dev/null
-        bash "$runtime_script" start-fix "$state_slug" >/dev/null
-        bash "$runtime_script" finish-fix "$state_slug" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event fix_started >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event fix_completed >/dev/null
         write_review_report_fixture ".ai-flow/reports/20260503-demo-review-v2.md" "demo" ".ai-flow/plans/20260503-demo.md" "regular" "2" "failed" "demo"
-        bash "$runtime_script" record-review --slug "$state_slug" --mode regular --result failed --report-file .ai-flow/reports/20260503-demo-review-v2.md >/dev/null
-        bash "$runtime_script" start-fix "$state_slug" >/dev/null
-        bash "$runtime_script" finish-fix "$state_slug" >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event review_failed --result failed --report-file .ai-flow/reports/20260503-demo-review-v2.md --engine Fixture --model fixture-model >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event fix_started >/dev/null
+        bash "$runtime_script" transition --slug "$state_slug" --event fix_completed >/dev/null
     )
 
     set +e
