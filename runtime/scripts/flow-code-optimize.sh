@@ -72,30 +72,9 @@ fail_protocol() {
 }
 
 state_field() {
-    local state_file="$1"
+    local slug="$1"
     local field="$2"
-    python3 - "$state_file" "$field" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-value = state
-for part in sys.argv[2].split("."):
-    if value is None:
-        break
-    if isinstance(value, dict):
-        value = value.get(part)
-    elif isinstance(value, list) and part.isdigit():
-        index = int(part)
-        value = value[index] if 0 <= index < len(value) else None
-    else:
-        value = None
-        break
-if value is None:
-    sys.exit(1)
-print(value)
-PY
+    bash "$FLOW_STATE_SH" show --slug "$slug" --field "$field"
 }
 
 collect_rule_repo_args() {
@@ -187,7 +166,7 @@ else
 fi
 
 SLUG="$(basename "$STATE_FILE" .json)"
-CURRENT_STATUS="$(state_field "$STATE_FILE" "current_status")"
+CURRENT_STATUS="$(state_field "$SLUG" "current_status")"
 PROTOCOL_RESULT="failed"
 PROTOCOL_STATE="$CURRENT_STATUS"
 PROTOCOL_NEXT="none"
@@ -220,10 +199,10 @@ case "$CURRENT_STATUS" in
         PROTOCOL_SUMMARY="当前状态为 AWAITING_REVIEW，可在不推进状态的前提下执行优化。"
         ;;
     REVIEW_FAILED)
-        REPORT_FILE="$(state_field "$STATE_FILE" "last_review.report_file")"
+        REPORT_FILE="$(state_field "$SLUG" "derived.last_review.report_file")"
         case "$(report_all_blocking_routes_are_optimize "$PROJECT_DIR/$REPORT_FILE")" in
             optimize-only)
-                bash "$FLOW_STATE_SH" start-fix "$SLUG" >/dev/null
+                bash "$FLOW_STATE_SH" transition --slug "$SLUG" --event fix_started >/dev/null
                 PROTOCOL_RESULT="success"
                 PROTOCOL_STATE="FIXING_REVIEW"
                 PROTOCOL_NEXT="ai-flow-code-optimize"
@@ -241,7 +220,7 @@ case "$CURRENT_STATUS" in
         esac
         ;;
     FIXING_REVIEW)
-        REPORT_FILE="$(state_field "$STATE_FILE" "active_fix.report_file")"
+        REPORT_FILE="$(state_field "$SLUG" "derived.active_fix.report_file")"
         case "$(report_all_blocking_routes_are_optimize "$PROJECT_DIR/$REPORT_FILE")" in
             optimize-only)
                 PROTOCOL_RESULT="success"

@@ -69,7 +69,7 @@ candidate_state_tsv() {
     for path in "$STATE_DIR"/*.json; do
         slug="$(basename "$path" .json)"
         error_file="$(mktemp)"
-        if bash "$FLOW_STATE_SH" validate "$slug" >/dev/null 2>"$error_file"; then
+        if bash "$FLOW_STATE_SH" validate --slug "$slug" >/dev/null 2>"$error_file"; then
             printf '%s\n' "$path" >>"$valid_list"
         else
             warning="$(tr '\n' ' ' <"$error_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
@@ -213,7 +213,7 @@ dirty_check() {
     [ -f "$state_file" ] || fail "找不到状态文件: $state_file"
 
     error_file="$(mktemp)"
-    if ! bash "$FLOW_STATE_SH" validate "$slug" >/dev/null 2>"$error_file"; then
+    if ! bash "$FLOW_STATE_SH" validate --slug "$slug" >/dev/null 2>"$error_file"; then
         local warning
         warning="$(tr '\n' ' ' <"$error_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
         rm -f "$error_file"

@@ -16,6 +16,12 @@ if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
     exit 1
 fi
 
+FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
+if [ ! -f "$FLOW_STATE_SH" ]; then
+    echo "错误: 缺少 flow-state 脚本: $FLOW_STATE_SH" >&2
+    exit 1
+fi
+
 if [ ! -f "$RULE_LOADER_SH" ]; then
     echo "错误: 缺少 rule loader: $RULE_LOADER_SH" >&2
     exit 1
@@ -54,27 +60,9 @@ FLOW_DIR="$PROJECT_DIR/.ai-flow"
 CHANGE_TEXT="$2"
 
 state_field() {
-    local state_file="$1"
+    local slug="$1"
     local field="$2"
-    python3 - "$state_file" "$field" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-value = state
-for part in sys.argv[2].split("."):
-    if value is None:
-        break
-    if isinstance(value, dict):
-        value = value.get(part)
-    else:
-        value = None
-        break
-if value is None:
-    sys.exit(1)
-print(value)
-PY
+    bash "$FLOW_STATE_SH" show --slug "$slug" --field "$field"
 }
 
 collect_rule_repo_args() {
@@ -110,7 +98,7 @@ elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
     echo "匹配到多个状态，请选择："
     for i in "${!MATCHED_STATES[@]}"; do
         slug=$(basename "${MATCHED_STATES[$i]}" .json)
-        status=$(state_field "${MATCHED_STATES[$i]}" "current_status")
+        status=$(state_field "$slug" "current_status")
         echo "  $((i + 1)). $slug [$status] (${MATCHED_STATES[$i]})"
     done
     read -rp "请选择编号 [1-${#MATCHED_STATES[@]}]: " choice
@@ -145,7 +133,9 @@ if ! REQUIRED_READS_OUTPUT="$(render_required_reads_block "$RULE_BUNDLE_JSON" 2>
     exit 1
 fi
 
-PLAN_FILE=$(state_field "$STATE_FILE" "plan_file")
+SLUG="$(basename "$STATE_FILE" .json)"
+PLAN_FILE=$(state_field "$SLUG" "plan_file")
+CURRENT_STATUS="$(state_field "$SLUG" "current_status")"
 case "$PLAN_FILE" in
     /*) ;;
     *) PLAN_FILE="$PROJECT_DIR/$PLAN_FILE" ;;
@@ -268,5 +258,16 @@ if not inserted:
 
 path.write_text("\n".join(output) + "\n", encoding="utf-8")
 PY
+
+case "$CURRENT_STATUS" in
+    PLANNED|IMPLEMENTING)
+        bash "$FLOW_STATE_SH" transition --slug "$SLUG" --event plan_reopened --note "$CHANGE_TEXT" >/dev/null
+        ;;
+    AWAITING_REVIEW|DONE|REVIEW_FAILED|FIXING_REVIEW)
+        bash "$FLOW_STATE_SH" transition --slug "$SLUG" --event implementation_reopened --note "$CHANGE_TEXT" >/dev/null
+        ;;
+    *)
+        ;;
+esac
 
 echo ">>> 已记录需求变更: $PLAN_FILE"

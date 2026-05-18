@@ -54,15 +54,18 @@ fi
 
 VALID_LIST="$(mktemp)"
 INVALID_LIST="$(mktemp)"
-trap 'rm -f "$VALID_LIST" "$INVALID_LIST"' EXIT
+VALID_SNAPSHOT_DIR="$(mktemp -d)"
+trap 'rm -f "$VALID_LIST" "$INVALID_LIST"; rm -rf "$VALID_SNAPSHOT_DIR"' EXIT
 
 if [ -d "$STATE_DIR" ]; then
     shopt -s nullglob
     for path in "$STATE_DIR"/*.json; do
         slug="$(basename "$path" .json)"
         error_file="$(mktemp)"
-        if "$FLOW_STATE_SH" validate "$slug" >/dev/null 2>"$error_file"; then
-            printf '%s\n' "$path" >>"$VALID_LIST"
+        if "$FLOW_STATE_SH" validate --slug "$slug" >/dev/null 2>"$error_file"; then
+            snapshot="$VALID_SNAPSHOT_DIR/$slug.json"
+            "$FLOW_STATE_SH" show --slug "$slug" >"$snapshot"
+            printf '%s\n' "$snapshot" >>"$VALID_LIST"
         else
             error_text_b64="$(python3 - "$error_file" <<'PY'
 import base64
@@ -139,7 +142,7 @@ else:
         for idx, line in enumerate(error_lines):
             prefix = "    detail: " if idx == 0 else "            "
             print(f"{prefix}{line}")
-        print(f"    fix: {flow_state_sh} normalize --slug {slug}")
+        print(f"    fix: 状态文件无效，请删除后重建: {slug}")
 print()
 
 print("--- 状态文件 ---")
@@ -147,7 +150,8 @@ if not states:
     print("  (无)")
 else:
     for state in states:
-        latest = state["latest_recheck_review_file"] or state["latest_regular_review_file"]
+        derived = state.get("derived") or {}
+        latest = derived.get("latest_recheck_review_file") or derived.get("latest_regular_review_file")
         scope_info = ""
         exec_scope = state.get("execution_scope", {})
         if isinstance(exec_scope, dict):
@@ -182,7 +186,8 @@ for status, icon, label in status_labels:
         print("  (无)")
         continue
     for state in matched:
-        latest = state["latest_recheck_review_file"] or state["latest_regular_review_file"]
+        derived = state.get("derived") or {}
+        latest = derived.get("latest_recheck_review_file") or derived.get("latest_regular_review_file")
         detail = f"report: {rel(latest)}" if latest else "report: -"
         if status == "AWAITING_PLAN_REVIEW":
             next_action = "ai-flow-plan-review"

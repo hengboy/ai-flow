@@ -77,7 +77,9 @@ if [ ! -f "$FLOW_UTILS_PY" ]; then
 fi
 
 state_field() {
-    python3 "$FLOW_UTILS_PY" get-json-field "$1" "$2"
+    local slug="$1"
+    local field="$2"
+    bash "$FLOW_STATE_SH" show --slug "$slug" --field "$field"
 }
 
 collect_rule_repo_args() {
@@ -105,8 +107,8 @@ else
 fi
 
 SLUG="$(basename "$STATE_FILE" .json)"
-CURRENT_STATUS="$(state_field "$STATE_FILE" "current_status")"
-PLAN_FILE="$(state_field "$STATE_FILE" "plan_file")"
+CURRENT_STATUS="$(state_field "$SLUG" "current_status")"
+PLAN_FILE="$(state_field "$SLUG" "plan_file")"
 case "$PLAN_FILE" in
     /*) ;;
     *) PLAN_FILE="$PROJECT_DIR/$PLAN_FILE" ;;
@@ -165,12 +167,12 @@ fi
 
 case "$CURRENT_STATUS" in
     PLANNED)
-        bash "$FLOW_STATE_SH" start-execute "$SLUG" >/dev/null
+        bash "$FLOW_STATE_SH" transition --slug "$SLUG" --event execute_started >/dev/null
         PROTOCOL_STATE="IMPLEMENTING"
         PROTOCOL_SUMMARY="已进入 IMPLEMENTING，可按计划继续执行。"
         ;;
     REVIEW_FAILED)
-        bash "$FLOW_STATE_SH" start-fix "$SLUG" >/dev/null
+        bash "$FLOW_STATE_SH" transition --slug "$SLUG" --event fix_started >/dev/null
         PROTOCOL_STATE="FIXING_REVIEW"
         PROTOCOL_SUMMARY="已进入 FIXING_REVIEW，可按审查结论继续修复。"
         ;;
