@@ -319,28 +319,19 @@ PY
 
 load_state_context() {
     local state_file="$1"
-    python3 - "$state_file" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-state = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-review_rounds = state.get("review_rounds") or {}
-last_review = state.get("last_review") or {}
-fields = [
-    state.get("current_status", ""),
-    state.get("plan_file", ""),
-    state.get("title", ""),
-    review_rounds.get("regular", 0),
-    review_rounds.get("recheck", 0),
-    state.get("latest_regular_review_file") or "",
-    state.get("latest_recheck_review_file") or "",
-    last_review.get("result") or "",
-    last_review.get("report_file") or "",
-]
-for value in fields:
-    print(value)
-PY
+    local slug
+    slug="$(basename "$state_file" .json)"
+    {
+        bash "$FLOW_STATE_SH" show --slug "$slug" --field current_status
+        bash "$FLOW_STATE_SH" show --slug "$slug" --field plan_file
+        bash "$FLOW_STATE_SH" show --slug "$slug" --field title
+        bash "$FLOW_STATE_SH" show --slug "$slug" --field derived.review_rounds.regular
+        bash "$FLOW_STATE_SH" show --slug "$slug" --field derived.review_rounds.recheck
+        bash "$FLOW_STATE_SH" show --slug "$slug" --field derived.latest_regular_review_file 2>/dev/null || true
+        bash "$FLOW_STATE_SH" show --slug "$slug" --field derived.latest_recheck_review_file 2>/dev/null || true
+        bash "$FLOW_STATE_SH" show --slug "$slug" --field derived.last_review.result 2>/dev/null || true
+        bash "$FLOW_STATE_SH" show --slug "$slug" --field derived.last_review.report_file 2>/dev/null || true
+    }
 }
 
 load_plan_repo_scope() {
@@ -1027,11 +1018,10 @@ plan_text = Path(sys.argv[2]).read_text(encoding="utf-8")
 
 round2_failure_at = None
 for transition in state.get("transitions", []):
-    artifacts = transition.get("artifacts") or {}
+    payload = transition.get("payload") or {}
     if (
         transition.get("event") == "review_failed"
-        and artifacts.get("mode") == "regular"
-        and artifacts.get("round") == 2
+        and payload.get("round") == 2
     ):
         round2_failure_at = datetime.fromisoformat(transition["at"])
         break
@@ -1846,9 +1836,22 @@ if [ "$IS_STANDALONE" -eq 1 ]; then
     PROTOCOL_REVIEW_RESULT="$RESULT"
 else
     echo ">>> 更新状态文件..."
-    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" record-review \
+    if [ "$REVIEW_MODE" = "regular" ]; then
+        if [ "$RESULT" = "failed" ]; then
+            REVIEW_EVENT="review_failed"
+        else
+            REVIEW_EVENT="review_passed"
+        fi
+    else
+        if [ "$RESULT" = "failed" ]; then
+            REVIEW_EVENT="recheck_failed"
+        else
+            REVIEW_EVENT="recheck_passed"
+        fi
+    fi
+    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" transition \
         --slug "$SLUG" \
-        --mode "$REVIEW_MODE" \
+        --event "$REVIEW_EVENT" \
         --result "$RESULT" \
         --report-file "$REPORT_FILE" \
         --engine "$ACTIVE_ENGINE" \
@@ -1919,7 +1922,7 @@ else
             PROTOCOL_NEXT="$NEXT_ON_FAILURE"
             ;;
         *)
-            fail_protocol "record-review 后出现意外状态 [$UPDATED_STATUS]"
+            fail_protocol "transition 后出现意外状态 [$UPDATED_STATUS]"
             ;;
     esac
 fi

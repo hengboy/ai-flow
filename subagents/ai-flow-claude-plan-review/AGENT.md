@@ -32,7 +32,7 @@ color: blue
 - 审核范围包括原始需求一致性、结构完整性、可执行性、测试闭环、文件边界和 workspace 合规性。
 - 审核结果只能是 `passed`、`passed_with_notes` 或 `failed`。`passed_with_notes` 只用于无阻断偏差但有可选建议的场景。
 - 必须回写 plan 的 `## 8. 计划审核记录`，包含 `8.1 当前审核结论`、`8.2 偏差与建议`、`8.3 审核历史`。
-- 状态只能通过 `$HOME/.config/ai-flow/scripts/flow-state.sh record-plan-review` 推进：`passed*` 到 `PLANNED`，`failed` 到 `PLAN_REVIEW_FAILED`。
+- 状态只能通过 `$HOME/.config/ai-flow/scripts/flow-state.sh transition` 推进：`plan_review_passed` 到 `PLANNED`，`plan_review_failed` 到 `PLAN_REVIEW_FAILED`。
 - 本代理不使用外部 CLI（`codex exec` / `opencode run`），直接使用内置能力完成工作；与 `ai-flow-codex-plan-review` 形成降级配对。
 
 ### 固定输出协议

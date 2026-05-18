@@ -1775,12 +1775,18 @@ PY
         "$( [ "$REVIEW_EXECUTE_READY" = "yes" ] && echo "是" || echo "否" )"
     validate_plan_repos_match_state "$PLAN_FILE" "$STATE_FILE"
 
-    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" record-plan-review \
+    if [ "$REVIEW_RESULT" = "passed" ] || [ "$REVIEW_RESULT" = "passed_with_notes" ]; then
+        REVIEW_EVENT="plan_review_passed"
+    else
+        REVIEW_EVENT="plan_review_failed"
+    fi
+    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" transition \
         --slug "$SLUG" \
+        --event "$REVIEW_EVENT" \
         --result "$REVIEW_RESULT" \
         --engine "$PLAN_ENGINE_NAME" \
         --model "$PLAN_ENGINE_MODEL" >/dev/null
-    CURRENT_STATUS=$("$FLOW_STATE_SH" show "$SLUG" --field current_status)
+    CURRENT_STATUS=$("$FLOW_STATE_SH" show --slug "$SLUG" --field current_status)
     PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
     PROTOCOL_STATE="$CURRENT_STATUS"
     PROTOCOL_REVIEW_RESULT="$REVIEW_RESULT"
@@ -2081,8 +2087,14 @@ else
     validate_plan_structure "$PLAN_FILE" "draft"
 
     echo ">>> 初始化状态文件..."
-    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" create --slug "${DATE_PREFIX}-${SLUG}" --title "$PLAN_TITLE" --plan-file "$PLAN_FILE" --created-at "$PLAN_CREATED_AT" --repo-scope-json "$REPO_SCOPE_JSON"
-    PLAN_STATUS=$("$FLOW_STATE_SH" show "${DATE_PREFIX}-${SLUG}" --field current_status)
+    AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" transition \
+        --slug "${DATE_PREFIX}-${SLUG}" \
+        --event plan_created \
+        --title "$PLAN_TITLE" \
+        --plan-file "$PLAN_FILE" \
+        --repo-scope-json "$REPO_SCOPE_JSON" \
+        --at "$PLAN_CREATED_AT"
+    PLAN_STATUS=$("$FLOW_STATE_SH" show --slug "${DATE_PREFIX}-${SLUG}" --field current_status)
     echo "    状态已验证为 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"
     PROTOCOL_NEXT="ai-flow-plan-review"

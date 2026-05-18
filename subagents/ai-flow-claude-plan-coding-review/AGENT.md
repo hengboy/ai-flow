@@ -35,7 +35,7 @@ color: cyan
 - 审查报告写入 `.ai-flow/reports/{YYYYMMDD}-{slug}-review.md`，并包含 `1.2 定向验证执行证据`、`3.6 缺陷族覆盖度`、缺陷严重级别和可选标记；非文档代码变更必须包含实际验证证据。
 - 绑定模式下，审查报告头部元数据必须完整保留以下 9 项，不得省略、改名或改成其他格式：`审查日期`、`审查时间`、`需求简称`、`审查模式`、`审查轮次`、`审查结果`、`对比计划`、`审查工具`、`规则标识`。
 - standalone 模式下，审查报告头部元数据至少必须保留以下 6 项：`审查日期`、`审查时间`、`审查模式`、`审查结果`、`对比计划`、`审查工具`。
-- 审查结果只能是 `passed`、`passed_with_notes` 或 `failed`。状态只能通过 `$HOME/.config/ai-flow/scripts/flow-state.sh record-review` 推进：`failed` 到 `REVIEW_FAILED`，`passed*` 到或保持 `DONE`。
+- 审查结果只能是 `passed`、`passed_with_notes` 或 `failed`。状态只能通过 `$HOME/.config/ai-flow/scripts/flow-state.sh transition` 推进：`review_failed` / `recheck_failed` 到 `REVIEW_FAILED`，`review_passed` / `recheck_passed` 到或保持 `DONE`。
 - 本代理不使用外部 CLI（`codex exec` / `opencode run`），直接使用内置能力完成工作；与 `ai-flow-codex-plan-coding-review` 形成降级配对。
 
 ### 固定输出协议

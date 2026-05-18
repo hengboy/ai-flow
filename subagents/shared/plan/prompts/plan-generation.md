@@ -70,7 +70,7 @@ __AI_FLOW_REPO_SCOPE_CONTEXT__
 7. 直接输出完整的计划 Markdown 内容，不要包含其他解释文字
 8. 本计划是证据文档，不承担流程状态语义；流程状态只写入 .ai-flow/state/{YYYYMMDD}-__AI_FLOW_SLUG__.json
    - 不得为 .ai-flow/state/{YYYYMMDD}-__AI_FLOW_SLUG__.json 设计任何 JSON 结构、字段列表、样例内容或手工维护步骤
-   - 该状态文件只能由 flow-state.sh 维护，固定字段只有：schema_version、slug、title、current_status、created_at、updated_at、plan_file、review_rounds、latest_regular_review_file、latest_recheck_review_file、last_review、active_fix、transitions
+   - 该状态文件只能由 flow-state.sh 维护，固定字段只有：schema_version、slug、title、plan_file、execution_scope、current_status、created_at、updated_at、transitions
    - 如果需要记录步骤进度、验证结果、变更登记，写在计划文档自身（Step 复选框、测试计划、需求变更记录），不要写进 state JSON 设计
 9. 所有规则、算法、接口结构必须自包含，不能引用 plan 外的代码或文档
 10. “**前置阅读**”字段是可选的，仅在需要参考现有代码范式（如新增文件要遵循已有模式、修改接口需了解调用方）时填写，说明为什么要读和了解什么
