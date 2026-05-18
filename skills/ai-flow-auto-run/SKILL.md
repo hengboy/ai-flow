@@ -69,7 +69,7 @@ $HOME/.config/ai-flow/scripts/flow-plan-coding.sh <slug>
    - 更新复选框
    - 执行新鲜验证
    - 处理未完成任务确认逻辑
-4. 完成后仅允许通过 `flow-state.sh finish-implementation <slug>` 推进到 `AWAITING_REVIEW`
+4. 完成后仅允许通过 `flow-state.sh transition --slug <dated-slug> --event implementation_completed` 推进到 `AWAITING_REVIEW`
 
 ### B. `AWAITING_REVIEW`
 
@@ -94,7 +94,7 @@ $HOME/.config/ai-flow/scripts/flow-plan-coding.sh <slug>
    - 修阻塞缺陷
    - 补最小必要测试/验证
    - 更新旧报告 `## 6. 缺陷修复追踪`
-4. 完成后仅允许通过 `flow-state.sh finish-fix <slug>` 回到 `AWAITING_REVIEW`
+4. 完成后仅允许通过 `flow-state.sh transition --slug <dated-slug> --event fix_completed` 回到 `AWAITING_REVIEW`
 
 ### D. `REVIEW_FAILED` / `FIXING_REVIEW`，且失败路由为 `ai-flow-code-optimize`
 
@@ -107,7 +107,7 @@ $HOME/.config/ai-flow/scripts/flow-code-optimize.sh <slug>
 2. 若 runtime 失败，直接停止
 3. 主 agent 自动处理最近失败报告中**全部阻塞缺陷**里路由到 `ai-flow-code-optimize` 的项
 4. `Minor` / `[可选]` 项默认不自动接单，除非它是修复阻塞项的必要配套
-5. 完成后仅允许通过 `flow-state.sh finish-fix <slug>` 回到 `AWAITING_REVIEW`
+5. 完成后仅允许通过 `flow-state.sh transition --slug <dated-slug> --event fix_completed` 回到 `AWAITING_REVIEW`
 
 ### E. `DONE`
 
