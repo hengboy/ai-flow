@@ -37,7 +37,7 @@ $HOME/.config/ai-flow/scripts/flow-status.sh
 
 ### 3. 读取当前计划并确认变更内容
 
-- 读取 `.ai-flow/state/{YYYYMMDD}-{slug}.json` 获取 `current_status` 和 `plan_file`
+- 读取 `.ai-flow/state/{slug}.json` 获取 `current_status` 和 `plan_file`
 - 读取完整计划文件
 - 与用户确认变更内容：
   - 新增了什么需求？
@@ -64,7 +64,7 @@ $HOME/.config/ai-flow/scripts/flow-status.sh
 
 ```bash
 $HOME/.config/ai-flow/scripts/flow-state.sh transition \
-  --slug {YYYYMMDD}-{slug} \
+  --slug {slug} \
   --event implementation_reopened \
   --note "需求变更：{一句话描述变更内容}"
 ```
@@ -72,7 +72,7 @@ $HOME/.config/ai-flow/scripts/flow-state.sh transition \
 转换后确认：
 
 ```bash
-$HOME/.config/ai-flow/scripts/flow-state.sh show --slug {YYYYMMDD}-{slug} --field current_status
+$HOME/.config/ai-flow/scripts/flow-state.sh show --slug {slug} --field current_status
 ```
 
 预期输出：`IMPLEMENTING`
@@ -83,7 +83,7 @@ $HOME/.config/ai-flow/scripts/flow-state.sh show --slug {YYYYMMDD}-{slug} --fiel
 
 ```bash
 $HOME/.config/ai-flow/scripts/flow-state.sh transition \
-  --slug {YYYYMMDD}-{slug} \
+  --slug {slug} \
   --event plan_reopened \
   --note "需求变更：{一句话描述变更内容}"
 ```
@@ -91,7 +91,7 @@ $HOME/.config/ai-flow/scripts/flow-state.sh transition \
 转换后确认：
 
 ```bash
-$HOME/.config/ai-flow/scripts/flow-state.sh show --slug {YYYYMMDD}-{slug} --field current_status
+$HOME/.config/ai-flow/scripts/flow-state.sh show --slug {slug} --field current_status
 ```
 
 预期输出：`AWAITING_PLAN_REVIEW`
@@ -155,7 +155,7 @@ $HOME/.config/ai-flow/scripts/flow-state.sh show --slug {YYYYMMDD}-{slug} --fiel
 运行：
 
 ```bash
-$HOME/.config/ai-flow/scripts/flow-change.sh {YYYYMMDD}-{slug} "变更描述"
+$HOME/.config/ai-flow/scripts/flow-change.sh {slug} "变更描述"
 ```
 
 变更描述格式建议：`[新增/修改/删除] {具体内容} — 影响步骤: {step_id}, {step_id}`
@@ -163,7 +163,7 @@ $HOME/.config/ai-flow/scripts/flow-change.sh {YYYYMMDD}-{slug} "变更描述"
 如果是 regular 第 2 轮失败后的根因补录，必须使用：
 
 ```bash
-$HOME/.config/ai-flow/scripts/flow-change.sh {YYYYMMDD}-{slug} "[root-cause-review-loop] 根因：...；受影响缺陷族：...；前两轮遗漏原因：...；补充验证：..."
+$HOME/.config/ai-flow/scripts/flow-change.sh {slug} "[root-cause-review-loop] 根因：...；受影响缺陷族：...；前两轮遗漏原因：...；补充验证：..."
 ```
 
 该记录是进入 regular 第 3 轮 review 的硬门禁，不能只改代码不补录。
@@ -186,7 +186,7 @@ $HOME/.config/ai-flow/scripts/flow-change.sh {YYYYMMDD}-{slug} "[root-cause-revi
 - 只能通过 `flow-state.sh transition` 调用 `plan_reopened` / `implementation_reopened`，以及通过 `show` 查询状态；禁止调用其他写接口
 - 禁止直接编辑 `.ai-flow/state/*.json` 文件
 - 计划文件是执行和审查的唯一依据；变更必须写入计划各章节，不能仅记录在 `## 7` 审计表
-- 不得修改 `.ai-flow/state/{YYYYMMDD}-{slug}.json` 中的固定 schema 字段
+- 不得修改 `.ai-flow/state/{slug}.json` 中的固定 schema 字段
 - 不得修改已有的审查报告
 - 新增步骤必须遵循当前 plan 模板的格式（`Step ID`、目标、文件边界、`本轮 review 预期关注面`、执行动作、验证命令、预期结果、本步自检、验收条件、`本步关闭条件`、阻塞条件）
 - 新增或修改的动作必须用 `- [ ]` 未勾选状态，确保 execute 能识别为待执行
