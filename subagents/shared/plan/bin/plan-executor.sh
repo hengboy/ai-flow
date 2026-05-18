@@ -1825,16 +1825,22 @@ if [ -n "$SLUG" ]; then
     SLUG_EXPLICIT=true
 else
     SLUG_AUTO=true
-    ENG_WORDS=$(echo "$REQUIREMENT" | grep -oE '[A-Za-z]+' | head -3 | tr '\n' '-' | sed 's/-$//' || true)
-    if [ -n "$ENG_WORDS" ]; then
-        SLUG=$(echo "$ENG_WORDS" | tr '[:upper:]' '[:lower:]')
-    else
-        SLUG="plan-$DATE_PREFIX"
+    SUGGEST_SCRIPT="$AI_FLOW_HOME/runtime/scripts/flow-suggest-slug.sh"
+    if [[ -x "$SUGGEST_SCRIPT" ]]; then
+        SLUG=$("$SUGGEST_SCRIPT" "$REQUIREMENT" 2>/dev/null) || true
+    fi
+    if [[ -z "$SLUG" ]]; then
+        ENG_WORDS=$(echo "$REQUIREMENT" | grep -oE '[A-Za-z]+' | head -3 | tr '\n' '-' | sed 's/-$//' || true)
+        if [ -n "$ENG_WORDS" ]; then
+            SLUG=$(echo "$ENG_WORDS" | tr '[:upper:]' '[:lower:]')
+        else
+            SLUG="plan-$DATE_PREFIX"
+        fi
     fi
 fi
 
-if ! echo "$SLUG" | grep -qE '^[a-z0-9][a-z0-9-]*$'; then
-    fail_protocol "英文简称 '$SLUG' 包含非法字符，只允许小写字母、数字和连字符（-）"
+if ! echo "$SLUG" | grep -qE '^[a-z0-9一-鿿][a-z0-9一-鿿-]*$'; then
+    fail_protocol "英文简称 '$SLUG' 包含非法字符，只允许小写字母、数字、连字符（-）和中文字符"
 fi
 
 EXISTING_STATE_FILE="$STATE_DIR/${DATE_PREFIX}-${SLUG}.json"
