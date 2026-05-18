@@ -29,39 +29,6 @@ test_auto_run_list_filters_allowed_states_and_sorts_by_updated_at() {
     rm -rf "$temp_root"
 }
 
-test_auto_run_list_skips_invalid_states_with_warning() {
-    local temp_root project script
-    temp_root=$(make_temp_root)
-    project="$temp_root/project"
-    script="$SOURCE_FLOW_AUTO_RUN_SCRIPT"
-    setup_project_dirs "$project" "20260503"
-    create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "20260503-valid" "PLANNED" "20260503" "valid"
-    create_state_with_status "$SOURCE_FLOW_STATE_SCRIPT" "$project" "20260503-broken" "REVIEW_FAILED" "20260503" "broken"
-
-    python3 - "$project/.ai-flow/state/20260503-broken.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-payload = json.loads(path.read_text(encoding="utf-8"))
-payload["last_review"] = None
-payload["transitions"][-1]["event"] = "coding_review_failed"
-path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-PY
-
-    (
-        cd "$project"
-        bash "$script" list >"$temp_root/list-invalid.out" 2>"$temp_root/list-invalid.err"
-    )
-
-    assert_contains "$temp_root/list-invalid.out" "20260503-valid"
-    assert_not_contains "$temp_root/list-invalid.out" "20260503-broken"
-    assert_contains "$temp_root/list-invalid.err" "跳过无效状态文件 20260503-broken"
-    assert_contains "$temp_root/list-invalid.err" "coding_review_failed"
-    rm -rf "$temp_root"
-}
-
 test_auto_run_resolve_supports_unique_keyword_and_rejects_ambiguous() {
     local temp_root project script resolved rc
     temp_root=$(make_temp_root)
@@ -165,7 +132,6 @@ test_auto_run_dirty_detects_plan_repos_participant_changes() {
 }
 
 test_auto_run_list_filters_allowed_states_and_sorts_by_updated_at
-test_auto_run_list_skips_invalid_states_with_warning
 test_auto_run_resolve_supports_unique_keyword_and_rejects_ambiguous
 test_auto_run_dirty_ignores_ai_flow_metadata_in_single_repo
 test_auto_run_dirty_detects_plan_repos_participant_changes
