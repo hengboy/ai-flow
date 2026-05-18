@@ -28,6 +28,8 @@ fi
 
 DESCRIPTION="$1"
 MAX_LENGTH=30
+DATE_PREFIX_LEN=9  # YYYYMMDD-
+SEMANTIC_MAX=$((MAX_LENGTH - DATE_PREFIX_LEN))
 
 # ---- Step 1: 检测语言 ----
 contains_chinese() {
@@ -167,14 +169,14 @@ print(s)
         slug=$(echo "$slug" | sed 's/[^a-z0-9\-]//g')
     fi
 
-    # 截断到最大长度
-    if [[ ${#slug} -gt $MAX_LENGTH ]]; then
+    # 截断到语义部分最大长度（加日期前缀后不超 MAX_LENGTH）
+    if [[ ${#slug} -gt $SEMANTIC_MAX ]]; then
         # 优先在连字符处截断
-        local truncated="${slug:0:$MAX_LENGTH}"
+        local truncated="${slug:0:$SEMANTIC_MAX}"
         local last_hyphen
         last_hyphen=$(echo "$truncated" | grep -oE '[^-]*$' | wc -c)
         if [[ $last_hyphen -gt 10 ]]; then
-            slug="${truncated:0:$((MAX_LENGTH - last_hyphen + 1))}"
+            slug="${truncated:0:$((SEMANTIC_MAX - last_hyphen + 1))}"
         else
             slug="$truncated"
         fi
@@ -189,24 +191,27 @@ print(s)
 # ---- Step 4: 检查冲突 ----
 resolve_conflicts() {
     local slug="$1"
+    local date_prefix
+    date_prefix="$(date +%Y%m%d)"
+    local dated_slug="${date_prefix}-${slug}"
 
     if [[ ! -d "$STATE_DIR" ]]; then
-        echo "$slug"
+        echo "$dated_slug"
         return
     fi
 
-    if [[ ! -f "$STATE_DIR/${slug}.json" ]]; then
-        echo "$slug"
+    if [[ ! -f "$STATE_DIR/${dated_slug}.json" ]]; then
+        echo "$dated_slug"
         return
     fi
 
     # 追加数字后缀
     local i=1
-    while [[ -f "$STATE_DIR/${slug}-${i}.json" ]]; do
+    while [[ -f "$STATE_DIR/${dated_slug}-${i}.json" ]]; do
         ((i++))
     done
 
-    echo "${slug}-${i}"
+    echo "${dated_slug}-${i}"
 }
 
 # ---- 主流程 ----

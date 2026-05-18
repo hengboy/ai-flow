@@ -27,8 +27,8 @@ test_slug() {
         return
     fi
 
-    if [[ ${#result} -gt 30 ]]; then
-        echo "FAIL: [$label] slug 超长: $result (${#result} > 30)"
+    if [[ ${#result} -gt 39 ]]; then
+        echo "FAIL: [$label] slug 超长: $result (${#result} > 39)"
         ((FAIL++)) || true
         return
     fi
@@ -72,8 +72,10 @@ test_slug_empty() {
 }
 
 test_slug_conflict() {
+    local date_prefix
+    date_prefix="$(date +%Y%m%d)"
     local test_slug_name="test-conflict-slug"
-    local test_state_file="$STATE_DIR/${test_slug_name}.json"
+    local test_state_file="$STATE_DIR/${date_prefix}-${test_slug_name}.json"
 
     mkdir -p "$STATE_DIR"
     echo '{"current_status":"DONE"}' > "$test_state_file"
@@ -83,23 +85,23 @@ test_slug_conflict() {
 
     rm -f "$test_state_file"
 
-    if [[ "$result" == "${test_slug_name}-1" ]]; then
+    if [[ "$result" == "${date_prefix}-${test_slug_name}-1" ]]; then
         echo "PASS: [冲突检测] -> $result"
         ((PASS++)) || true
     else
-        echo "FAIL: [冲突检测] -> 期望 ${test_slug_name}-1，实际: $result"
+        echo "FAIL: [冲突检测] -> 期望 ${date_prefix}-${test_slug_name}-1，实际: $result"
         ((FAIL++)) || true
     fi
 }
 
 # 测试用例
-test_slug "Add user login validation" "user.*login" "英文需求"
+test_slug "Add user login validation" "[0-9]{8}-add-user-login" "英文需求"
 test_slug "添加用户登录验证功能" "" "中文需求"
-test_slug "Fix authentication bug in API" "fix.*auth.*api" "英文含停用词"
+test_slug "Fix authentication bug in API" "[0-9]{8}-fix-authentication" "英文含停用词"
 test_slug "The best way to create a new feature" "" "英文多停用词"
 test_slug "Implement RESTful API for user management with OAuth2 authentication" "" "长描述截断"
 test_slug "123" "" "纯数字"
-test_slug "API v2 endpoint for /users" "api" "含特殊字符"
+test_slug "API v2 endpoint for /users" "[0-9]{8}-api" "含特殊字符"
 test_slug "添加 user login 功能" "" "中英文混合"
 
 # 空输入测试

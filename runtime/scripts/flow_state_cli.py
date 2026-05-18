@@ -67,6 +67,7 @@ TRANSITION_EVENTS = {
 PLAN_REVIEW_PASS_RESULTS = {"passed", "passed_with_notes"}
 REVIEW_PASS_RESULTS = {"passed", "passed_with_notes"}
 SLUG_RE = re.compile(r"^\d{8}-[a-z0-9][a-z0-9-]*$")
+SEMANTIC_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 REPO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
@@ -147,10 +148,18 @@ def parse_iso(value: str, field_name: str) -> datetime:
         raise FlowError(f"{field_name} 不是合法的 ISO 时间: {value}") from exc
 
 
+def normalize_semantic_slug(semantic_slug: str) -> str:
+    date_prefix = datetime.now().strftime("%Y%m%d")
+    return f"{date_prefix}-{semantic_slug}"
+
+
 def ensure_slug(slug: str) -> str:
-    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug.strip()):
-        raise FlowError(f"slug 必须是完整 dated slug: {slug!r}")
-    return slug.strip()
+    cleaned = slug.strip()
+    if SLUG_RE.fullmatch(cleaned):
+        return cleaned
+    if SEMANTIC_SLUG_RE.fullmatch(cleaned):
+        return normalize_semantic_slug(cleaned)
+    raise FlowError(f"slug 格式非法: {slug!r}")
 
 
 def normalize_path(path_value: str) -> str:
@@ -304,6 +313,16 @@ def validate_payload(
             raise FlowError("plan_created.plan_file 不能为空")
         validate_execution_scope(payload["execution_scope"])
         return
+
+    def validate_concrete_model_name(model: Any, engine: Any, *, field_prefix: str) -> None:
+        if not isinstance(model, str) or not model.strip():
+            raise FlowError(f"{field_prefix}.model 不能为空")
+        normalized_model = model.strip()
+        if normalized_model.lower() in {"claude", "codex", "auto"}:
+            raise FlowError(f"{field_prefix}.model 必须是具体模型名，不能是引擎别名: {normalized_model}")
+        if isinstance(engine, str) and engine.strip() and normalized_model == engine.strip():
+            raise FlowError(f"{field_prefix}.model 必须是具体模型名，不能与 {field_prefix}.engine 相同: {normalized_model}")
+
     if event in {"plan_review_passed", "plan_review_failed"}:
         required = {"result", "round", "engine", "model"}
         missing = required - set(payload)
@@ -313,8 +332,7 @@ def validate_payload(
             raise FlowError(f"{event}.round 必须是正整数")
         if not isinstance(payload["engine"], str) or not payload["engine"].strip():
             raise FlowError(f"{event}.engine 不能为空")
-        if not isinstance(payload["model"], str) or not payload["model"].strip():
-            raise FlowError(f"{event}.model 不能为空")
+        validate_concrete_model_name(payload["model"], payload["engine"], field_prefix=event)
         result = payload["result"]
         if event == "plan_review_passed" and result not in PLAN_REVIEW_PASS_RESULTS:
             raise FlowError("plan_review_passed 只允许 result=passed 或 passed_with_notes")
@@ -332,8 +350,7 @@ def validate_payload(
             raise FlowError(f"{event}.report_file 不能为空")
         if not isinstance(payload["engine"], str) or not payload["engine"].strip():
             raise FlowError(f"{event}.engine 不能为空")
-        if not isinstance(payload["model"], str) or not payload["model"].strip():
-            raise FlowError(f"{event}.model 不能为空")
+        validate_concrete_model_name(payload["model"], payload["engine"], field_prefix=event)
         result = payload["result"]
         if event.endswith("_passed") and result not in REVIEW_PASS_RESULTS:
             raise FlowError(f"{event} 只允许 result=passed 或 passed_with_notes")
@@ -717,6 +734,9 @@ def cmd_transition(args: argparse.Namespace) -> int:
     def mutator(current_state: dict[str, Any] | None) -> dict[str, Any]:
         payload = build_transition_payload(event, current_state, args)
         if event == "plan_created":
+            state_file_path = state_path_for_slug(slug)
+            if state_file_path.exists():
+                raise FlowError(f"状态文件已存在（同名 slug 当天已有记录）: {state_file_path}，请更换 slug")
             return {
                 "schema_version": SCHEMA_VERSION,
                 "slug": slug,

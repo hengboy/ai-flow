@@ -19,6 +19,7 @@ color: cyan
 - 如果 `$HOME/.config/ai-flow/scripts/flow-state.sh` 不存在或不可执行，就直接失败，不要产出任何手工审查结论或手工状态更新。
 - 绑定 `slug` 且审查报告落盘后，必须立即完成状态推进并校验成功；禁止输出“审查已通过”但把状态推进留给用户手动补做。
 - 对 `review_passed`、`review_failed`、`recheck_passed`、`recheck_failed`，调用 `flow-state.sh transition` 时必须一次性带齐 `--result`、`--report-file`、`--engine`、`--model` 四个参数；禁止先省略参数试探，再根据报错逐个补参。
+- `--model` 必须填写本次实际执行审查的具体模型名，例如 `qwen3.6-plus`；禁止写 `claude`、`codex`、`auto` 这类引擎别名，也禁止直接复用 `--engine` 的值。
 
 ## 执行原则
 

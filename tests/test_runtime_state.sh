@@ -8,7 +8,7 @@ test_transition_happy_path_and_derived_view() {
     temp_root=$(make_temp_root)
     project="$temp_root/project"
     state_script="$SOURCE_FLOW_STATE_SCRIPT"
-    state_slug="20260503-demo"
+    state_slug="demo"
     setup_project_dirs "$project" "20260503"
     create_plan_file "$project" "demo" "20260503" "demo"
     setup_git_repo_clean "$project"
@@ -75,5 +75,33 @@ test_lock_conflict_rejected() {
     rm -rf "$temp_root"
 }
 
+test_transition_rejects_engine_alias_in_model() {
+    local temp_root project state_script rc state_slug
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    state_script="$SOURCE_FLOW_STATE_SCRIPT"
+    state_slug="demo"
+    setup_project_dirs "$project" "20260503"
+    create_plan_file "$project" "demo" "20260503" "demo"
+    setup_git_repo_clean "$project"
+
+    (
+        cd "$project"
+        local repo_scope
+        repo_scope="$(repo_scope_json "$project" "owner::.")"
+        bash "$state_script" transition --slug "$state_slug" --event plan_created --title demo --plan-file .ai-flow/plans/20260503-demo.md --repo-scope-json "$repo_scope" >/dev/null
+
+        set +e
+        bash "$state_script" transition --slug "$state_slug" --event plan_review_passed --result passed --engine ai-flow-claude-plan-review --model claude >"$temp_root/model-alias.out" 2>&1
+        rc=$?
+        set -e
+        [ "$rc" -ne 0 ] || fail "Expected engine alias model to be rejected"
+    )
+
+    assert_contains "$temp_root/model-alias.out" "model 必须是具体模型名，不能是引擎别名"
+    rm -rf "$temp_root"
+}
+
 test_transition_happy_path_and_derived_view
 test_lock_conflict_rejected
+test_transition_rejects_engine_alias_in_model
