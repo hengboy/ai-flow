@@ -240,7 +240,7 @@ replacements = {
     r"(?m)^> 创建日期：.*$": f"> 创建日期：{created_date}",
     r"(?m)^> 创建时间：.*$": f"> 创建时间：{created_time}",
     r"(?m)^> 需求简称：.*$": f"> 需求简称：{slug}",
-    r"(?m)^> 状态文件：.*$": f"> 状态文件：`.ai-flow/state/{date_prefix}-{slug}.json`",
+    r"(?m)^> 状态文件：.*$": f"> 状态文件：`.ai-flow/state/{slug}.json`（内部自动添加日期前缀）",
 }
 for pattern, replacement in replacements.items():
     text = re.sub(pattern, replacement, text, count=1)

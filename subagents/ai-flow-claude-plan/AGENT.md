@@ -32,7 +32,7 @@ color: purple
 - 允许新建 draft plan，或在 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED` 状态下原地修订同名 draft plan；其他状态、非法 slug、重名冲突或关联 plan 缺失时直接失败。
 - 禁止复用旧 plan：不得搜索 `.ai-flow/plans/` 下历史计划并沿用，必须根据当前需求重新生成或修订。
 - 必须读取共享提示词和模板：`plan-generation.md` / `plan-revision.md`、`plan-template.md`。
-- plan 必须落到 `.ai-flow/plans/{YYYYMMDD}-{slug}.md`，并包含 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等强制结构；不得包含未填充 `TBD`、`TODO`。
+- plan 必须落到 `.ai-flow/plans/{slug}.md`（内部自动添加日期前缀），并包含 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等强制结构；不得包含未填充 `TBD`、`TODO`。
 - plan 文件头部元数据必须完整保留以下 12 项，不得省略、改名或改成其他格式：`创建日期`、`创建时间`、`需求简称`、`需求来源`、`执行范围`、`Plan 参与仓库`、`状态文件`、`文档角色`、`状态文件约束`、`执行约定`、`验证约定`、`规则标识`。
 
 ### 构建 --repo-scope-json
