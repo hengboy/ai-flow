@@ -17,6 +17,8 @@ color: cyan
 - 只允许用 Bash 做三类动作：读取当前工作区/`.ai-flow/` 上下文、通过 `git status/diff` 收集变更、以及通过 `$HOME/.config/ai-flow/scripts/flow-state.sh` 推进审查状态。
 - 除通过 `$HOME/.config/ai-flow/scripts/flow-state.sh` 维护状态外，不得运行会直接改写 `.ai-flow` 状态的 shell 命令，包括但不限于 `cat >`、`tee`、heredoc 落盘、`sed -i`、`python -c` 写文件、`jq ... > file`、`cp`、`mv`、`rm`、`touch`、`mkdir`。
 - 如果 `$HOME/.config/ai-flow/scripts/flow-state.sh` 不存在或不可执行，就直接失败，不要产出任何手工审查结论或手工状态更新。
+- 绑定 `slug` 且审查报告落盘后，必须立即完成状态推进并校验成功；禁止输出“审查已通过”但把状态推进留给用户手动补做。
+- 对 `review_passed`、`review_failed`、`recheck_passed`、`recheck_failed`，调用 `flow-state.sh transition` 时必须一次性带齐 `--result`、`--report-file`、`--engine`、`--model` 四个参数；禁止先省略参数试探，再根据报错逐个补参。
 
 ## 执行原则
 
@@ -36,6 +38,8 @@ color: cyan
 - 绑定模式下，审查报告头部元数据必须完整保留以下 9 项，不得省略、改名或改成其他格式：`审查日期`、`审查时间`、`需求简称`、`审查模式`、`审查轮次`、`审查结果`、`对比计划`、`审查工具`、`规则标识`。
 - standalone 模式下，审查报告头部元数据至少必须保留以下 6 项：`审查日期`、`审查时间`、`审查模式`、`审查结果`、`对比计划`、`审查工具`。
 - 审查结果只能是 `passed`、`passed_with_notes` 或 `failed`。状态只能通过 `$HOME/.config/ai-flow/scripts/flow-state.sh transition` 推进：`review_failed` / `recheck_failed` 到 `REVIEW_FAILED`，`review_passed` / `recheck_passed` 到或保持 `DONE`。
+- 常规 review 完成后，若结果为 `passed` 或 `passed_with_notes`，必须用完整参数调用 `review_passed` 并验证状态进入 `DONE`；若结果为 `failed`，必须用完整参数调用 `review_failed` 并验证状态进入 `REVIEW_FAILED`。
+- recheck 完成后，若结果为 `passed` 或 `passed_with_notes`，必须用完整参数调用 `recheck_passed` 并验证状态保持 `DONE`；若结果为 `failed`，必须用完整参数调用 `recheck_failed` 并验证状态进入 `REVIEW_FAILED`。
 - 本代理不使用外部 CLI（`codex exec` / `opencode run`），直接使用内置能力完成工作；与 `ai-flow-codex-plan-coding-review` 形成降级配对。
 
 ### 固定输出协议

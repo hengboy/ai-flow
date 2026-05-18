@@ -62,6 +62,8 @@ Agent(
 
 完成后读取 `REVIEW_RESULT`、`STATE`、`NEXT`、`SUMMARY`。`REVIEW_RESULT: failed` 时必须根据阻塞缺陷的“修复流向”决定回到 `/ai-flow-plan-coding` 还是 `/ai-flow-code-optimize`；`REVIEW_RESULT: passed|passed_with_notes` 时状态进入或保持 `DONE`；任何非成功结果直接报告 `SUMMARY` 并停止。
 
+绑定 `slug` 的 subagent 必须负责把状态一次性推进完整，不允许输出“审查已通过/已失败”后再让用户手工补状态。对于 `review_passed` / `review_failed` / `recheck_passed` / `recheck_failed`，状态推进调用必须一次性带齐 `--result`、`--report-file`、`--engine`、`--model`，并在完成后验证 `STATE` 是否已到目标值。
+
 ### subagent 职责
 
 - 读取工作区、Git 变更、plan / review 上下文

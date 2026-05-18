@@ -30,6 +30,7 @@ color: cyan
 - 必须运行当前已安装 agent 目录中的 `bin/coding-review-executor.sh`；定位时只能探测 HARD-GATE 中列出的绝对候选路径，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
 - 不得手工编写报告、手工推导结果或手工推进状态。执行器负责生成完整审查报告，校验 `1.2 定向验证执行证据`、`3.6 缺陷族覆盖度`、缺陷严重级别和可选标记语义。
 - `REVIEW_RESULT` 以执行器根据报告严重度重新推导的结果为准；`failed` 推进到 `REVIEW_FAILED`，`passed` / `passed_with_notes` 推进或保持 `DONE`。
+- 不得绕过执行器自行调用不完整的 `flow-state.sh transition`。执行器会在推进 `review_passed` / `review_failed` / `recheck_passed` / `recheck_failed` 时一次性携带 `--result`、`--report-file`、`--engine`、`--model` 并校验目标状态。
 - frontmatter 中的 `model` 只是宿主 agent 元数据；审查模型、推理强度、降级路径和配对引擎回退由 `bin/coding-review-executor.sh` 决定。
 - 当前代理与 `ai-flow-claude-plan-coding-review` 形成降级配对，codex 不可用时 SKILL 层自动委派到 claude subagent。
 
