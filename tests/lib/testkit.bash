@@ -6,7 +6,6 @@ SOURCE_FLOW_STATUS_SCRIPT="$TEST_ROOT/runtime/scripts/flow-status.sh"
 SOURCE_FLOW_CHANGE_SCRIPT="$TEST_ROOT/runtime/scripts/flow-change.sh"
 SOURCE_FLOW_PLAN_CODING_SCRIPT="$TEST_ROOT/runtime/scripts/flow-plan-coding.sh"
 SOURCE_FLOW_AUTO_RUN_SCRIPT="$TEST_ROOT/runtime/scripts/flow-auto-run.sh"
-SOURCE_FLOW_COMMIT_SCRIPT="$TEST_ROOT/runtime/scripts/flow-commit.sh"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -96,6 +95,7 @@ install_ai_flow() {
     local temp_root="$1"
     mkdir -p "$temp_root/home"
     HOME="$temp_root/home" \
+        CLAUDE_HOME="$temp_root/home/.claude" \
         CLAUDE_AGENTS_DIR="$temp_root/home/.claude/agents" \
         ONSPACE_SKILLS_DIR="$temp_root/home/.config/onespace/skills/local_state/models/claude" \
         ONSPACE_SUBAGENTS_CLAUDE_DIR="$temp_root/home/.config/onespace/subagents/local_state/models/claude" \

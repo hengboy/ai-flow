@@ -256,8 +256,11 @@ test_plan_generation_rewrites_full_implementation_plan_input() {
     assert_contains "$plan_file" "验收标准：生成的 plan 保留原始方案"
     assert_contains "$temp_root/codex-plan-prompt.log" "如果”需求描述”是一份完整实施方案"
     assert_contains "$temp_root/codex-plan-prompt.log" "全部映射到下方"
-    assert_contains "$temp_root/codex-plan-prompt.log" "先做头脑风暴式 intake"
-    assert_contains "$temp_root/codex-plan-prompt.log" "只要存在任何不确定项，必须先询问用户"
+    assert_contains "$temp_root/codex-plan-prompt.log" "先做结构化头脑风暴式 intake"
+    assert_contains "$temp_root/codex-plan-prompt.log" '逐项扫描 `目标/交付物`'
+    assert_contains "$temp_root/codex-plan-prompt.log" '只有当每个 intake 维度都满足以下三种状态之一时'
+    assert_contains "$temp_root/codex-plan-prompt.log" "只要存在任何会改变决策或结果的不确定项，必须先询问用户"
+    assert_contains "$temp_root/codex-plan-prompt.log" "如果一次扫描识别出 3 个及以上独立不确定项"
     rm -rf "$temp_root"
 }
 
