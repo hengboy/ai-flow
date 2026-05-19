@@ -15,5 +15,16 @@
   },
   "state": {
     "actor": "flow-state.sh"
+  },
+  "html": {
+    "enabled": false,
+    "theme": "html-effectiveness",
+    "output_dir": ".ai-flow/html",
+    "auto_render": {
+      "plan": true,
+      "review": true,
+      "status": true
+    },
+    "git_exclude": true
   }
 }

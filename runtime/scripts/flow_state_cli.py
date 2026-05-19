@@ -128,38 +128,25 @@ def resolve_project_dir() -> Path:
     return cwd
 
 
-def load_actor_default() -> str:
-    home = Path(os.environ.get("AI_FLOW_HOME", Path.home() / ".config/ai-flow"))
+# 注入 runtime/lib 路径以导入 flow_config
+_lib_dir = Path(__file__).resolve().parent.parent / "lib"
+if str(_lib_dir) not in sys.path:
+    sys.path.insert(0, str(_lib_dir))
 
-    # Try project-level config first: <flow-root>/.ai-flow/setting.json
-    project_setting = PROJECT_DIR / ".ai-flow" / "setting.json"
-    if project_setting.is_file():
-        try:
-            config = json.loads(project_setting.read_text(encoding="utf-8"))
-            actor = config.get("state", {}).get("actor")
-            if isinstance(actor, str) and actor.strip():
-                return actor.strip()
-        except (OSError, json.JSONDecodeError):
-            pass
-
-    # Fallback to user-level config
-    user_setting = home / "setting.json"
-    if user_setting.is_file():
-        try:
-            config = json.loads(user_setting.read_text(encoding="utf-8"))
-            actor = config.get("state", {}).get("actor")
-            if isinstance(actor, str) and actor.strip():
-                return actor.strip()
-        except (OSError, json.JSONDecodeError):
-            pass
-    return "flow-state.sh"
-
+try:
+    from flow_config import get_config_value as _get_config_value
+except ImportError:
+    _get_config_value = None
 
 PROJECT_DIR = resolve_project_dir()
 FLOW_DIR = PROJECT_DIR / ".ai-flow"
 STATE_DIR = FLOW_DIR / "state"
 LOCKS_DIR = STATE_DIR / ".locks"
-ACTOR = os.environ.get("AI_FLOW_ACTOR", load_actor_default())
+
+if _get_config_value is not None:
+    ACTOR = os.environ.get("AI_FLOW_ACTOR", _get_config_value("state.actor", "flow-state.sh"))
+else:
+    ACTOR = os.environ.get("AI_FLOW_ACTOR", "flow-state.sh")
 
 
 def now_iso() -> str:
@@ -792,6 +779,23 @@ def cmd_transition(args: argparse.Namespace) -> int:
 
     state = with_lock(slug, mutator)
     sys.stdout.write(f"{slug}: {state['current_status']}\n")
+
+    # best-effort 触发 status HTML 渲染，不阻塞主流程
+    if _get_config_value is not None:
+        auto_render = _get_config_value("html.auto_render.status", False)
+        if auto_render:
+            home = Path(os.environ.get("AI_FLOW_HOME", Path.home() / ".config" / "ai-flow"))
+            flow_html_sh = home / "scripts" / "flow-html.sh"
+            if flow_html_sh.is_file():
+                try:
+                    subprocess.run(
+                        ["bash", str(flow_html_sh), "status"],
+                        capture_output=True, text=True, timeout=30,
+                        cwd=str(PROJECT_DIR),
+                    )
+                except Exception:
+                    pass
+
     return 0
 
 

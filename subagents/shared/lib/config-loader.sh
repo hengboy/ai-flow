@@ -19,37 +19,9 @@ _ai_flow_get_env_value() {
     eval "printf '%s' \"\${${var_name}:-}\""
 }
 
-load_all_settings() {
-    [ "$_ai_flow_config_loaded" -eq 0 ] || return 0
-    local config_file
-    config_file="$(_ai_flow_config_file)"
-
-    # Resolve project-level config: prefer nearest .ai-flow/setting.json.
-    # This must work even before .ai-flow/state has been initialized.
-    local project_config_file=""
-    local _cwd
-    _cwd="$(pwd)"
-    local _candidate="$_cwd"
-    while true; do
-        if [ -f "$_candidate/.ai-flow/setting.json" ]; then
-            project_config_file="$_candidate/.ai-flow/setting.json"
-            break
-        fi
-        if [ -d "$_candidate/.ai-flow" ] || [ -d "$_candidate/.ai-flow/state" ]; then
-            break
-        fi
-        if [ "$_candidate" = "/" ] || [ "$_candidate" = "//" ]; then
-            break
-        fi
-        local _parent
-        _parent="$(cd "$_candidate/.." 2>/dev/null && pwd)" || break
-        if [ -z "$_parent" ] || [ "$_parent" = "$_candidate" ]; then
-            break
-        fi
-        _candidate="$_parent"
-    done
-
-    eval "$(python3 -c "
+_ai_flow_config_python_eval() {
+    # 内联 Python 配置解析（fallback 用）
+    python3 -c "
 import json, sys
 from pathlib import Path
 
@@ -59,7 +31,6 @@ project_path = Path(sys.argv[2]) if sys.argv[2] else None
 source_map = {}
 
 def deep_merge(user, project, prefix=''):
-    '''dict 递归合并；标量项目级覆盖用户级；list 项目级替换；null 跳过。'''
     if not isinstance(user, dict) or not isinstance(project, dict):
         return project if project is not None else user
     merged = dict(user)
@@ -76,7 +47,7 @@ def deep_merge(user, project, prefix=''):
         else:
             path = k
         if v is None:
-            continue  # null 不覆盖用户级
+            continue
         if k in merged and isinstance(merged[k], dict) and isinstance(v, dict):
             merged[k] = deep_merge(merged[k], v, path)
         else:
@@ -127,7 +98,51 @@ for line in flatten(config):
     print(line)
 for line in flatten_sources(source_map):
     print(line)
-" "${config_file:-}" "${project_config_file:-}")"
+" "${config_file:-}" "${project_config_file:-}"
+}
+
+load_all_settings() {
+    [ "$_ai_flow_config_loaded" -eq 0 ] || return 0
+    local config_file
+    config_file="$(_ai_flow_config_file)"
+
+    # Resolve project-level config: prefer nearest .ai-flow/setting.json.
+    local project_config_file=""
+    local _cwd
+    _cwd="$(pwd)"
+    local _candidate="$_cwd"
+    while true; do
+        if [ -f "$_candidate/.ai-flow/setting.json" ]; then
+            project_config_file="$_candidate/.ai-flow/setting.json"
+            break
+        fi
+        if [ -d "$_candidate/.ai-flow" ] || [ -d "$_candidate/.ai-flow/state" ]; then
+            break
+        fi
+        if [ "$_candidate" = "/" ] || [ "$_candidate" = "//" ]; then
+            break
+        fi
+        local _parent
+        _parent="$(cd "$_candidate/.." 2>/dev/null && pwd)" || break
+        if [ -z "$_parent" ] || [ "$_parent" = "$_candidate" ]; then
+            break
+        fi
+        _candidate="$_parent"
+    done
+
+    # 优先调用 flow_config.py __main__ 模式；失败时 fallback 到内联 Python。
+    local _flow_config_py="${AI_FLOW_HOME:-$HOME/.config/ai-flow}/lib/flow_config.py"
+    if [ -f "$_flow_config_py" ]; then
+        local _eval_output
+        _eval_output="$(AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}" python3 "$_flow_config_py" 2>/dev/null)" && {
+            eval "$_eval_output"
+            _ai_flow_config_loaded=1
+            return 0
+        }
+    fi
+
+    # Fallback：内联 Python 直接输出环境变量
+    eval "$(_ai_flow_config_python_eval)"
 
     _ai_flow_config_loaded=1
 }
