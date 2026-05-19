@@ -1861,6 +1861,14 @@ else
     PROTOCOL_STATE="$UPDATED_STATUS"
     PROTOCOL_REVIEW_RESULT="$RESULT"
 
+    # best-effort 渲染 review HTML
+    _ai_flow_render_html_best_effort() {
+        local _html_sh="${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-html.sh"
+        [ -f "$_html_sh" ] || return 0
+        "$_html_sh" review --input "$REPORT_FILE" >/dev/null 2>&1 || true
+    }
+    _ai_flow_render_html_best_effort
+
     print_commit_instructions() {
         echo ">>> 状态已进入 [DONE]，现在允许提交已审查的未提交变更"
         echo "    请使用 /ai-flow-git-commit 提交代码"

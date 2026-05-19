@@ -209,3 +209,11 @@ for status, _, _ in status_labels:
     print(f"  {status}: {counts.get(status, 0)}")
 print("===============================")
 PY
+
+# best-effort 刷新状态页 HTML
+_ai_flow_render_html_best_effort() {
+    local _html_sh="${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-html.sh"
+    [ -f "$_html_sh" ] || return 0
+    "$_html_sh" status >/dev/null 2>&1 || true
+}
+_ai_flow_render_html_best_effort

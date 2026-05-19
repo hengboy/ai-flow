@@ -2124,6 +2124,14 @@ else
     ensure_requirement_literal "$PLAN_FILE"
     validate_plan_structure "$PLAN_FILE" "draft"
 
+    # best-effort 渲染 plan HTML
+    _ai_flow_render_html_best_effort() {
+        local _html_sh="${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-html.sh"
+        [ -f "$_html_sh" ] || return 0
+        "$_html_sh" plan --input "$PLAN_FILE" >/dev/null 2>&1 || true
+    }
+    _ai_flow_render_html_best_effort
+
     echo ">>> 初始化状态文件..."
     AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" transition \
         --slug "${DATE_PREFIX}-${SLUG}" \
