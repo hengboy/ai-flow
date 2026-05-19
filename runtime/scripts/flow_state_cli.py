@@ -97,7 +97,22 @@ class DerivedReview:
 
 
 def resolve_project_dir() -> Path:
+    """Resolve flow root by searching upward for .ai-flow/state directory.
+    Falls back to git toplevel, then cwd.
+    Stops if entering a .ai-flow-tests directory (test isolation).
+    """
     cwd = Path.cwd().resolve()
+    candidate = cwd
+    while True:
+        if (candidate / ".ai-flow" / "state").is_dir():
+            return candidate
+        if ".ai-flow-tests" in candidate.parts:
+            break
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+    # Fallback: try git toplevel
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
