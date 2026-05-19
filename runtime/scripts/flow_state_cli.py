@@ -130,10 +130,23 @@ def resolve_project_dir() -> Path:
 
 def load_actor_default() -> str:
     home = Path(os.environ.get("AI_FLOW_HOME", Path.home() / ".config/ai-flow"))
-    setting = home / "setting.json"
-    if setting.is_file():
+
+    # Try project-level config first: <flow-root>/.ai-flow/setting.json
+    project_setting = PROJECT_DIR / ".ai-flow" / "setting.json"
+    if project_setting.is_file():
         try:
-            config = json.loads(setting.read_text(encoding="utf-8"))
+            config = json.loads(project_setting.read_text(encoding="utf-8"))
+            actor = config.get("state", {}).get("actor")
+            if isinstance(actor, str) and actor.strip():
+                return actor.strip()
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Fallback to user-level config
+    user_setting = home / "setting.json"
+    if user_setting.is_file():
+        try:
+            config = json.loads(user_setting.read_text(encoding="utf-8"))
             actor = config.get("state", {}).get("actor")
             if isinstance(actor, str) and actor.strip():
                 return actor.strip()

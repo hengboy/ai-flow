@@ -136,7 +136,6 @@ install_runtime_root() {
     done
 
     if [ -d "$SUBAGENT_SHARED_LIB_DIR" ]; then
-        rm -rf "$destination_root/lib"
         mkdir -p "$destination_root/lib"
         cp -R "$SUBAGENT_SHARED_LIB_DIR"/. "$destination_root/lib"/
     fi

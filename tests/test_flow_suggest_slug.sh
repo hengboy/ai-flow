@@ -81,6 +81,37 @@ test_empty_description() {
     assert_exit_code "$exit_code" 1 "空描述时退出码为1"
 }
 
+# --- 测试 8: 项目级 slug 冲突检查 ---
+test_project_slug_conflict_check() {
+    local dir
+    dir="$(create_temp_project "slug-conflict")"
+    # 在项目目录创建一个已有的状态文件
+    cat > "$dir/.ai-flow/state/20260519-test-slug.json" <<'EOF'
+{
+    "schema_version": 4,
+    "slug": "20260519-test-slug",
+    "title": "已有计划",
+    "plan_file": ".ai-flow/plans/test.md",
+    "execution_scope": {"mode": "plan_repos", "repos": [{"id": "owner", "path": ".", "git_root": ".", "role": "owner"}]},
+    "current_status": "AWAITING_PLAN_REVIEW",
+    "created_at": "2026-05-19T10:00:00+08:00",
+    "updated_at": "2026-05-19T10:00:00+08:00",
+    "transitions": [{"seq": 1, "at": "2026-05-19T10:00:00+08:00", "event": "plan_created", "from": null, "to": "AWAITING_PLAN_REVIEW", "actor": "test", "payload": {"title": "已有计划", "plan_file": ".ai-flow/plans/test.md", "execution_scope": {"mode": "plan_repos", "repos": [{"id": "owner", "path": ".", "git_root": ".", "role": "owner"}]}}, "note": "test"}]
+}
+EOF
+    # 在项目目录中运行 suggest，使用相同的关键词
+    local output exit_code=0
+    output="$(cd "$dir" && bash "$SUGGEST_SH" "test slug" 2>&1)" || exit_code=$?
+    assert_exit_code "$exit_code" 0 "项目级冲突检查正常退出"
+    # 因为 20260519-test-slug 已存在，应该输出带后缀的版本
+    if [[ "$output" == "20260519-test-slug-1" ]]; then
+        test_pass "项目级 slug 冲突检查使用项目目录"
+    else
+        test_fail "项目级 slug 冲突检查使用项目目录" "期望=20260519-test-slug-1 实际=$output"
+    fi
+    cleanup_temp_project "$dir"
+}
+
 # --- 运行 ---
 test_english_simple
 test_english_stop_words
@@ -89,6 +120,7 @@ test_missing_description
 test_length_limit
 test_date_prefix_format
 test_empty_description
+test_project_slug_conflict_check
 
 print_summary
 exit "$fail_count"

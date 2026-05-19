@@ -34,27 +34,16 @@ fail() {
     exit 1
 }
 
-resolve_flow_root() {
-    local start candidate
-    start="$(pwd)"
-    candidate="$start"
-    while true; do
-        if [ -d "$candidate/.ai-flow/state" ]; then
-            printf '%s' "$candidate"
-            return 0
-        fi
-        if [ "$candidate" = "/" ] || [ "$candidate" = "//" ]; then
-            break
-        fi
-        local parent
-        parent="$(cd "$candidate/.." 2>/dev/null && pwd)" || break
-        if [ -z "$parent" ] || [ "$parent" = "$candidate" ]; then
-            break
-        fi
-        candidate="$parent"
-    done
-    return 1
-}
+# Resolve flow root using shared helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AI_FLOW_HOME="${AI_FLOW_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+if [ -f "${AI_FLOW_HOME}/lib/flow-root-helper.sh" ]; then
+    # shellcheck source=/dev/null
+    source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
+else
+    # shellcheck source=/dev/null
+    source "$(cd "$SCRIPT_DIR/../.." && pwd)/runtime/lib/flow-root-helper.sh"
+fi
 
 validate_dependencies() {
     [ -x "$FLOW_STATE_SH" ] || fail "错误: 缺少 flow-state 脚本: $FLOW_STATE_SH"

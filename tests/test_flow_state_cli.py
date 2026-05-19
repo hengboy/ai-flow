@@ -358,6 +358,18 @@ class TestActorConfig(unittest.TestCase):
         actor = state["transitions"][-1]["actor"]
         self.assertEqual(actor, "user-actor")
 
+    def test_project_actor_override(self):
+        """项目级 setting.json 的 state.actor 覆盖用户级。"""
+        self.proj.create_user_setting(self.home_dir, state={"actor": "user-actor"})
+        self.proj.create_project_setting(state={"actor": "project-actor"})
+        self.proj.create_state(self.slug)
+        self._run("transition", "--slug", self.slug, "--event", "plan_review_passed",
+                   "--result", "passed", "--engine", "test-engine", "--model", "test-model")
+        state_file = self.proj.state_dir / f"{self.slug}.json"
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        actor = state["transitions"][-1]["actor"]
+        self.assertEqual(actor, "project-actor")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -30,27 +30,16 @@ fi
 # shellcheck source=/dev/null
 source "$RULE_LOADER_SH"
 
-resolve_flow_root() {
-    local start candidate
-    start="$(pwd)"
-    candidate="$start"
-    while true; do
-        if [ -d "$candidate/.ai-flow/state" ]; then
-            printf '%s' "$candidate"
-            return 0
-        fi
-        if [ "$candidate" = "/" ] || [ "$candidate" = "//" ]; then
-            break
-        fi
-        local parent
-        parent="$(cd "$candidate/.." 2>/dev/null && pwd)" || break
-        if [ -z "$parent" ] || [ "$parent" = "$candidate" ]; then
-            break
-        fi
-        candidate="$parent"
-    done
-    printf '%s' "$start"
-}
+# Resolve flow root using shared helper
+if [ -f "${AI_FLOW_HOME:-}/lib/flow-root-helper.sh" ]; then
+    # shellcheck source=/dev/null
+    source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
+else
+    # shellcheck source=/dev/null
+    source "$(cd "$SCRIPT_DIR/../.." && pwd)/runtime/lib/flow-root-helper.sh"
+fi
+
+PROJECT_DIR="$(resolve_flow_root)" || PROJECT_DIR="$(pwd)"
 
 emit_protocol() {
     echo "RESULT: $PROTOCOL_RESULT"

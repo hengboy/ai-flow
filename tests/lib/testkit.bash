@@ -155,6 +155,30 @@ state = {
 PY
 }
 
+# write_user_setting <home_dir> <json_content>
+# 在指定 home 目录写入用户级 setting.json
+write_user_setting() {
+    local home_dir="$1"
+    local json_content="$2"
+    mkdir -p "$home_dir"
+    printf '%s' "$json_content" > "$home_dir/setting.json"
+}
+
+# write_project_setting <project_dir> <json_content>
+# 在 <project_dir>/.ai-flow/setting.json 写入项目级配置
+write_project_setting() {
+    local project_dir="$1"
+    local json_content="$2"
+    mkdir -p "$project_dir/.ai-flow"
+    printf '%s' "$json_content" > "$project_dir/.ai-flow/setting.json"
+}
+
+# write_partial_project_setting <project_dir> <json_content>
+# 同 write_project_setting，用于部分覆盖场景
+write_partial_project_setting() {
+    write_project_setting "$@"
+}
+
 print_summary() {
     echo ""
     echo "==============================="

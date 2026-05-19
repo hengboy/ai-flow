@@ -177,6 +177,197 @@ test_expand_tilde() {
     fi
 }
 
+# --- 测试 7: 项目级覆盖用户级 ---
+test_project_override_user() {
+    local dir home_dir
+    dir="$(create_temp_project "config-7")"
+    home_dir="$(mktemp -d)"
+    write_user_setting "$home_dir" '{
+        "engine_mode": "claude",
+        "state": { "actor": "user-actor" }
+    }'
+    write_project_setting "$dir" '{
+        "engine_mode": "codex",
+        "state": { "actor": "project-actor" }
+    }'
+    local mode actor
+    mode="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting "engine_mode" "auto"
+    )"
+    actor="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting "state.actor" "default-actor"
+    )"
+    if [[ "$mode" == "codex" ]] && [[ "$actor" == "project-actor" ]]; then
+        test_pass "项目级覆盖用户级配置"
+    else
+        test_fail "项目级覆盖用户级配置" "期望 engine_mode=codex,state.actor=project-actor 实际 engine_mode=$mode,state.actor=$actor"
+    fi
+    cleanup_temp_project "$dir"
+    rm -rf "$home_dir"
+}
+
+# --- 测试 7.1: 字段来源标记 ---
+test_setting_source_label() {
+    local dir home_dir
+    dir="$(create_temp_project "config-7-source")"
+    home_dir="$(mktemp -d)"
+    write_user_setting "$home_dir" '{
+        "engine_mode": "claude",
+        "state": { "actor": "user-actor" }
+    }'
+    write_project_setting "$dir" '{
+        "state": { "actor": "project-actor" }
+    }'
+    local mode_source actor_source missing_source
+    mode_source="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting_source_label "engine_mode"
+    )"
+    actor_source="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting_source_label "state.actor"
+    )"
+    missing_source="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting_source_label "plan.codex.model"
+    )"
+    if [[ "$mode_source" == "用户级配置" ]] && [[ "$actor_source" == "项目级配置" ]] && [[ "$missing_source" == "默认值" ]]; then
+        test_pass "字段来源标记正确"
+    else
+        test_fail "字段来源标记正确" "期望 mode=用户级配置 actor=项目级配置 missing=默认值 实际 mode=$mode_source actor=$actor_source missing=$missing_source"
+    fi
+    cleanup_temp_project "$dir"
+    rm -rf "$home_dir"
+}
+
+# --- 测试 8: 嵌套字段部分覆盖 ---
+test_partial_nested_override() {
+    local dir home_dir
+    dir="$(create_temp_project "config-8")"
+    home_dir="$(mktemp -d)"
+    write_user_setting "$home_dir" '{
+        "plan": { "claude": { "model": "opus", "reasoning": "high" } }
+    }'
+    write_project_setting "$dir" '{
+        "plan": { "claude": { "reasoning": "low" } }
+    }'
+    local model reasoning
+    model="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting "plan.claude.model" "default-model"
+    )"
+    reasoning="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting "plan.claude.reasoning" "default-reasoning"
+    )"
+    if [[ "$model" == "opus" ]] && [[ "$reasoning" == "low" ]]; then
+        test_pass "嵌套字段部分覆盖：继承未覆盖字段"
+    else
+        test_fail "嵌套字段部分覆盖" "期望 model=opus,reasoning=low 实际 model=$model,reasoning=$reasoning"
+    fi
+    cleanup_temp_project "$dir"
+    rm -rf "$home_dir"
+}
+
+# --- 测试 9: 数组整体替换 ---
+test_array_replacement() {
+    local dir home_dir
+    dir="$(create_temp_project "config-9")"
+    home_dir="$(mktemp -d)"
+    write_user_setting "$home_dir" '{
+        "tags": ["a", "b"]
+    }'
+    write_project_setting "$dir" '{
+        "tags": ["c"]
+    }'
+    # 数组在 flatten 后会被转成字符串，这里验证项目级覆盖用户级
+    local result
+    result="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting "tags" "none"
+    )"
+    # 数组被 Python flatten 后变成 "['c']" 形式的字符串
+    if [[ "$result" == *"c"* ]] && [[ "$result" != *"a"* ]]; then
+        test_pass "数组整体替换：项目级替换用户级"
+    else
+        test_fail "数组整体替换" "期望包含 c 不包含 a 实际=$result"
+    fi
+    cleanup_temp_project "$dir"
+    rm -rf "$home_dir"
+}
+
+# --- 测试 10: null 值不覆盖用户级 ---
+test_null_does_not_override_user() {
+    local dir home_dir
+    dir="$(create_temp_project "config-10")"
+    home_dir="$(mktemp -d)"
+    write_user_setting "$home_dir" '{
+        "engine_mode": "claude",
+        "state": { "actor": "user-actor" }
+    }'
+    write_project_setting "$dir" '{
+        "engine_mode": null
+    }'
+    local mode actor
+    mode="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting "engine_mode" "auto"
+    )"
+    actor="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting "state.actor" "default-actor"
+    )"
+    if [[ "$mode" == "claude" ]] && [[ "$actor" == "user-actor" ]]; then
+        test_pass "null 值不覆盖用户级字段"
+    else
+        test_fail "null 值不覆盖用户级字段" "期望 engine_mode=claude,state.actor=user-actor 实际 engine_mode=$mode,state.actor=$actor"
+    fi
+    cleanup_temp_project "$dir"
+    rm -rf "$home_dir"
+}
+
 # --- 运行 ---
 test_user_level_setting
 test_no_setting_fallback
@@ -184,6 +375,11 @@ test_nested_setting
 test_null_not_loaded
 test_load_idempotent
 test_expand_tilde
+test_project_override_user
+test_setting_source_label
+test_partial_nested_override
+test_array_replacement
+test_null_does_not_override_user
 
 print_summary
 exit "$fail_count"

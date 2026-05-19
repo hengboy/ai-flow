@@ -76,7 +76,7 @@ $HOME/.config/ai-flow/scripts/flow-plan-coding.sh <slug>
 
 按 `ai-flow-plan-coding-review` 的既有规则执行 regular review：
 
-- 先读取 `~/.config/ai-flow/setting.json` 的 `engine_mode`
+- 先读取最终生效配置（项目级优先，用户级回退）的 `engine_mode`
 - 仅允许按既有映射委派 `ai-flow-codex-plan-coding-review` 或 `ai-flow-claude-plan-coding-review`
 - 读取返回的 `RESULT`、`REVIEW_RESULT`、`STATE`、`NEXT`、`SUMMARY`
 - `REVIEW_RESULT: passed|passed_with_notes`：状态进入 `DONE`，本轮循环成功结束

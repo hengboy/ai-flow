@@ -4,42 +4,42 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AI_FLOW_HOME="${AI_FLOW_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
-# Resolve flow root: find nearest .ai-flow/state/ directory
-resolve_flow_root() {
-    local start
-    local candidate
-    start="$(pwd)"
-    candidate="$start"
-    local local_flow_root=""
+# Resolve flow root using shared helper, with local fallback for display
+if [ -f "${AI_FLOW_HOME}/lib/flow-root-helper.sh" ]; then
+    # shellcheck source=/dev/null
+    source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
+else
+    # shellcheck source=/dev/null
+    source "$(cd "$SCRIPT_DIR/../.." && pwd)/runtime/lib/flow-root-helper.sh"
+fi
 
+FLOW_ROOT="$(resolve_flow_root)" || {
+    # helper returned 1: either only .ai-flow exists or nothing — find nearest .ai-flow for display
+    _start="$(pwd)"
+    _candidate="$_start"
+    _found=""
     while true; do
-        if [ -d "$candidate/.ai-flow/state" ]; then
-            printf '%s' "$candidate"
-            return 0
-        fi
-        if [ -z "$local_flow_root" ] && [ -d "$candidate/.ai-flow" ]; then
-            local_flow_root="$candidate"
-        fi
-        if [ "$candidate" = "/" ] || [ "$candidate" = "//" ]; then
+        if [ -d "$_candidate/.ai-flow" ]; then
+            _found="$_candidate"
             break
         fi
-        local parent
-        parent="$(cd "$candidate/.." 2>/dev/null && pwd)" || break
-        if [ -z "$parent" ] || [ "$parent" = "$candidate" ]; then
+        if [ "$_candidate" = "/" ] || [ "$_candidate" = "//" ]; then
             break
         fi
-        candidate="$parent"
+        _parent="$(cd "$_candidate/.." 2>/dev/null && pwd)" || break
+        if [ -z "$_parent" ] || [ "$_parent" = "$_candidate" ]; then
+            break
+        fi
+        _candidate="$_parent"
     done
-    if [ -n "$local_flow_root" ]; then
-        printf '%s' "$local_flow_root"
-        return 0
+    if [ -n "$_found" ]; then
+        FLOW_ROOT="$_found"
+    else
+        FLOW_ROOT="$_start"
     fi
-    printf '%s' "$(pwd)"
-    return 1
 }
-
-FLOW_ROOT="$(resolve_flow_root)" || true
 PROJECT_DIR="$FLOW_ROOT"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"

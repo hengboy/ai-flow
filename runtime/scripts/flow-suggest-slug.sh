@@ -13,8 +13,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-STATE_DIR="$PROJECT_ROOT/.ai-flow/state"
+AI_FLOW_HOME="${AI_FLOW_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# Resolve flow root using shared helper
+if [ -f "${AI_FLOW_HOME}/lib/flow-root-helper.sh" ]; then
+    # shellcheck source=/dev/null
+    source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
+else
+    # shellcheck source=/dev/null
+    source "$(cd "$SCRIPT_DIR/../.." && pwd)/runtime/lib/flow-root-helper.sh"
+fi
+
+FLOW_ROOT="$(resolve_flow_root)" || FLOW_ROOT="$(pwd)"
+STATE_DIR="$FLOW_ROOT/.ai-flow/state"
 
 # 英文停用词列表
 STOP_WORDS_EN="the a an for of in to is it that and or but with at by on from as into about between through during before after above below again further then once here there when where why how all each every both few more most other some such no not only own same so than too very"

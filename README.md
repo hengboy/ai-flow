@@ -296,7 +296,19 @@ bash install.sh
 
 ### 配置
 
-所有运行时配置统一在 `~/.config/ai-flow/setting.json` 中管理。安装脚本会在首次安装时自动创建默认配置。配置模板位于 `subagents/shared/setting.json.template`。
+AI Flow 采用双层配置体系：用户级 `~/.config/ai-flow/setting.json` 为全局默认，项目级 `<flow-root>/.ai-flow/setting.json` 覆盖项目特定设置。
+
+**配置优先级**：项目级 > 用户级 > 代码内默认。
+
+**flow root 定位**：从当前工作目录向上查找 `.ai-flow/state`，找到即确定 flow root；在 git 仓库中但无 `.ai-flow/state` 时回退到 git toplevel；否则使用当前工作目录。
+
+**合并规则**：
+- 字典字段递归合并（项目级未设置的字段继承用户级）
+- 标量字段项目级覆盖用户级
+- 数组字段项目级整体替换用户级
+- `null` 值视为未设置，不删除用户级已有字段
+
+安装脚本会在首次安装时自动创建用户级默认配置。配置模板位于 `subagents/shared/setting.json.template`。
 
 ```json
 {
@@ -327,7 +339,17 @@ bash install.sh
 | `plan.claude.model` | Plan 阶段 Claude 模型 | `opus` | 按执行步骤独立配置 |
 | `plan_review.*` | Plan 审核阶段配置 | 同上 | 按引擎分别配置模型和推理强度 |
 | `coding_review.*` | 代码审查阶段配置 | 同上 | 按引擎分别配置模型和推理强度 |
-| `state.actor` | 状态变更操作者 | `flow-state.sh` | 审计追踪用 |
+| `state.actor` | 状态变更操作者 | `flow-state.sh` | 审计追踪用，也受项目级配置覆盖 |
+
+**示例**：项目级配置只覆盖 `state.actor`：
+
+```json
+{
+  "state": {
+    "actor": "my-project-actor"
+  }
+}
+```
 
 修改 `setting.json` 后立即生效，无需重启。
 
