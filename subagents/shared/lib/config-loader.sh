@@ -19,16 +19,18 @@ load_all_settings() {
     local config_file
     config_file="$(_ai_flow_config_file)"
 
-    # Resolve flow root: find nearest .ai-flow/state from cwd
+    # Resolve project-level config: prefer nearest .ai-flow/setting.json.
+    # This must work even before .ai-flow/state has been initialized.
     local project_config_file=""
     local _cwd
     _cwd="$(pwd)"
     local _candidate="$_cwd"
     while true; do
-        if [ -d "$_candidate/.ai-flow/state" ]; then
-            if [ -f "$_candidate/.ai-flow/setting.json" ]; then
-                project_config_file="$_candidate/.ai-flow/setting.json"
-            fi
+        if [ -f "$_candidate/.ai-flow/setting.json" ]; then
+            project_config_file="$_candidate/.ai-flow/setting.json"
+            break
+        fi
+        if [ -d "$_candidate/.ai-flow" ] || [ -d "$_candidate/.ai-flow/state" ]; then
             break
         fi
         if [ "$_candidate" = "/" ] || [ "$_candidate" = "//" ]; then

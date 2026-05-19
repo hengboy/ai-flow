@@ -368,6 +368,66 @@ test_null_does_not_override_user() {
     rm -rf "$home_dir"
 }
 
+# --- 测试 11: 无 state 目录时仍加载项目级配置 ---
+test_project_setting_without_state_dir() {
+    local dir home_dir
+    dir="$(mktemp -d "${PROJECT_ROOT}/.ai-flow-tests/config-11.XXXXXX")"
+    home_dir="$(mktemp -d)"
+    mkdir -p "$dir/.ai-flow"
+    write_user_setting "$home_dir" '{
+        "engine_mode": "claude",
+        "state": { "actor": "user-actor" }
+    }'
+    printf '%s' '{
+        "engine_mode": "codex",
+        "state": { "actor": "project-actor" }
+    }' > "$dir/.ai-flow/setting.json"
+
+    local mode actor mode_source actor_source
+    mode="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting "engine_mode" "auto"
+    )"
+    actor="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting "state.actor" "default-actor"
+    )"
+    mode_source="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting_source_label "engine_mode"
+    )"
+    actor_source="$(
+        cd "$dir" || exit 1
+        export AI_FLOW_HOME="$home_dir"
+        unset _ai_flow_config_loaded
+        source "$CONFIG_LOADER"
+        load_all_settings
+        get_setting_source_label "state.actor"
+    )"
+
+    if [[ "$mode" == "codex" ]] && [[ "$actor" == "project-actor" ]] && \
+       [[ "$mode_source" == "项目级配置" ]] && [[ "$actor_source" == "项目级配置" ]]; then
+        test_pass "无 state 目录时仍应用项目级配置"
+    else
+        test_fail "无 state 目录时仍应用项目级配置" \
+            "期望 engine_mode=codex,state.actor=project-actor,来源均为项目级；实际 engine_mode=$mode,state.actor=$actor,mode_source=$mode_source,actor_source=$actor_source"
+    fi
+
+    rm -rf "$dir" "$home_dir"
+}
+
 # --- 运行 ---
 test_user_level_setting
 test_no_setting_fallback
@@ -380,6 +440,7 @@ test_setting_source_label
 test_partial_nested_override
 test_array_replacement
 test_null_does_not_override_user
+test_project_setting_without_state_dir
 
 print_summary
 exit "$fail_count"
