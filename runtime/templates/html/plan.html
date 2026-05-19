@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}}</title>
+  <style>{{CSS}}</style>
+</head>
+<body>
+  <div class="page">
+    <header class="page-head">
+      <div class="eyebrow">AI Flow — 实施计划</div>
+      <h1>{{TITLE}}</h1>
+      <div class="summary">
+        <div class="cell"><div class="k">Slug</div><div class="v">{{SLUG}}</div></div>
+        <div class="cell"><div class="k">创建日期</div><div class="v">{{CREATED_AT}}</div></div>
+        <div class="cell"><div class="k">状态</div><div class="v accent">{{STATUS}}</div></div>
+        <div class="cell"><div class="k">来源</div><div class="v">{{SOURCE}}</div></div>
+      </div>
+      <div class="source-link"><a href="{{SOURCE_PATH}}" target="_blank">查看原始 Markdown</a></div>
+    </header>
+
+    {{SECTIONS}}
+
+    <div class="info-block">
+      <div class="ib-title">计划审核记录</div>
+      {{REVIEW_RECORD}}
+    </div>
+  </div>
+  <script>{{JS}}</script>
+</body>
+</html>

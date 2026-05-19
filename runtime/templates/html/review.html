@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{TITLE}}</title>
+  <style>{{CSS}}</style>
+</head>
+<body>
+  <div class="page">
+    <header class="pr-head">
+      <div class="repo-line">AI Flow — 审查报告</div>
+      <h1>{{TITLE}}</h1>
+      <div class="meta-row">
+        <div class="author">
+          <div class="avatar">{{ENGINE_INITIAL}}</div>
+          <div>
+            <div class="author-name">审查引擎: {{ENGINE}}</div>
+            <div class="author-sub">{{REVIEW_TIME}}</div>
+          </div>
+        </div>
+        <div class="branch">模型: {{MODEL}}</div>
+        <div class="stat">结果: <span class="add">{{RESULT}}</span></div>
+      </div>
+      <div class="source-link"><a href="{{SOURCE_PATH}}" target="_blank">查看原始 Markdown</a></div>
+    </header>
+
+    {{SECTIONS}}
+
+    <div class="info-block">
+      <div class="ib-title">关联 Plan 文件</div>
+      <p><a href="{{PLAN_PATH}}" target="_blank">{{PLAN_PATH}}</a></p>
+    </div>
+  </div>
+  <script>{{JS}}</script>
+</body>
+</html>
