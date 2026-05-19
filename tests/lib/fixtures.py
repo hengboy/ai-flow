@@ -30,9 +30,8 @@ class TempProject:
 
     @property
     def env(self):
-        env = dict(os.environ)
-        env["AI_FLOW_ACTOR"] = "test-runner"
-        return env
+        """默认环境，不注入 AI_FLOW_ACTOR 让 Python 从 setting.json 读取。"""
+        return dict(os.environ)
 
     def create_state(self, slug, **overrides):
         """创建一个最小合法状态文件，支持字段覆盖。"""

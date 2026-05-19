@@ -61,11 +61,11 @@ test_derive_fallback_claude_none() {
 
 # --- 测试 4: resolve_engine_mode ---
 test_engine_mode_auto() {
-    # 需要在无 AI_FLOW_SETTING_ENGINE_MODE 的环境下测试
+    local dir
+    dir="$(create_temp_project "agent-common-auto")"
     local result
     result="$(
-        unset AI_FLOW_SETTING_ENGINE_MODE 2>/dev/null || true
-        env -i HOME="$HOME" PATH="$PATH" TERM="$TERM" \
+        env -i HOME="$dir" PATH="$PATH" TERM="$TERM" \
             bash -c "
                 source '$SHARED_LIB/config-loader.sh'
                 source '$SHARED_LIB/agent-common.sh' 2>/dev/null || true
@@ -73,6 +73,7 @@ test_engine_mode_auto() {
             "
     )"
     assert_equal "$result" "" "auto 模式返回空"
+    cleanup_temp_project "$dir"
 }
 
 # --- 测试 5: display_path ---
@@ -139,7 +140,7 @@ test_require_file_missing() {
 test_derive_engine_codex
 test_derive_engine_claude
 test_derive_engine_unknown
-test_derive_roles_coding_review
+test_derive_role_coding_review
 test_derive_roles_plan_review
 test_derive_roles_plan
 test_derive_fallback_codex_to_claude
