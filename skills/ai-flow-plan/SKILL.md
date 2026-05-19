@@ -90,7 +90,7 @@ Agent(
 plan 生成/修订完成后，用一行自然语言总结结果并给出下一步，示例：
 
 - 成功 → `✅ 计划草案已生成，状态进入 AWAITING_PLAN_REVIEW。`
-- 修订成功 → `✅ 计划已修订，状态进入 AWAITING_PLAN_REVIEW。`
+- 修订成功 → `✅ 计划已修订，状态已自动回到 AWAITING_PLAN_REVIEW。`
 - 失败 → `❌ 计划生成失败，缺少需求描述。`
 
 然后根据 `NEXT` 值追加下一步提示：

@@ -26,13 +26,13 @@ color: blue
 ## 调用契约
 
 - 调用参数：`{slug或唯一关键词}`。关键词必须唯一匹配一个状态文件。
-- 只允许审核 `AWAITING_PLAN_REVIEW` 或 `PLAN_REVIEW_FAILED` 状态的需求；匹配不到、匹配多个或关联 plan 缺失时直接失败。
+- 只允许审核 `AWAITING_PLAN_REVIEW` 状态的需求；匹配不到、匹配多个或关联 plan 缺失时直接失败。
 - 审核基线必须来自 plan 内的 `原始需求（原文）`，不能依赖调用方口头说明。
 - 必须读取共享提示词 `subagents/shared/plan/prompts/plan-review.md`。
 - 审核范围包括原始需求一致性、结构完整性、可执行性、测试闭环、文件边界和 workspace 合规性。
 - 审核结果只能是 `passed`、`passed_with_notes` 或 `failed`。`passed_with_notes` 只用于无阻断偏差但有可选建议的场景。
 - 必须回写 plan 的 `## 8. 计划审核记录`，包含 `8.1 当前审核结论`、`8.2 偏差与建议`、`8.3 审核历史`。
-- 状态只能通过 `$HOME/.config/ai-flow/scripts/flow-state.sh transition` 推进：`plan_review_passed` 到 `PLANNED`，`plan_review_failed` 到 `PLAN_REVIEW_FAILED`。
+- 状态只能通过 `$HOME/.config/ai-flow/scripts/flow-state.sh transition` 推进：`plan_review_passed` 到 `PLANNED`，`plan_review_failed` 到 `PLAN_REVIEW_FAILED`。若上一轮失败，必须先回 `/ai-flow-plan` 修订并通过 `plan_reopened` 回到 `AWAITING_PLAN_REVIEW`，禁止直接复审失败态。
 - 本代理不使用外部 CLI（`codex exec` / `opencode run`），直接使用内置能力完成工作；与 `ai-flow-codex-plan-review` 形成降级配对。
 
 ### 固定输出协议

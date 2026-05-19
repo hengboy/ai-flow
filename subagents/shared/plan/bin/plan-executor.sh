@@ -240,7 +240,8 @@ replacements = {
     r"(?m)^> 创建日期：.*$": f"> 创建日期：{created_date}",
     r"(?m)^> 创建时间：.*$": f"> 创建时间：{created_time}",
     r"(?m)^> 需求简称：.*$": f"> 需求简称：{slug}",
-    r"(?m)^> 状态文件：.*$": f"> 状态文件：`.ai-flow/state/{slug}.json`（内部自动添加日期前缀）",
+    r"(?m)^> 状态文件：.*$": f"> 状态文件：`.ai-flow/state/{date_prefix}-{slug}.json`",
+    r"(?m)^> 状态文件约束：.*$": f"> 状态文件约束：`.ai-flow/state/{date_prefix}-{slug}.json` 只能使用 `flow-state.sh` 的固定 schema；不得在 plan 中设计 `requirement_key`、`status`、`steps`、`verification_results`、`change_register` 等自定义字段。",
 }
 for pattern, replacement in replacements.items():
     text = re.sub(pattern, replacement, text, count=1)
@@ -442,6 +443,29 @@ slug_exists() {
         return 0
     fi
     find "$FLOW_DIR/plans" -name "*-${candidate}.md" -type f 2>/dev/null | grep -q .
+}
+
+resolve_existing_state_file_for_slug() {
+    local candidate="$1"
+    local exact="$STATE_DIR/${candidate}.json"
+    if [ -f "$exact" ]; then
+        printf '%s\n' "$exact"
+        return 0
+    fi
+
+    local matches=()
+    while IFS= read -r -d '' path; do
+        matches+=("$path")
+    done < <(find "$STATE_DIR" -maxdepth 1 -type f -name "*-${candidate}.json" -print0 2>/dev/null)
+
+    if [ "${#matches[@]}" -eq 1 ]; then
+        printf '%s\n' "${matches[0]}"
+        return 0
+    fi
+    if [ "${#matches[@]}" -gt 1 ]; then
+        fail_protocol "slug [$candidate] 匹配到多个状态文件，请改用带日期前缀的完整 slug"
+    fi
+    return 1
 }
 
 file_line_count() {
@@ -1696,7 +1720,7 @@ if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
             ;;
         *)
             PROTOCOL_STATE="$PLAN_STATUS"
-            fail_protocol "当前状态为 [$PLAN_STATUS]，计划审核只允许 [AWAITING_PLAN_REVIEW] 或 [PLAN_REVIEW_FAILED]" "failed"
+            fail_protocol "当前状态为 [$PLAN_STATUS]，计划审核只允许 [AWAITING_PLAN_REVIEW]" "failed"
             ;;
     esac
 
@@ -1843,8 +1867,8 @@ if ! echo "$SLUG" | grep -qE '^[a-z0-9一-鿿][a-z0-9一-鿿-]*$'; then
     fail_protocol "英文简称 '$SLUG' 包含非法字符，只允许小写字母、数字、连字符（-）和中文字符"
 fi
 
-EXISTING_STATE_FILE="$STATE_DIR/${DATE_PREFIX}-${SLUG}.json"
-if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
+EXISTING_STATE_FILE=""
+if [ "$SLUG_EXPLICIT" = true ] && EXISTING_STATE_FILE="$(resolve_existing_state_file_for_slug "$SLUG")"; then
     PLAN_STATUS=$(state_json_value "$EXISTING_STATE_FILE" "current_status")
     PLAN_FILE=$(state_json_value "$EXISTING_STATE_FILE" "plan_file")
     case "$PLAN_STATUS" in
@@ -1885,7 +1909,7 @@ else
     fi
 
     if slug_exists "$SLUG"; then
-        fail_protocol "同名计划或状态已存在: $SLUG；如需重新生成，请先清理对应的 .ai-flow/state/${SLUG}.json 和计划文件，或更换简称"
+        fail_protocol "同名计划或状态已存在: ${SLUG}；如需重新生成，请先清理对应的 .ai-flow/state/${SLUG}.json 和计划文件，或更换简称"
     fi
     PLAN_FILE="$PLANS_DIR/${DATE_PREFIX}-${SLUG}.md"
 fi
@@ -2008,6 +2032,7 @@ fi
 TEMPLATE_CONTENT=$(render_plan_template_content "$REQUIREMENT" "$REQUIREMENT")
 
 if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
+    EXISTING_DATED_SLUG="$(basename "$EXISTING_STATE_FILE" .json)"
     local_review_items=$(mktemp)
     printf '%s\n' "$(extract_plan_review_items "$PLAN_FILE")" > "$local_review_items"
     PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
@@ -2028,10 +2053,17 @@ if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
         fi
     fi
     rm -f "$local_review_items"
-    echo "    状态保持 [$PLAN_STATUS]"
+    if [ "$PLAN_STATUS" = "PLAN_REVIEW_FAILED" ]; then
+        AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" transition \
+            --slug "$EXISTING_DATED_SLUG" \
+            --event plan_reopened \
+            --note "draft plan 修订完成，重新进入计划审核" >/dev/null
+        PLAN_STATUS=$("$FLOW_STATE_SH" show --slug "$EXISTING_DATED_SLUG" --field current_status)
+    fi
+    echo "    状态更新为 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"
     PROTOCOL_NEXT="ai-flow-plan-review"
-    PROTOCOL_SUMMARY="draft plan 修订完成，状态保持 [$PLAN_STATUS]。"
+    PROTOCOL_SUMMARY="draft plan 修订完成，状态进入 [$PLAN_STATUS]。"
 else
     echo ">>> 生成 draft plan..."
     echo "    输出文件: $PLAN_FILE"

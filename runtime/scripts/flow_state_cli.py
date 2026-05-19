@@ -31,9 +31,8 @@ STATUS_VALUES = {
 EVENT_TRANSITIONS = {
     ("plan_created", None): "AWAITING_PLAN_REVIEW",
     ("plan_review_passed", "AWAITING_PLAN_REVIEW"): "PLANNED",
-    ("plan_review_passed", "PLAN_REVIEW_FAILED"): "PLANNED",
     ("plan_review_failed", "AWAITING_PLAN_REVIEW"): "PLAN_REVIEW_FAILED",
-    ("plan_review_failed", "PLAN_REVIEW_FAILED"): "PLAN_REVIEW_FAILED",
+    ("plan_reopened", "PLAN_REVIEW_FAILED"): "AWAITING_PLAN_REVIEW",
     ("execute_started", "PLANNED"): "IMPLEMENTING",
     ("implementation_completed", "IMPLEMENTING"): "AWAITING_REVIEW",
     ("review_passed", "AWAITING_REVIEW"): "DONE",
@@ -219,7 +218,7 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 def default_next_events(status: str) -> list[str]:
     mapping = {
         "AWAITING_PLAN_REVIEW": ["plan_review_passed", "plan_review_failed"],
-        "PLAN_REVIEW_FAILED": ["plan_review_passed", "plan_review_failed"],
+        "PLAN_REVIEW_FAILED": ["plan_reopened"],
         "PLANNED": ["execute_started", "plan_reopened"],
         "IMPLEMENTING": ["implementation_completed", "plan_reopened"],
         "AWAITING_REVIEW": ["review_passed", "review_failed", "implementation_reopened"],

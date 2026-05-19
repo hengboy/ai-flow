@@ -115,8 +115,9 @@ test_plan_revision_after_failed_review() {
         run_with_fake_plan_agents "$temp_root" bash "$plan_executor" "新增用户权限管理模块" user-permission >"$temp_root/revise.out"
     )
 
-    assert_equals "PLAN_REVIEW_FAILED" "$(state_field "$project" "${today}-user-permission" "current_status")"
+    assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "${today}-user-permission" "current_status")"
     assert_protocol_field "$temp_root/revise.out" "RESULT" "success"
+    assert_protocol_field "$temp_root/revise.out" "STATE" "AWAITING_PLAN_REVIEW"
     assert_protocol_field "$temp_root/revise.out" "NEXT" "ai-flow-plan-review"
     rm -rf "$temp_root"
 }
@@ -385,7 +386,7 @@ test_plan_missing_runtime_fails_deterministically() {
     rm -rf "$temp_root"
 }
 
-test_flow_state_requires_full_dated_slug() {
+test_flow_state_accepts_undated_slug_and_normalizes_to_dated_slug() {
     local temp_root project state_script out
     temp_root=$(make_temp_root)
     project="$temp_root/project"
@@ -396,17 +397,14 @@ test_flow_state_requires_full_dated_slug() {
 
     (
         cd "$project"
-        set +e
         bash "$state_script" transition --slug dated-demo --event plan_created --title "dated demo" --plan-file .ai-flow/plans/20260503-dated-demo.md --repo-scope-json "$(repo_scope_json "$project" "owner::.")" >"$temp_root/create.out" 2>&1
-        rc=$?
-        set -e
-        [ "$rc" -ne 0 ] || fail "Expected undated slug to be rejected"
-    ) || true
+    )
     out="$temp_root/create.out"
 
-    assert_contains "$out" "slug 必须是完整 dated slug"
-    assert_file_not_exists "$project/.ai-flow/state/20260503-dated-demo.json"
+    assert_contains "$out" "20260519-dated-demo: AWAITING_PLAN_REVIEW"
+    assert_file_exists "$project/.ai-flow/state/20260519-dated-demo.json"
     assert_file_not_exists "$project/.ai-flow/state/dated-demo.json"
+    assert_equals "20260519-dated-demo" "$(state_field "$project" "20260519-dated-demo" "slug")"
     rm -rf "$temp_root"
 }
 
@@ -457,4 +455,4 @@ test_plan_generation_injects_rule_prompt_and_required_reads
 test_plan_generation_state_file_notice_uses_date_prefix
 test_plan_generation_fails_when_required_read_missing
 test_plan_missing_runtime_fails_deterministically
-test_flow_state_requires_full_dated_slug
+test_flow_state_accepts_undated_slug_and_normalizes_to_dated_slug

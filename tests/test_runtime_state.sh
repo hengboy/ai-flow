@@ -102,6 +102,63 @@ test_transition_rejects_engine_alias_in_model() {
     rm -rf "$temp_root"
 }
 
+test_plan_reopened_from_plan_review_failed_returns_to_awaiting_plan_review() {
+    local temp_root project state_script state_slug
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    state_script="$SOURCE_FLOW_STATE_SCRIPT"
+    state_slug="demo"
+    setup_project_dirs "$project" "20260503"
+    create_plan_file "$project" "demo" "20260503" "demo"
+    setup_git_repo_clean "$project"
+
+    (
+        cd "$project"
+        local repo_scope
+        repo_scope="$(repo_scope_json "$project" "owner::.")"
+        bash "$state_script" transition --slug "$state_slug" --event plan_created --title demo --plan-file .ai-flow/plans/20260503-demo.md --repo-scope-json "$repo_scope" >/dev/null
+        bash "$state_script" transition --slug "$state_slug" --event plan_review_failed --result failed --engine Fixture --model fixture >/dev/null
+        bash "$state_script" transition --slug "$state_slug" --event plan_reopened --note "计划修订完成，待重新审核" >/dev/null
+    )
+
+    assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "$state_slug" "current_status")"
+    assert_equals "plan_reopened" "$(state_field "$project" "$state_slug" "transitions.2.event")"
+    assert_equals "PLAN_REVIEW_FAILED" "$(state_field "$project" "$state_slug" "transitions.2.from")"
+    assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "$state_slug" "transitions.2.to")"
+    assert_equals "plan_review_passed" "$(state_field "$project" "$state_slug" "derived.next_events.0")"
+    assert_equals "plan_review_failed" "$(state_field "$project" "$state_slug" "derived.next_events.1")"
+    rm -rf "$temp_root"
+}
+
+test_plan_review_cannot_run_directly_from_plan_review_failed() {
+    local temp_root project state_script rc state_slug
+    temp_root=$(make_temp_root)
+    project="$temp_root/project"
+    state_script="$SOURCE_FLOW_STATE_SCRIPT"
+    state_slug="demo"
+    setup_project_dirs "$project" "20260503"
+    create_plan_file "$project" "demo" "20260503" "demo"
+    setup_git_repo_clean "$project"
+
+    (
+        cd "$project"
+        local repo_scope
+        repo_scope="$(repo_scope_json "$project" "owner::.")"
+        bash "$state_script" transition --slug "$state_slug" --event plan_created --title demo --plan-file .ai-flow/plans/20260503-demo.md --repo-scope-json "$repo_scope" >/dev/null
+        bash "$state_script" transition --slug "$state_slug" --event plan_review_failed --result failed --engine Fixture --model fixture >/dev/null
+        set +e
+        bash "$state_script" transition --slug "$state_slug" --event plan_review_passed --result passed --engine Fixture --model fixture >"$temp_root/review-direct.out" 2>&1
+        rc=$?
+        set -e
+        [ "$rc" -ne 0 ] || fail "Expected PLAN_REVIEW_FAILED to reject direct plan_review_passed"
+    )
+
+    assert_contains "$temp_root/review-direct.out" "非法迁移: event=plan_review_passed from=PLAN_REVIEW_FAILED"
+    rm -rf "$temp_root"
+}
+
 test_transition_happy_path_and_derived_view
 test_lock_conflict_rejected
 test_transition_rejects_engine_alias_in_model
+test_plan_reopened_from_plan_review_failed_returns_to_awaiting_plan_review
+test_plan_review_cannot_run_directly_from_plan_review_failed

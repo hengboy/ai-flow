@@ -1692,11 +1692,11 @@ if [ "$INTERNAL_PLAN_REVIEW" -eq 1 ]; then
     PLAN_TITLE=$(printf '%s\n' "$state_context" | sed -n '3p')
 
     case "$PLAN_STATUS" in
-        AWAITING_PLAN_REVIEW|PLAN_REVIEW_FAILED)
+        AWAITING_PLAN_REVIEW)
             ;;
         *)
             PROTOCOL_STATE="$PLAN_STATUS"
-            fail_protocol "当前状态为 [$PLAN_STATUS]，计划审核只允许 [AWAITING_PLAN_REVIEW] 或 [PLAN_REVIEW_FAILED]" "failed"
+            fail_protocol "当前状态为 [$PLAN_STATUS]，计划审核只允许 [AWAITING_PLAN_REVIEW]" "failed"
             ;;
     esac
 

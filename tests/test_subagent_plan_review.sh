@@ -66,13 +66,14 @@ test_plan_review_failed() {
     rm -rf "$temp_root"
 }
 
-test_plan_review_failed_then_passed_with_notes_returns_planned() {
-    local temp_root project runtime_script executor plan_file
+test_plan_review_failed_then_revised_then_passed_with_notes_returns_planned() {
+    local temp_root project runtime_script review_executor plan_executor plan_file
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     write_fake_plan_agents "$temp_root"
     runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
-    executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
+    review_executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
+    plan_executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
@@ -80,8 +81,9 @@ test_plan_review_failed_then_passed_with_notes_returns_planned() {
 
     (
         cd "$project"
-        FAKE_PLAN_REVIEW_RESULT=failed run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-round1.out"
-        FAKE_PLAN_REVIEW_RESULT=passed_with_notes run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-round2.out"
+        FAKE_PLAN_REVIEW_RESULT=failed run_with_fake_plan_agents "$temp_root" bash "$review_executor" demo >"$temp_root/review-round1.out"
+        run_with_fake_plan_agents "$temp_root" bash "$plan_executor" "demo revision" demo >"$temp_root/revise.out"
+        FAKE_PLAN_REVIEW_RESULT=passed_with_notes run_with_fake_plan_agents "$temp_root" bash "$review_executor" demo >"$temp_root/review-round2.out"
     )
 
     assert_equals "PLANNED" "$(state_field "$project" "20260503-demo" "current_status")"
@@ -91,11 +93,14 @@ test_plan_review_failed_then_passed_with_notes_returns_planned() {
     assert_protocol_field "$temp_root/review-round2.out" "NEXT" "ai-flow-plan-coding"
     assert_equals "plan_review_failed" "$(state_field "$project" "20260503-demo" "transitions.1.event")"
     assert_equals "PLAN_REVIEW_FAILED" "$(state_field "$project" "20260503-demo" "transitions.1.to")"
-    assert_equals "plan_review_passed" "$(state_field "$project" "20260503-demo" "transitions.2.event")"
-    assert_equals "PLANNED" "$(state_field "$project" "20260503-demo" "transitions.2.to")"
+    assert_equals "plan_reopened" "$(state_field "$project" "20260503-demo" "transitions.2.event")"
+    assert_equals "AWAITING_PLAN_REVIEW" "$(state_field "$project" "20260503-demo" "transitions.2.to")"
+    assert_equals "plan_review_passed" "$(state_field "$project" "20260503-demo" "transitions.3.event")"
+    assert_equals "PLANNED" "$(state_field "$project" "20260503-demo" "transitions.3.to")"
     assert_contains "$plan_file" "#### 第 1 轮"
     assert_contains "$plan_file" "#### 第 2 轮"
-    assert_equals "2" "$(wc -l < "$temp_root/codex.plan.calls" | tr -d ' ')"
+    assert_protocol_field "$temp_root/revise.out" "STATE" "AWAITING_PLAN_REVIEW"
+    assert_equals "3" "$(wc -l < "$temp_root/codex.plan.calls" | tr -d ' ')"
     assert_file_not_exists "$temp_root/opencode.plan.calls"
     rm -rf "$temp_root"
 }
@@ -201,12 +206,13 @@ test_plan_review_defaults_to_high_reasoning() {
 }
 
 test_plan_review_escalates_reasoning_after_failed_round() {
-    local temp_root project runtime_script executor
+    local temp_root project runtime_script executor plan_executor
     temp_root=$(make_temp_root)
     install_ai_flow "$temp_root"
     write_fake_plan_agents "$temp_root"
     runtime_script="$(installed_runtime_script "$temp_root" "flow-state.sh")"
     executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan-review" "plan-review-executor.sh")"
+    plan_executor="$(installed_subagent_executor "$temp_root" "ai-flow-codex-plan" "plan-executor.sh")"
     project="$temp_root/project"
     setup_project_dirs "$project" "20260503"
     create_state_with_status "$runtime_script" "$project" "demo" "AWAITING_PLAN_REVIEW" "20260503" "demo"
@@ -214,6 +220,7 @@ test_plan_review_escalates_reasoning_after_failed_round() {
     (
         cd "$project"
         FAKE_PLAN_REVIEW_RESULT=failed run_with_fake_plan_agents "$temp_root" bash "$executor" demo >/dev/null
+        run_with_fake_plan_agents "$temp_root" bash "$plan_executor" "demo revision" demo >/dev/null
         FAKE_PLAN_REVIEW_RESULT=passed run_with_fake_plan_agents "$temp_root" bash "$executor" demo >"$temp_root/review-reasoning-round2.out"
     )
 
@@ -245,7 +252,7 @@ test_plan_review_executor_loads_workspace_helpers() {
 
 test_plan_review_passed_with_notes
 test_plan_review_failed
-test_plan_review_failed_then_passed_with_notes_returns_planned
+test_plan_review_failed_then_revised_then_passed_with_notes_returns_planned
 test_plan_review_degraded_when_codex_unavailable
 test_plan_review_codex_mode_fails_when_codex_unavailable
 test_plan_review_ignores_explicit_model_override
