@@ -63,6 +63,9 @@ $HOME/.config/ai-flow/scripts/flow-status.sh
 - 更新计划文档中的复选框
 - `REVIEW_FAILED` / `FIXING_REVIEW` 阶段默认按”缺陷族”收敛修复，不按单个 DEF 编号孤立修补
 - 如果 plan 的 `执行范围` 为 `workspace`，文件路径相对于 workspace 根目录；修改文件时需确保路径包含正确的 repo 前缀
+- 开始任何修改前，必须先确认当前 Step 的目标、文件边界、验证命令和关闭条件都可执行；若存在 plan 缺口、命名/路径失真、验证方式缺失、验收标准无法证明或与仓库事实冲突，必须停止并向用户确认，不得靠猜测继续实现
+- 执行过程中若发现需求实际含义、外部依赖、仓库边界或验证口径与 plan 不一致，必须先停下；属于需求/范围变化时走 `/ai-flow-change`，属于 plan 草案质量问题时回到 `/ai-flow-plan`
+- 不得在缺少本轮证据的情况下勾选步骤、宣告某 Step 完成或推进状态；每次勾选前必须先完成该 Step 对应的实际验证
 - 如果用户追加需求，先运行：
 
 ```bash
@@ -97,6 +100,7 @@ $HOME/.config/ai-flow/scripts/flow-change.sh {slug} “变更描述”
 - 失败状态只读 `show --field derived.last_review` / `show --field derived.active_fix` 追踪最近失败报告
 - 可以更新旧报告中的”缺陷修复追踪”表
 - 每次修复至少同时完成三件事：修阻塞缺陷、补对应缺陷族的最小必要测试/验证、更新旧报告 `## 6. 缺陷修复追踪`
+- 收到 review 反馈后，先按缺陷逐项理解问题与证据，再决定修改方案；如果某条反馈与当前代码事实不符、上下文不足或存在多种解释，必须先澄清或在修复说明中给出代码依据，不能机械照单修改
 - `Critical` / `Important` 属于阻塞缺陷，必须修复完成后才能结束当前 plan；`Minor` 属于非阻塞建议，可选择修复部分、全部或暂不处理
 - Minor 若暂不处理，应在 review 报告中保持 `[可选]`，不得再作为 `REVIEW_FAILED` 的阻塞原因
 - 如果最近一次失败是 regular 第 2 轮，继续修复前必须先运行 `$HOME/.config/ai-flow/scripts/flow-change.sh {slug}` 补录 root cause，变更描述统一使用前缀 `[root-cause-review-loop]`
@@ -150,6 +154,8 @@ INCOMPLETE: <仅 RESULT=partial 时输出>
 - 禁止调用 `transition` 之外的写接口
 - 禁止直接编辑 `.ai-flow/state/*.json` 文件
 - 状态转换必须严格按第 3 节的规则执行，不得跳过或逆向
+- 任何“已完成”“已修复”“可以进入 review”的结论都必须基于当前工作区的本轮新鲜验证证据；旧截图、旧日志、上一次 review 结果或主观判断都不能替代本轮验证
+- 若验证命令无法运行、结果不稳定、输出与预期不符，必须视为未完成；除第 5 节明确允许的人工决策场景外，不得推进状态
 
 ## 注意事项
 

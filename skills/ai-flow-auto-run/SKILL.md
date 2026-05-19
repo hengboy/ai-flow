@@ -16,6 +16,7 @@ description: 在 PLANNED 到 DONE 区间内由主 agent 自动闭环推进 codin
 - 自动闭环范围固定为：`coding/fix -> review/recheck -> 按失败路由继续修复 -> 再 review`
 - **主 agent 自动循环到 DONE**，直到成功、遇到必须人工决策的硬阻塞，或现有 runtime / subagent 返回失败
 - 禁止递归调用其他 skill；必须直接复用现有 runtime 脚本、计划状态机和 `ai-flow-plan-coding-review` 的 review subagent 选择规则
+- 自动循环不代表允许猜测推进；任何一步只要缺少可执行 plan、缺少本轮验证证据、缺少回流方向或遇到含义不清的 review 反馈，都必须立即停下并把阻塞原因暴露给用户
 
 ## 运行目录
 
@@ -132,6 +133,7 @@ recheck 规则：
 - 成功：状态进入或保持 `DONE`
 - 部分完成：遇到 `ai-flow-plan-coding` 既有“未完成任务需人工决策”场景，停止并保留当前状态
 - 失败：runtime 门禁失败、slug 解析失败、review 结果缺少可执行回流方向、外部依赖不可用，或任何现有执行器返回失败
+- 失败还包括：缺少本轮新鲜验证证据、plan 与仓库事实冲突且无法自行收敛、review 反馈存在关键歧义且无法安全判断修改方向
 
 ## 边界与约束
 
@@ -140,6 +142,7 @@ recheck 规则：
 - 自动闭环止于 `DONE`，**不自动提交代码**；需要提交时仍由 `/ai-flow-git-commit` 单独处理
 - 禁止直接编辑 `.ai-flow/state/*.json`
 - 禁止绕过 `flow-plan-coding.sh` / `flow-code-optimize.sh` / `flow-state.sh` 直接推进状态
+- 每轮 coding / fix / review / recheck 都必须重新获取本轮证据；不得复用上一轮成功结论直接跳过验证
 
 ## 固定输出协议
 

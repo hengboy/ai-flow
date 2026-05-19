@@ -69,6 +69,7 @@ Agent(
 - 读取工作区、Git 变更、plan / review 上下文
 - 生成 `.ai-flow/reports/*` 下的审查报告
 - 推导 `REVIEW_RESULT` 并在绑定 `slug` 时推进状态
+- 审查结论必须基于当前变更与本轮可见证据；若缺少必要上下文、验证结果过旧或无法确认阻断级别，必须判为需要补证据或直接失败，不能凭猜测放行
 - 返回固定摘要协议，而不是回传报告全文
 
 ## 固定输出协议
@@ -110,3 +111,4 @@ SUMMARY: <one-line-summary>
 - `DONE` 后若只处理 Minor 建议的独立修改，推荐链路为：
   `无 slug 的 /ai-flow-code-optimize 或 /ai-flow-bug-fix -> /ai-flow-plan-coding-review --standalone -> /ai-flow-git-commit`
 - `RESULT: failed`：直接报告 `SUMMARY` 并停止
+- 若审查指出的问题存在歧义或与代码事实不一致，后续修复阶段必须先理解或澄清，再决定是否修改；review 输出应尽量给出可核验的代码依据与证据位置
