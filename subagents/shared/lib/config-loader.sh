@@ -14,6 +14,11 @@ _ai_flow_setting_source_var_name() {
     printf 'AI_FLOW_SETTING_SOURCE_%s' "$(echo "$key" | tr '.' '_' | tr '[:lower:]' '[:upper:]')"
 }
 
+_ai_flow_get_env_value() {
+    local var_name="$1"
+    eval "printf '%s' \"\${${var_name}:-}\""
+}
+
 load_all_settings() {
     [ "$_ai_flow_config_loaded" -eq 0 ] || return 0
     local config_file
@@ -134,7 +139,8 @@ get_setting() {
     local fallback="$2"
     local setting_var
     setting_var="AI_FLOW_SETTING_$(echo "$key" | tr '.' '_' | tr '[:lower:]' '[:upper:]')"
-    local val="${!setting_var:-}"
+    local val
+    val="$(_ai_flow_get_env_value "$setting_var")"
     if [ -n "$val" ]; then
         echo "$val"
     else
@@ -146,7 +152,8 @@ get_setting_source() {
     local key="$1"
     local setting_var
     setting_var="$(_ai_flow_setting_source_var_name "$key")"
-    local source="${!setting_var:-}"
+    local source
+    source="$(_ai_flow_get_env_value "$setting_var")"
     if [ -n "$source" ]; then
         echo "$source"
     else
