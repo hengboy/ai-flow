@@ -6,14 +6,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
-# Resolve flow root using shared helper, with local fallback for display
-if [ -f "${AI_FLOW_HOME}/lib/flow-root-helper.sh" ]; then
-    # shellcheck source=/dev/null
-    source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
-else
-    # shellcheck source=/dev/null
-    source "$(cd "$SCRIPT_DIR/../.." && pwd)/runtime/lib/flow-root-helper.sh"
+# Resolve flow root using shared helper
+if [ ! -f "${AI_FLOW_HOME}/lib/flow-root-helper.sh" ]; then
+    echo "错误: 缺少 flow-root-helper.sh: ${AI_FLOW_HOME}/lib/flow-root-helper.sh" >&2
+    exit 1
 fi
+# shellcheck source=/dev/null
+source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
 
 FLOW_ROOT="$(resolve_flow_root)" || {
     # helper returned 1: either only .ai-flow exists or nothing — find nearest .ai-flow for display

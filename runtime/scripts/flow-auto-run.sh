@@ -8,6 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AI_FLOW_HOME="${AI_FLOW_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
 
 AUTO_RUN_ALLOWED_STATUSES=(
@@ -35,15 +36,12 @@ fail() {
 }
 
 # Resolve flow root using shared helper
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AI_FLOW_HOME="${AI_FLOW_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
-if [ -f "${AI_FLOW_HOME}/lib/flow-root-helper.sh" ]; then
-    # shellcheck source=/dev/null
-    source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
-else
-    # shellcheck source=/dev/null
-    source "$(cd "$SCRIPT_DIR/../.." && pwd)/runtime/lib/flow-root-helper.sh"
+if [ ! -f "${AI_FLOW_HOME}/lib/flow-root-helper.sh" ]; then
+    echo "错误: 缺少 flow-root-helper.sh: ${AI_FLOW_HOME}/lib/flow-root-helper.sh" >&2
+    exit 1
 fi
+# shellcheck source=/dev/null
+source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
 
 validate_dependencies() {
     [ -x "$FLOW_STATE_SH" ] || fail "错误: 缺少 flow-state 脚本: $FLOW_STATE_SH"

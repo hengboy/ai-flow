@@ -31,13 +31,12 @@ fi
 source "$RULE_LOADER_SH"
 
 # Resolve flow root using shared helper
-if [ -f "${AI_FLOW_HOME:-}/lib/flow-root-helper.sh" ]; then
-    # shellcheck source=/dev/null
-    source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
-else
-    # shellcheck source=/dev/null
-    source "$(cd "$SCRIPT_DIR/../.." && pwd)/runtime/lib/flow-root-helper.sh"
+if [ ! -f "${AI_FLOW_HOME}/lib/flow-root-helper.sh" ]; then
+    echo "错误: 缺少 flow-root-helper.sh: ${AI_FLOW_HOME}/lib/flow-root-helper.sh" >&2
+    exit 1
 fi
+# shellcheck source=/dev/null
+source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
 
 PROJECT_DIR="$(resolve_flow_root)" || PROJECT_DIR="$(pwd)"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
