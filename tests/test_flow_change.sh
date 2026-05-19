@@ -86,29 +86,130 @@ test_change_from_planned() {
     cleanup_temp_project "$dir"
 }
 
-# --- 测试 5: IMPLEMENTING 状态变更后转为 AWAITING_PLAN_REVIEW ---
+# --- 测试 5: IMPLEMENTING + plan impact 变更后转为 AWAITING_PLAN_REVIEW ---
 test_change_from_implementing() {
     local dir
     dir="$(create_temp_project "change-5")"
     create_minimal_state "$dir" "20260519-test-change-impl"
+    setup_minimal_change_runtime "$dir"
     cd "$dir"
     bash "$FLOW_STATE_SH" transition --slug "20260519-test-change-impl" \
         --event plan_review_passed --result passed --engine e --model m >/dev/null 2>&1
     bash "$FLOW_STATE_SH" transition --slug "20260519-test-change-impl" \
         --event execute_started >/dev/null 2>&1
 
-    bash "$FLOW_STATE_SH" transition --slug "20260519-test-change-impl" \
-        --event plan_reopened --note "实施中变更" >/dev/null 2>&1
+    local output exit_code=0
+    output="$(bash "$FLOW_CHANGE_SH" --impact plan "20260519-test-change-impl" "新增接口字段，调整验收范围" 2>&1)" || exit_code=$?
+    assert_exit_code "$exit_code" 0 "IMPLEMENTING + plan impact 执行成功"
+    assert_contains "$output" "已记录需求变更" "IMPLEMENTING + plan impact 输出成功摘要"
 
     local status
     status="$(bash "$FLOW_STATE_SH" show --slug "20260519-test-change-impl" --field "current_status" 2>/dev/null)"
-    assert_equal "$status" "AWAITING_PLAN_REVIEW" "IMPLEMENTING 变更后转为 AWAITING_PLAN_REVIEW"
+    assert_equal "$status" "AWAITING_PLAN_REVIEW" "IMPLEMENTING + plan impact 变更后转为 AWAITING_PLAN_REVIEW"
 
     cd "$SCRIPT_DIR"
     cleanup_temp_project "$dir"
 }
 
-# --- 测试 6: AWAITING_REVIEW 状态变更后转为 IMPLEMENTING ---
+# --- 测试 6: IMPLEMENTING + implementation impact 变更后保持 IMPLEMENTING ---
+test_change_from_implementing_with_implementation_impact() {
+    local dir
+    dir="$(create_temp_project "change-6")"
+    create_minimal_state "$dir" "20260519-test-change-impl-keep"
+    setup_minimal_change_runtime "$dir"
+    cd "$dir"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-change-impl-keep" \
+        --event plan_review_passed --result passed --engine e --model m >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-change-impl-keep" \
+        --event execute_started >/dev/null 2>&1
+
+    local before_count after_count status plan_content
+    before_count="$(python3 - <<'PY'
+import json
+from pathlib import Path
+data = json.loads(Path(".ai-flow/state/20260519-test-change-impl-keep.json").read_text(encoding="utf-8"))
+print(len(data["transitions"]))
+PY
+)"
+    bash "$FLOW_CHANGE_SH" --impact implementation "20260519-test-change-impl-keep" "调整页面样式细节与文案" >/dev/null 2>&1
+    after_count="$(python3 - <<'PY'
+import json
+from pathlib import Path
+data = json.loads(Path(".ai-flow/state/20260519-test-change-impl-keep.json").read_text(encoding="utf-8"))
+print(len(data["transitions"]))
+PY
+)"
+
+    status="$(bash "$FLOW_STATE_SH" show --slug "20260519-test-change-impl-keep" --field "current_status" 2>/dev/null)"
+    assert_equal "$status" "IMPLEMENTING" "IMPLEMENTING + implementation impact 保持 IMPLEMENTING"
+    assert_equal "$after_count" "$before_count" "IMPLEMENTING + implementation impact 不新增状态迁移"
+    plan_content="$(cat "$dir/.ai-flow/plans/test.md")"
+    assert_contains "$plan_content" "调整页面样式细节与文案" "IMPLEMENTING + implementation impact 仍写入变更记录"
+
+    cd "$SCRIPT_DIR"
+    cleanup_temp_project "$dir"
+}
+
+# --- 测试 7: IMPLEMENTING + auto 根据描述判定为 plan ---
+test_change_from_implementing_auto_plan() {
+    local dir
+    dir="$(create_temp_project "change-7")"
+    create_minimal_state "$dir" "20260519-test-change-impl-auto-plan"
+    setup_minimal_change_runtime "$dir"
+    cd "$dir"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-change-impl-auto-plan" \
+        --event plan_review_passed --result passed --engine e --model m >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-change-impl-auto-plan" \
+        --event execute_started >/dev/null 2>&1
+
+    bash "$FLOW_CHANGE_SH" "20260519-test-change-impl-auto-plan" "调整接口和验收标准" >/dev/null 2>&1
+
+    local status
+    status="$(bash "$FLOW_STATE_SH" show --slug "20260519-test-change-impl-auto-plan" --field "current_status" 2>/dev/null)"
+    assert_equal "$status" "AWAITING_PLAN_REVIEW" "IMPLEMENTING + auto 命中 plan 级关键词时转为 AWAITING_PLAN_REVIEW"
+
+    cd "$SCRIPT_DIR"
+    cleanup_temp_project "$dir"
+}
+
+# --- 测试 8: IMPLEMENTING + auto 根据描述判定为 implementation ---
+test_change_from_implementing_auto_implementation() {
+    local dir
+    dir="$(create_temp_project "change-8")"
+    create_minimal_state "$dir" "20260519-test-change-impl-auto-impl"
+    setup_minimal_change_runtime "$dir"
+    cd "$dir"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-change-impl-auto-impl" \
+        --event plan_review_passed --result passed --engine e --model m >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-change-impl-auto-impl" \
+        --event execute_started >/dev/null 2>&1
+
+    local before_count after_count status
+    before_count="$(python3 - <<'PY'
+import json
+from pathlib import Path
+data = json.loads(Path(".ai-flow/state/20260519-test-change-impl-auto-impl.json").read_text(encoding="utf-8"))
+print(len(data["transitions"]))
+PY
+)"
+    bash "$FLOW_CHANGE_SH" "20260519-test-change-impl-auto-impl" "调整页面样式与说明文案" >/dev/null 2>&1
+    after_count="$(python3 - <<'PY'
+import json
+from pathlib import Path
+data = json.loads(Path(".ai-flow/state/20260519-test-change-impl-auto-impl.json").read_text(encoding="utf-8"))
+print(len(data["transitions"]))
+PY
+)"
+
+    status="$(bash "$FLOW_STATE_SH" show --slug "20260519-test-change-impl-auto-impl" --field "current_status" 2>/dev/null)"
+    assert_equal "$status" "IMPLEMENTING" "IMPLEMENTING + auto 命中实现级描述时保持 IMPLEMENTING"
+    assert_equal "$after_count" "$before_count" "IMPLEMENTING + auto 实现级描述不新增状态迁移"
+
+    cd "$SCRIPT_DIR"
+    cleanup_temp_project "$dir"
+}
+
+# --- 测试 9: AWAITING_REVIEW 状态变更后转为 IMPLEMENTING ---
 test_change_from_awaiting_review() {
     local dir
     dir="$(create_temp_project "change-6")"
@@ -132,7 +233,7 @@ test_change_from_awaiting_review() {
     cleanup_temp_project "$dir"
 }
 
-# --- 测试 7: DONE 状态变更后转为 IMPLEMENTING ---
+# --- 测试 10: DONE 状态变更后转为 IMPLEMENTING ---
 test_change_from_done() {
     local dir
     dir="$(create_temp_project "change-7")"
@@ -164,6 +265,9 @@ test_slug_not_found
 test_change_recorded_in_plan
 test_change_from_planned
 test_change_from_implementing
+test_change_from_implementing_with_implementation_impact
+test_change_from_implementing_auto_plan
+test_change_from_implementing_auto_implementation
 test_change_from_awaiting_review
 test_change_from_done
 

@@ -155,6 +155,43 @@ state = {
 PY
 }
 
+setup_minimal_change_runtime() {
+    local project_dir="$1"
+    mkdir -p "$project_dir/.ai-flow/plans"
+    mkdir -p "$project_dir/.ai-flow"
+    cat > "$project_dir/.ai-flow/plans/test.md" <<'EOF'
+# 测试计划
+
+## 1. 概述
+测试需求变更功能。
+
+## 7. 需求变更记录
+
+| 时间 | 变更描述 | 确认方式 |
+|------|----------|----------|
+| {YYYY-MM-DD HH:MM} | {执行过程中新增或调整的需求；无则保留空表} | {用户确认/文档同步/其他} |
+EOF
+    cat > "$project_dir/.ai-flow/rule.yaml" <<'EOF'
+version: 1
+prompt:
+  shared_context: []
+  skill_overrides: []
+  subagent_overrides: []
+constraints:
+  required_reads: []
+  protected_paths: []
+  forbidden_changes: []
+  test_policy:
+    require_tests_for_code_change: false
+    allow_testless_paths: []
+review:
+  required_checks: []
+  required_evidence: []
+  severity_rules: {}
+  fail_conditions: []
+EOF
+}
+
 # write_user_setting <home_dir> <json_content>
 # 在指定 home 目录写入用户级 setting.json
 write_user_setting() {

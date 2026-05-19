@@ -1,6 +1,6 @@
 #!/bin/bash
 # flow-change.sh — 记录执行过程中的需求变更到指定 plan
-# 用法: flow-change.sh {slug或唯一关键词} "变更描述"
+# 用法: flow-change.sh [--impact plan|implementation|auto] {slug或唯一关键词} "变更描述"
 
 set -euo pipefail
 
@@ -11,10 +11,56 @@ if [ ! -f "$RULE_LOADER_SH" ]; then
     RULE_LOADER_SH="$(cd "$SCRIPT_DIR/../.." && pwd)/subagents/shared/lib/rule-loader.sh"
 fi
 
-if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
-    echo "用法: flow-change.sh {slug或唯一关键词} \"变更描述\"" >&2
+usage() {
+    echo "用法: flow-change.sh [--impact plan|implementation|auto] {slug或唯一关键词} \"变更描述\"" >&2
+}
+
+IMPACT_MODE="auto"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --impact)
+            if [ $# -lt 2 ]; then
+                usage
+                exit 1
+            fi
+            IMPACT_MODE="$2"
+            shift 2
+            ;;
+        --impact=*)
+            IMPACT_MODE="${1#*=}"
+            shift
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "错误: 未知参数: $1" >&2
+            usage
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [ -z "${1:-}" ] || [ -z "${2:-}" ] || [ -n "${3:-}" ]; then
+    usage
     exit 1
 fi
+
+case "$IMPACT_MODE" in
+    plan|implementation|auto) ;;
+    *)
+        echo "错误: --impact 只允许 plan、implementation 或 auto" >&2
+        exit 1
+        ;;
+esac
 
 FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
 if [ ! -f "$FLOW_STATE_SH" ]; then
@@ -41,6 +87,41 @@ source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
 PROJECT_DIR="$(resolve_flow_root)" || PROJECT_DIR="$(pwd)"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 CHANGE_TEXT="$2"
+REQUEST_KEY="$1"
+
+infer_change_impact() {
+    python3 - "$1" <<'PY'
+import re
+import sys
+
+text = sys.argv[1].strip()
+patterns = [
+    r"(^|[^a-z])(goal|scope|non-goal|acceptance|api|contract|schema|step id)([^a-z]|$)",
+    r"目标",
+    r"范围",
+    r"非目标",
+    r"验收",
+    r"接口",
+    r"契约",
+    r"数据结构",
+    r"表结构",
+    r"字段\b",
+    r"数据库",
+    r"仓库边界",
+    r"文件边界",
+    r"跨仓",
+    r"验证命令",
+    r"关闭条件",
+]
+
+for pattern in patterns:
+    if re.search(pattern, text, re.IGNORECASE):
+        print("plan")
+        raise SystemExit(0)
+
+print("implementation")
+PY
+}
 
 state_field() {
     local slug="$1"
@@ -72,10 +153,9 @@ PY
 MATCHED_STATES=()
 while IFS= read -r -d '' f; do
     MATCHED_STATES+=("$f")
-done < <(find "$FLOW_DIR/state" -name "*${1}*.json" -type f -print0 2>/dev/null)
-
+done < <(find "$FLOW_DIR/state" -name "*${REQUEST_KEY}*.json" -type f -print0 2>/dev/null)
 if [ ${#MATCHED_STATES[@]} -eq 0 ]; then
-    echo "错误: 找不到包含关键词 '$1' 的状态文件" >&2
+    echo "错误: 找不到包含关键词 '$REQUEST_KEY' 的状态文件" >&2
     exit 1
 elif [ ${#MATCHED_STATES[@]} -gt 1 ]; then
     echo "匹配到多个状态，请选择："
@@ -242,9 +322,19 @@ if not inserted:
 path.write_text("\n".join(output) + "\n", encoding="utf-8")
 PY
 
+RESOLVED_IMPACT="$IMPACT_MODE"
+if [ "$RESOLVED_IMPACT" = "auto" ] && [ "$CURRENT_STATUS" = "IMPLEMENTING" ]; then
+    RESOLVED_IMPACT="$(infer_change_impact "$CHANGE_TEXT")"
+fi
+
 case "$CURRENT_STATUS" in
-    PLANNED|IMPLEMENTING)
+    PLANNED)
         bash "$FLOW_STATE_SH" transition --slug "$SLUG" --event plan_reopened --note "$CHANGE_TEXT" >/dev/null
+        ;;
+    IMPLEMENTING)
+        if [ "$RESOLVED_IMPACT" = "plan" ]; then
+            bash "$FLOW_STATE_SH" transition --slug "$SLUG" --event plan_reopened --note "$CHANGE_TEXT" >/dev/null
+        fi
         ;;
     AWAITING_REVIEW|DONE|REVIEW_FAILED|FIXING_REVIEW)
         bash "$FLOW_STATE_SH" transition --slug "$SLUG" --event implementation_reopened --note "$CHANGE_TEXT" >/dev/null
@@ -254,3 +344,11 @@ case "$CURRENT_STATUS" in
 esac
 
 echo ">>> 已记录需求变更: $PLAN_FILE"
+
+# best-effort 刷新 plan HTML
+_ai_flow_render_html_best_effort() {
+    local _html_sh="${AI_FLOW_HOME:-$HOME/.config/ai-flow}/scripts/flow-html.sh"
+    [ -f "$_html_sh" ] || return 0
+    "$_html_sh" plan --input "$PLAN_FILE" >/dev/null 2>&1 || true
+}
+_ai_flow_render_html_best_effort
