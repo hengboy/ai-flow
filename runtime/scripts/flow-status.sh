@@ -44,6 +44,14 @@ FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"
 FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
 
+SHOW_STATS=false
+for arg in "$@"; do
+    case "$arg" in
+        --stats) SHOW_STATS=true ;;
+    esac
+done
+export SHOW_STATS
+
 if [ ! -d "$FLOW_DIR" ]; then
     echo "当前项目没有 .ai-flow/ 目录"
     echo "项目路径: $PROJECT_DIR"
@@ -84,6 +92,7 @@ fi
 
 python3 - "$PROJECT_DIR" "$VALID_LIST" "$INVALID_LIST" "$FLOW_STATE_SH" "$FLOW_DIR" <<'PY'
 import json
+import os
 import sys
 import base64
 from collections import Counter
@@ -207,6 +216,58 @@ print(f"  总数: {len(states) + len(invalid_states)}")
 print(f"  INVALID: {len(invalid_states)}")
 for status, _, _ in status_labels:
     print(f"  {status}: {counts.get(status, 0)}")
+
+# --- 耗时统计 ---
+show_stats = os.environ.get("SHOW_STATS", "false") == "true"
+if show_stats and states:
+    lib_dir = Path(flow_state_sh).parent.parent.parent / "subagents" / "shared" / "lib"
+    if lib_dir.is_dir():
+        sys.path.insert(0, str(lib_dir))
+    try:
+        from flow_utils import calculate_stage_durations
+
+        stage_name_map = {
+            "plan_review": "Plan 审核",
+            "coding": "编码",
+            "review": "Review",
+        }
+
+        def format_duration(ms):
+            if ms < 1000:
+                return f"{ms}ms"
+            elif ms < 60000:
+                return f"{ms / 1000:.1f}s"
+            elif ms < 3600000:
+                return f"{ms / 60000:.1f}min"
+            else:
+                return f"{ms / 3600000:.1f}h"
+
+        print()
+        print("--- 耗时统计 ---")
+        for state in states:
+            transitions = state.get("transitions", [])
+            if not transitions:
+                continue
+            stages = calculate_stage_durations(transitions)
+            if not stages:
+                continue
+            print()
+            print(f"  {state['slug']} [{state['current_status']}]")
+            print()
+            print(f"  | 阶段 | 耗时 | 备注 |")
+            print(f"  |------|------|------|")
+            total_ms = 0
+            for stage in stages:
+                cn_name = stage_name_map.get(stage.stage_name, stage.stage_name)
+                dur = format_duration(stage.duration_ms)
+                total_ms += stage.duration_ms
+                print(f"  | {cn_name} | {dur} | {stage.notes} |")
+            print(f"  | **总计** | **{format_duration(total_ms)}** | |")
+    except ImportError:
+        print()
+        print("--- 耗时统计 ---")
+        print("  (flow_utils 模块不可用，跳过耗时计算)")
+
 print("===============================")
 PY
 

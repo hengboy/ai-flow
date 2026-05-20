@@ -2,6 +2,8 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 class FlowUtils:
@@ -192,6 +194,197 @@ class FlowUtils:
             return False
         except Exception:
             return False
+
+def _parse_iso_datetime(iso_str: str) -> datetime:
+    """解析 ISO 8601 时间字符串，兼容 Python < 3.11。
+
+    Python 3.11 之前 datetime.fromisoformat() 不支持带时区偏移的字符串
+    （如 '2026-05-20T08:00:00+08:00'）。此函数先尝试 fromisoformat()，
+    失败后手动剥离时区偏移并构造 tzinfo。
+    """
+    try:
+        return datetime.fromisoformat(iso_str)
+    except (ValueError, AttributeError):
+        pass
+    s = iso_str.strip()
+    tz_offset = None
+    m = re.search(r'([+-])(\d{2}):?(\d{2})$', s)
+    if m:
+        sign = 1 if m.group(1) == '+' else -1
+        hours = int(m.group(2))
+        minutes = int(m.group(3))
+        tz_offset = timezone(timedelta(hours=sign * hours, minutes=sign * minutes))
+        s = s[:m.start()]
+    elif s.endswith('Z') or s.endswith('z'):
+        tz_offset = timezone.utc
+        s = s[:-1]
+    dt = datetime.fromisoformat(s)
+    if tz_offset is not None:
+        dt = dt.replace(tzinfo=tz_offset)
+    return dt
+
+
+@dataclass
+class StageDuration:
+    stage_name: str
+    start_event: str
+    end_event: str
+    duration_ms: int
+    notes: str = ""
+    failed_count: int = 0
+
+
+def calculate_stage_durations(transitions: list) -> list:
+    """从 transitions 数组中提取各阶段耗时。
+
+    返回 list[StageDuration]，覆盖 plan_review、coding、review 三个阶段。
+    """
+    if not transitions:
+        return []
+
+    def find_event(event_name, start_idx=0):
+        for i in range(start_idx, len(transitions)):
+            if transitions[i].get("event") == event_name:
+                return i
+        return None
+
+    def find_status_to(status, from_event=None, start_idx=0):
+        for i in range(start_idx, len(transitions)):
+            if transitions[i].get("to") == status:
+                return i
+        return None
+
+    def calc_ms(idx_start, idx_end):
+        try:
+            if idx_start is None or idx_end is None:
+                return 0
+            t1 = _parse_iso_datetime(transitions[idx_start]["at"])
+            t2 = _parse_iso_datetime(transitions[idx_end]["at"])
+            delta = int((t2 - t1).total_seconds() * 1000)
+            return max(0, delta)
+        except (ValueError, TypeError, IndexError, KeyError):
+            return 0
+
+    def format_duration(ms):
+        if ms < 1000:
+            return f"{ms}ms"
+        elif ms < 60000:
+            return f"{ms / 1000:.1f}s"
+        elif ms < 3600000:
+            return f"{ms / 60000:.1f}min"
+        else:
+            return f"{ms / 3600000:.1f}h"
+
+    result = []
+
+    # plan_review 阶段：从 plan_created 到第一次到达 PLANNED
+    plan_start = find_event("plan_created")
+    plan_end = find_status_to("PLANNED")
+    if plan_start is not None and plan_end is not None and plan_end > plan_start:
+        failed = sum(1 for t in transitions[plan_start:plan_end + 1]
+                     if t.get("event") == "plan_review_failed")
+        notes = f"含 {failed} 次审核失败" if failed else "无"
+        result.append(StageDuration(
+            stage_name="plan_review",
+            start_event="plan_created",
+            end_event="plan_review_passed",
+            duration_ms=calc_ms(plan_start, plan_end),
+            notes=notes,
+            failed_count=failed,
+        ))
+
+    # coding 阶段：从 execute_started 到 implementation_completed
+    code_start = find_event("execute_started")
+    code_end = find_event("implementation_completed")
+    if code_start is not None and code_end is not None and code_end > code_start:
+        result.append(StageDuration(
+            stage_name="coding",
+            start_event="execute_started",
+            end_event="implementation_completed",
+            duration_ms=calc_ms(code_start, code_end),
+            notes="无",
+        ))
+
+    # review 阶段：从第一个 review 相关事件到最后一个
+    review_events = {"review_passed", "review_failed", "recheck_passed", "recheck_failed",
+                     "fix_started", "fix_completed"}
+    review_indices = [i for i, t in enumerate(transitions)
+                      if t.get("event") in review_events]
+    if len(review_indices) >= 2:
+        review_start = review_indices[0]
+        review_end = review_indices[-1]
+        fix_count = sum(1 for t in transitions[review_start:review_end + 1]
+                        if t.get("event") == "fix_completed")
+        # 统计 review 轮次（review_passed/review_failed/recheck_passed/recheck_failed）
+        round_events = [t for i, t in enumerate(transitions)
+                        if i in review_indices and t.get("event") in
+                        ("review_passed", "review_failed", "recheck_passed", "recheck_failed")]
+        round_count = len(round_events)
+        passed = any(t.get("event") in ("review_passed", "recheck_passed")
+                     for t in round_events)
+        notes = f"{round_count} 轮审查，{fix_count} 次修复"
+        if passed:
+            notes += "，最终通过"
+        else:
+            notes += "，最终未通过"
+        result.append(StageDuration(
+            stage_name="review",
+            start_event=transitions[review_start].get("event", ""),
+            end_event=transitions[review_end].get("event", ""),
+            duration_ms=calc_ms(review_start, review_end),
+            notes=notes,
+            failed_count=sum(1 for t in round_events if "failed" in t.get("event", "")),
+        ))
+    elif len(review_indices) == 1:
+        # 只有单个 review 事件（如直接进入 review_passed）
+        idx = review_indices[0]
+        result.append(StageDuration(
+            stage_name="review",
+            start_event=transitions[idx].get("event", ""),
+            end_event=transitions[idx].get("event", ""),
+            duration_ms=0,
+            notes="单事件，无耗时",
+        ))
+
+    return result
+
+
+def calculate_review_round_durations(transitions: list) -> list:
+    """计算每轮 review 的独立耗时。
+
+    返回 list[dict]，每项包含 round、event、result、duration_ms。
+    """
+    if not transitions:
+        return []
+
+    review_events = {"review_passed", "review_failed", "recheck_passed", "recheck_failed"}
+    review_transitions = [(i, t) for i, t in enumerate(transitions)
+                          if t.get("event") in review_events]
+    if len(review_transitions) < 2:
+        return []
+
+    rounds = []
+    prev_idx, prev_t = review_transitions[0]
+    for round_num, (curr_idx, curr_t) in enumerate(review_transitions[1:], start=1):
+        try:
+            t1 = _parse_iso_datetime(prev_t["at"])
+            t2 = _parse_iso_datetime(curr_t["at"])
+            delta = max(0, int((t2 - t1).total_seconds() * 1000))
+        except (ValueError, TypeError, KeyError):
+            delta = 0
+
+        event_name = curr_t.get("event", "")
+        result = "passed" if event_name.endswith("passed") else "failed"
+        rounds.append({
+            "round": round_num,
+            "event": event_name,
+            "result": result,
+            "duration_ms": delta,
+        })
+        prev_idx, prev_t = curr_idx, curr_t
+
+    return rounds
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
