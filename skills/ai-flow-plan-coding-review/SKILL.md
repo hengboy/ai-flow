@@ -77,7 +77,7 @@ Agent(
 )
 ```
 
-完成后读取 `REVIEW_RESULT`、`STATE`、`NEXT`、`SUMMARY`。`REVIEW_RESULT: failed` 时必须根据阻塞缺陷的“修复流向”决定回到 `/ai-flow-plan-coding` 还是 `/ai-flow-code-optimize`；`REVIEW_RESULT: passed|passed_with_notes` 时状态进入或保持 `DONE`；任何非成功结果直接报告 `SUMMARY` 并停止。
+完成后读取 `REVIEW_RESULT`、`STATE`、`NEXT`、`SUMMARY`。`REVIEW_RESULT: failed` 时必须根据阻塞缺陷的“修复流向”决定回到 `/ai-flow-plan-coding` 还是 `/ai-flow-code-optimize`；绑定 `slug` 且 `REVIEW_RESULT: passed|passed_with_notes` 时状态进入或保持 `DONE`；standalone 且 `REVIEW_RESULT: passed|passed_with_notes` 时下一步必须进入 `/ai-flow-git-commit`；任何非成功结果直接报告 `SUMMARY` 并停止。
 
 绑定 `slug` 的 subagent 必须负责把状态一次性推进完整，不允许输出“审查已通过/已失败”后再让用户手工补状态。对于 `review_passed` / `review_failed` / `recheck_passed` / `recheck_failed`，状态推进调用必须一次性带齐 `--result`、`--report-file`、`--engine`、`--model`，并在完成后验证 `STATE` 是否已到目标值。
 
@@ -103,6 +103,8 @@ Agent(
 - `NEXT: ai-flow-code-optimize` → 输出 `下一步：运行 /ai-flow-code-optimize 在既有架构内完成优化类修复。`
 - `NEXT: ai-flow-code-optimize` 后应继续补充一句：`优化完成后：重新运行 /ai-flow-plan-coding-review 复审最终代码变更。`
 - `NEXT: ai-flow-plan-coding` → 输出 `下一步：运行 /ai-flow-plan-coding 修复审查中发现的问题。`
+- `NEXT: ai-flow-git-commit` 且状态进入 DONE → 输出 `⚠️ 请使用 /ai-flow-git-commit 按仓库依赖顺序和业务关联性提交当前 plan 所涉及的代码。`
+- `NEXT: ai-flow-git-commit` 且 `STATE: none` → 输出 `⚠️ 如需继续独立链路，请使用无 \`slug\` 的 /ai-flow-git-commit 提交当前改动。`
 - `NEXT: none` 且状态进入 DONE → 输出 `⚠️ 请使用 /ai-flow-git-commit 按仓库依赖顺序和业务关联性提交当前 plan 所涉及的代码。`
 - `NEXT: none` 且 `STATE: none` → 输出 `⚠️ 如需继续独立链路，请使用无 \`slug\` 的 /ai-flow-git-commit 提交当前改动。`
 - `NEXT: none` 且非 DONE → 不输出下一步提示
@@ -116,7 +118,7 @@ RESULT: success|failed
 AGENT: ai-flow-plan-coding-review
 REVIEW_RESULT: passed|passed_with_notes|failed
 STATE: <status|none>
-NEXT: ai-flow-code-optimize|ai-flow-plan-coding|none
+NEXT: ai-flow-code-optimize|ai-flow-plan-coding|ai-flow-git-commit|none
 SUMMARY: <one-line-summary>
 ```
 
@@ -124,6 +126,7 @@ SUMMARY: <one-line-summary>
 
 - `REVIEW_RESULT: failed` 且绑定 `slug`：下一步根据阻塞缺陷流向回到 `/ai-flow-code-optimize` 或 `/ai-flow-plan-coding`
 - `REVIEW_RESULT: passed|passed_with_notes` 且绑定 `slug`：状态应进入或保持 `DONE`
+- `standalone review` 且 `REVIEW_RESULT: passed|passed_with_notes`：下一步进入无 `slug` 的 `/ai-flow-git-commit`
 - `standalone review`：无论结果如何都不推进状态
 - `DONE` 后若只处理 Minor 建议的独立修改，推荐链路为：
   `无 slug 的 /ai-flow-code-optimize 或 /ai-flow-bug-fix -> /ai-flow-plan-coding-review --standalone -> /ai-flow-git-commit`

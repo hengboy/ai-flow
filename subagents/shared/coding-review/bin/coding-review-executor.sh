@@ -1842,12 +1842,15 @@ if [ "$IS_STANDALONE" -eq 1 ]; then
     echo ">>> Standalone review 完成，不更新状态文件"
     case "$RESULT" in
         passed)
+            PROTOCOL_NEXT="ai-flow-git-commit"
             PROTOCOL_SUMMARY="standalone 审查通过，无状态绑定。"
             ;;
         passed_with_notes)
+            PROTOCOL_NEXT="ai-flow-git-commit"
             PROTOCOL_SUMMARY="standalone 审查通过（附 Minor 建议），无状态绑定。"
             ;;
         failed)
+            PROTOCOL_NEXT="$NEXT_ON_FAILURE"
             PROTOCOL_SUMMARY="standalone 审查未通过，发现问题，无状态绑定。"
             ;;
     esac

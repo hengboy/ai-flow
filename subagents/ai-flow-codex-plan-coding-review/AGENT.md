@@ -40,7 +40,7 @@ RESULT: success|failed
 AGENT: ai-flow-codex-plan-coding-review
 ARTIFACT: <report-path|none>
 STATE: <status|none>
-NEXT: ai-flow-plan-coding|none
+NEXT: ai-flow-code-optimize|ai-flow-plan-coding|ai-flow-git-commit|none
 REVIEW_RESULT: passed|passed_with_notes|failed
 SUMMARY: <one-line-summary>
 ```
