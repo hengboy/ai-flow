@@ -531,6 +531,7 @@ INCOMPLETE: <text>  (仅 partial 时)
 
 只读自动编排辅助脚本：
 - `list`：列出当前 flow root 下可自动编排的候选 state
+- `list` 默认只列进行中的 flow；`DONE` 仅在存在未提交且需 recheck 的改动时才进入候选
 - `resolve <slug或唯一关键词>`：解析为唯一完整 slug；0 个或多个匹配都失败
 - `dirty <slug>`：按 `execution_scope.repos` 检查是否仍有需要 recheck 的未提交代码变更
 

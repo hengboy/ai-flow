@@ -18,7 +18,6 @@ AUTO_RUN_ALLOWED_STATUSES=(
     "AWAITING_REVIEW"
     "REVIEW_FAILED"
     "FIXING_REVIEW"
-    "DONE"
 )
 
 usage() {
@@ -52,7 +51,7 @@ validate_dependencies() {
 }
 
 candidate_state_tsv() {
-    local valid_list error_file warning slug path
+    local valid_list error_file warning slug path status dirty_output
     valid_list="$(mktemp)"
     trap 'rm -f "$valid_list"' RETURN
 
@@ -61,7 +60,18 @@ candidate_state_tsv() {
         slug="$(basename "$path" .json)"
         error_file="$(mktemp)"
         if bash "$FLOW_STATE_SH" validate --slug "$slug" >/dev/null 2>"$error_file"; then
-            printf '%s\n' "$path" >>"$valid_list"
+            status="$(bash "$FLOW_STATE_SH" show --slug "$slug" --field current_status 2>/dev/null || true)"
+            case "$status" in
+                PLANNED|IMPLEMENTING|AWAITING_REVIEW|REVIEW_FAILED|FIXING_REVIEW)
+                    printf '%s\n' "$path" >>"$valid_list"
+                    ;;
+                DONE)
+                    dirty_output="$(dirty_check "$slug" 2>/dev/null || true)"
+                    if printf '%s\n' "$dirty_output" | grep -qx 'dirty'; then
+                        printf '%s\n' "$path" >>"$valid_list"
+                    fi
+                    ;;
+            esac
         else
             warning="$(tr '\n' ' ' <"$error_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
             echo "跳过无效状态文件 ${slug}: ${warning:-validate 失败}" >&2

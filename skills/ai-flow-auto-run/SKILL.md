@@ -34,7 +34,8 @@ $HOME/.config/ai-flow/scripts/flow-auto-run.sh list
 ```
 
 - helper 只读取当前工作目录所属 flow root 下的 `.ai-flow/state/*.json`
-- 候选状态只允许：`PLANNED`、`IMPLEMENTING`、`AWAITING_REVIEW`、`REVIEW_FAILED`、`FIXING_REVIEW`、`DONE`
+- 候选状态只允许：`PLANNED`、`IMPLEMENTING`、`AWAITING_REVIEW`、`REVIEW_FAILED`、`FIXING_REVIEW`
+- `DONE` 默认不进入候选列表；只有 `DONE` 且 `dirty`、仍需 recheck 的 flow 才允许作为候选列出
 - 候选表固定字段：`slug`、`当前状态`、`标题`、`更新时间`、`plan 路径`
 - 候选必须按 `updated_at` 倒序展示
 - helper 若发现无效 state，必须跳过该项并把错误原因转述给用户
