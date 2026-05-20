@@ -10,6 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
+WORKTREE_SNAPSHOT_LIB="${AI_FLOW_HOME}/lib/worktree-snapshot.sh"
 
 AUTO_RUN_ALLOWED_STATUSES=(
     "PLANNED"
@@ -42,9 +43,12 @@ if [ ! -f "${AI_FLOW_HOME}/lib/flow-root-helper.sh" ]; then
 fi
 # shellcheck source=/dev/null
 source "${AI_FLOW_HOME}/lib/flow-root-helper.sh"
+# shellcheck source=/dev/null
+source "$WORKTREE_SNAPSHOT_LIB"
 
 validate_dependencies() {
     [ -x "$FLOW_STATE_SH" ] || fail "错误: 缺少 flow-state 脚本: $FLOW_STATE_SH"
+    [ -f "$WORKTREE_SNAPSHOT_LIB" ] || fail "错误: 缺少 worktree-snapshot 脚本: $WORKTREE_SNAPSHOT_LIB"
 }
 
 candidate_state_tsv() {
@@ -192,10 +196,82 @@ for repo in repos:
 PY
 }
 
+current_snapshot_json() {
+    local state_file="$1"
+    local args=()
+    local repo_id repo_path git_root role
+    while IFS=$'\t' read -r repo_id repo_path git_root role; do
+        [ -n "$repo_id" ] || continue
+        args+=("$repo_id" "$repo_path" "$git_root")
+    done < <(state_scope_tsv "$state_file")
+
+    [ "${#args[@]}" -gt 0 ] || fail "状态文件缺少 execution_scope.repos"
+    ai_flow_collect_worktree_snapshot_json "${args[@]}"
+}
+
+last_review_snapshot_json() {
+    local slug="$1"
+    bash "$FLOW_STATE_SH" show --slug "$slug" --field derived.last_review.worktree_snapshot 2>/dev/null || true
+}
+
+snapshot_diff_tsv() {
+    local expected_json="$1"
+    local current_json="$2"
+    python3 - "$expected_json" "$current_json" <<'PY'
+import json
+import sys
+
+expected_raw = sys.argv[1].strip()
+current_raw = sys.argv[2].strip()
+if not expected_raw or expected_raw == "null":
+    print("__MISSING__")
+    raise SystemExit(0)
+if not current_raw or current_raw == "null":
+    print("__CURRENT_MISSING__")
+    raise SystemExit(0)
+
+expected = json.loads(expected_raw)
+current = json.loads(current_raw)
+
+def normalize(snapshot):
+    repos = snapshot.get("repos")
+    if not isinstance(repos, list):
+        raise SystemExit("__INVALID__")
+    result = {}
+    for repo in repos:
+        repo_id = repo.get("repo_id")
+        entries = repo.get("entries")
+        if not isinstance(repo_id, str) or not isinstance(entries, list):
+            raise SystemExit("__INVALID__")
+        normalized = []
+        for entry in entries:
+            path = entry.get("path")
+            tokens = entry.get("tokens")
+            if not isinstance(path, str) or not isinstance(tokens, list):
+                raise SystemExit("__INVALID__")
+            normalized.append((path, tuple(tokens)))
+        result[repo_id] = tuple(sorted(normalized))
+    return result
+
+expected_map = normalize(expected)
+current_map = normalize(current)
+
+if set(expected_map) != set(current_map):
+    for repo_id in sorted(set(expected_map) | set(current_map)):
+        if expected_map.get(repo_id) != current_map.get(repo_id):
+            print(f"{repo_id}\trepo-set-mismatch")
+    raise SystemExit(0)
+
+for repo_id in sorted(expected_map):
+    if expected_map[repo_id] != current_map[repo_id]:
+        print(f"{repo_id}\tcontent-mismatch")
+PY
+}
+
 dirty_check() {
     local slug="$1"
     local state_file="$STATE_DIR/$slug.json"
-    local error_file repo_count=0 dirty_lines="" repo_id repo_path git_root role changes filtered_count
+    local error_file repo_count=0 dirty_lines="" repo_id repo_path git_root role expected_snapshot current_snapshot diff_lines
 
     [ -f "$state_file" ] || fail "找不到状态文件: $state_file"
 
@@ -218,28 +294,27 @@ dirty_check() {
 
     [ "$repo_count" -gt 0 ] || fail "状态文件缺少 execution_scope.repos"
 
-    local i
-    for i in "${!REPO_IDS[@]}"; do
-        repo_id="${REPO_IDS[$i]}"
-        repo_path="${REPO_PATHS[$i]}"
-        git_root="${REPO_GIT_ROOTS[$i]}"
-        changes="$(git -C "$git_root" status --porcelain --untracked-files=all 2>/dev/null || true)"
-        filtered_count="$(printf '%s\n' "$changes" | awk -v repo_path="$repo_path" -v repo_count="$repo_count" '
-            {
-                path = substr($0, 4)
-                if (path ~ /^\.ai-flow\//) {
-                    next
-                }
-                if (repo_count > 1 && repo_path == ".") {
-                    next
-                }
-                print path
-            }
-        ' | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
-        if [ "${filtered_count:-0}" -gt 0 ]; then
-            dirty_lines="${dirty_lines}${repo_id}\t${git_root}\t${filtered_count}\n"
-        fi
-    done
+    expected_snapshot="$(last_review_snapshot_json "$slug")"
+    current_snapshot="$(current_snapshot_json "$state_file")"
+    diff_lines="$(snapshot_diff_tsv "$expected_snapshot" "$current_snapshot")"
+
+    if [[ "$diff_lines" == "__MISSING__" || "$diff_lines" == "__CURRENT_MISSING__" || "$diff_lines" == "__INVALID__" ]]; then
+        local i
+        for i in "${!REPO_IDS[@]}"; do
+            dirty_lines="${dirty_lines}${REPO_IDS[$i]}\t${REPO_GIT_ROOTS[$i]}\tunknown\n"
+        done
+    elif [ -n "$diff_lines" ]; then
+        while IFS=$'\t' read -r repo_id _reason; do
+            [ -n "$repo_id" ] || continue
+            local i
+            for i in "${!REPO_IDS[@]}"; do
+                if [ "${REPO_IDS[$i]}" = "$repo_id" ]; then
+                    dirty_lines="${dirty_lines}${repo_id}\t${REPO_GIT_ROOTS[$i]}\tchanged\n"
+                    break
+                fi
+            done
+        done <<<"$diff_lines"
+    fi
 
     if [ -n "$dirty_lines" ]; then
         printf 'dirty\n'

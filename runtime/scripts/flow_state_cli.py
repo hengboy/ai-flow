@@ -83,9 +83,10 @@ class DerivedReview:
     at: str
     engine: str
     model: str
+    worktree_snapshot: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "mode": self.mode,
             "round": self.round,
             "result": self.result,
@@ -94,6 +95,9 @@ class DerivedReview:
             "engine": self.engine,
             "model": self.model,
         }
+        if self.worktree_snapshot is not None:
+            payload["worktree_snapshot"] = self.worktree_snapshot
+        return payload
 
 
 def resolve_project_dir() -> Path:
@@ -307,6 +311,78 @@ def validate_execution_scope(exec_scope: Any) -> None:
         raise FlowError("execution_scope.repos 必须且只能包含一个 role=owner 仓库")
 
 
+def validate_worktree_snapshot(
+    snapshot: Any,
+    *,
+    field_prefix: str = "worktree_snapshot",
+    state: dict[str, Any] | None = None,
+) -> None:
+    if not isinstance(snapshot, dict):
+        raise FlowError(f"{field_prefix} 必须是对象")
+    repos = snapshot.get("repos")
+    if not isinstance(repos, list):
+        raise FlowError(f"{field_prefix}.repos 必须是数组")
+
+    seen_repo_ids: set[str] = set()
+    for repo_index, repo in enumerate(repos):
+        if not isinstance(repo, dict):
+            raise FlowError(f"{field_prefix}.repos[{repo_index}] 必须是对象")
+        repo_id = repo.get("repo_id")
+        if not isinstance(repo_id, str) or not REPO_ID_RE.fullmatch(repo_id):
+            raise FlowError(f"{field_prefix}.repos[{repo_index}].repo_id 非法: {repo_id!r}")
+        if repo_id in seen_repo_ids:
+            raise FlowError(f"{field_prefix}.repos[{repo_index}].repo_id 重复: {repo_id}")
+        seen_repo_ids.add(repo_id)
+
+        entries = repo.get("entries")
+        if not isinstance(entries, list):
+            raise FlowError(f"{field_prefix}.repos[{repo_index}].entries 必须是数组")
+
+        seen_paths: set[str] = set()
+        for entry_index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise FlowError(f"{field_prefix}.repos[{repo_index}].entries[{entry_index}] 必须是对象")
+            path = entry.get("path")
+            if not isinstance(path, str) or not path.strip():
+                raise FlowError(f"{field_prefix}.repos[{repo_index}].entries[{entry_index}].path 不能为空")
+            normalized_path = path.strip()
+            if normalized_path in seen_paths:
+                raise FlowError(
+                    f"{field_prefix}.repos[{repo_index}].entries[{entry_index}].path 重复: {normalized_path}"
+                )
+            seen_paths.add(normalized_path)
+
+            tokens = entry.get("tokens")
+            if not isinstance(tokens, list) or not tokens:
+                raise FlowError(f"{field_prefix}.repos[{repo_index}].entries[{entry_index}].tokens 必须是非空数组")
+            normalized_tokens: list[str] = []
+            for token_index, token in enumerate(tokens):
+                if not isinstance(token, str) or not token.strip():
+                    raise FlowError(
+                        f"{field_prefix}.repos[{repo_index}].entries[{entry_index}].tokens[{token_index}] 不能为空"
+                    )
+                normalized_tokens.append(token.strip())
+            if len(set(normalized_tokens)) != len(normalized_tokens):
+                raise FlowError(
+                    f"{field_prefix}.repos[{repo_index}].entries[{entry_index}].tokens 不允许重复"
+                )
+
+    if state is not None:
+        exec_scope = state.get("execution_scope") or {}
+        scope_repos = exec_scope.get("repos") or []
+        expected_repo_ids = {
+            str(repo.get("id"))
+            for repo in scope_repos
+            if isinstance(repo, dict) and repo.get("id")
+        }
+        actual_repo_ids = seen_repo_ids
+        if actual_repo_ids != expected_repo_ids:
+            raise FlowError(
+                f"{field_prefix}.repos 必须与 execution_scope.repos 完全一致: "
+                f"expected={sorted(expected_repo_ids)!r} actual={sorted(actual_repo_ids)!r}"
+            )
+
+
 def validate_payload(
     event: str,
     payload: Any,
@@ -370,6 +446,14 @@ def validate_payload(
             raise FlowError(f"{event} 只允许 result=passed 或 passed_with_notes")
         if event.endswith("_failed") and result != "failed":
             raise FlowError(f"{event} 只允许 result=failed")
+        if "worktree_snapshot" in payload:
+            if event.endswith("_failed"):
+                raise FlowError(f"{event} 不允许携带 worktree_snapshot")
+            validate_worktree_snapshot(
+                payload["worktree_snapshot"],
+                field_prefix=f"{event}.worktree_snapshot",
+                state=state,
+            )
         return
     if event == "fix_started":
         if prior_transitions is not None:
@@ -462,6 +546,7 @@ def derive_state(state: dict[str, Any]) -> dict[str, Any]:
                 at=str(item["at"]),
                 engine=str(payload["engine"]),
                 model=str(payload["model"]),
+                worktree_snapshot=payload.get("worktree_snapshot"),
             )
             last_review = current_last_review.as_dict()
             latest_regular_review_file = current_last_review.report_file
@@ -476,6 +561,7 @@ def derive_state(state: dict[str, Any]) -> dict[str, Any]:
                 at=str(item["at"]),
                 engine=str(payload["engine"]),
                 model=str(payload["model"]),
+                worktree_snapshot=payload.get("worktree_snapshot"),
             )
             last_review = current_last_review.as_dict()
             latest_recheck_review_file = current_last_review.report_file
@@ -674,19 +760,27 @@ def build_review_payload(state: dict[str, Any], args: argparse.Namespace, *, mod
     if failed_only:
         if result != "failed":
             raise FlowError("失败事件只允许 --result failed")
+        if args.worktree_snapshot_json is not None:
+            raise FlowError("失败事件不接受参数 --worktree-snapshot-json")
     else:
         if result not in REVIEW_PASS_RESULTS:
             raise FlowError("通过事件只允许 --result passed 或 passed_with_notes")
     counts = derive_state(state)["review_rounds"]
     round_number = counts[mode] + 1
     disallow_args(f"{mode}_review", args, ["title", "plan_file", "repo_scope_json"])
-    return {
+    payload = {
         "result": result,
         "round": round_number,
         "report_file": normalize_path(require_arg(args.report_file, "report_file")),
         "engine": require_arg(args.engine, "engine"),
         "model": require_arg(args.model, "model"),
     }
+    if args.worktree_snapshot_json is not None:
+        try:
+            payload["worktree_snapshot"] = json.loads(require_arg(args.worktree_snapshot_json, "worktree_snapshot_json"))
+        except json.JSONDecodeError as exc:
+            raise FlowError("--worktree-snapshot-json 不是合法 JSON") from exc
+    return payload
 
 
 def build_transition_payload(event: str, state: dict[str, Any] | None, args: argparse.Namespace) -> dict[str, Any]:
@@ -719,7 +813,11 @@ def build_transition_payload(event: str, state: dict[str, Any] | None, args: arg
         return build_review_payload(state, args, mode="recheck", failed_only=False)
     if event == "recheck_failed":
         return build_review_payload(state, args, mode="recheck", failed_only=True)
-    disallow_args(event, args, ["title", "plan_file", "repo_scope_json", "result", "report_file", "engine", "model"])
+    disallow_args(
+        event,
+        args,
+        ["title", "plan_file", "repo_scope_json", "result", "report_file", "engine", "model", "worktree_snapshot_json"],
+    )
     return {}
 
 
@@ -886,6 +984,7 @@ def build_parser() -> argparse.ArgumentParser:
     transition.add_argument("--report-file")
     transition.add_argument("--engine")
     transition.add_argument("--model")
+    transition.add_argument("--worktree-snapshot-json")
     transition.set_defaults(func=cmd_transition)
 
     show = subparsers.add_parser("show", description="查看状态文件")

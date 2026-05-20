@@ -20,6 +20,7 @@ PROMPT_TEMPLATE="$AGENT_DIR/prompts/review-generation.md"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 CLAUDE_HOME="$HOME/.claude"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
+WORKTREE_SNAPSHOT_LIB="$AI_FLOW_HOME/lib/worktree-snapshot.sh"
 IS_PLAN_REPOS_MODE=0
 PLAN_REPO_IDS=()
 PLAN_REPO_PATHS=()
@@ -62,11 +63,14 @@ require_file() {
 
 validate_installed_resources() {
     require_file "$FLOW_STATE_SH" "AI Flow runtime 脚本 flow-state.sh"
+    require_file "$WORKTREE_SNAPSHOT_LIB" "AI Flow runtime worktree-snapshot.sh"
     require_file "$TEMPLATE" "review 模板"
     require_file "$PROMPT_TEMPLATE" "review prompt"
 }
 
 validate_installed_resources
+# shellcheck source=/dev/null
+source "$WORKTREE_SNAPSHOT_LIB"
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\\/&]/\\&/g'
@@ -634,6 +638,20 @@ list_plan_repo_dirty_repo_ids() {
             printf '%s\n' "$repo_id"
         fi
     done
+}
+
+collect_current_worktree_snapshot_json() {
+    if [ "$IS_PLAN_REPOS_MODE" -eq 1 ]; then
+        local args=()
+        local i
+        for i in "${!PLAN_REPO_IDS[@]}"; do
+            args+=("${PLAN_REPO_IDS[$i]}" "${PLAN_REPO_PATHS[$i]}" "${PLAN_REPO_GIT_ROOTS[$i]}")
+        done
+        ai_flow_collect_worktree_snapshot_json "${args[@]}"
+        return
+    fi
+
+    ai_flow_collect_worktree_snapshot_json "owner" "." "$PROJECT_DIR"
 }
 
 list_plan_repo_change_summary() {
@@ -1836,6 +1854,11 @@ if [ "$IS_STANDALONE" -eq 1 ]; then
     PROTOCOL_REVIEW_RESULT="$RESULT"
 else
     echo ">>> 更新状态文件..."
+    transition_extra_args=()
+    if [ "$RESULT" != "failed" ]; then
+        review_snapshot_json="$(collect_current_worktree_snapshot_json)"
+        transition_extra_args+=(--worktree-snapshot-json "$review_snapshot_json")
+    fi
     if [ "$REVIEW_MODE" = "regular" ]; then
         if [ "$RESULT" = "failed" ]; then
             REVIEW_EVENT="review_failed"
@@ -1855,7 +1878,8 @@ else
         --result "$RESULT" \
         --report-file "$REPORT_FILE" \
         --engine "$ACTIVE_ENGINE" \
-        --model "$ACTIVE_MODEL"
+        --model "$ACTIVE_MODEL" \
+        "${transition_extra_args[@]}"
     UPDATED_STATUS=$(state_current_status "$STATE_FILE_ABS")
     echo "    状态已验证为 [$UPDATED_STATUS]"
     PROTOCOL_STATE="$UPDATED_STATUS"

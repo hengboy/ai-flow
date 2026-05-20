@@ -17,6 +17,22 @@ sys.path.insert(0, str(TESTS_LIB))
 from fixtures import TempProject  # noqa: E402
 
 
+WORKTREE_SNAPSHOT = json.dumps(
+    {
+        "repos": [
+            {
+                "repo_id": "owner",
+                "entries": [
+                    {"path": "runtime/scripts/flow-auto-run.sh", "tokens": ["M"]},
+                    {"path": "tests/test_flow_auto_run.sh", "tokens": ["??"]},
+                ],
+            }
+        ]
+    },
+    ensure_ascii=False,
+)
+
+
 class TestSlugValidation(unittest.TestCase):
     """slug 格式校验测试。"""
 
@@ -140,6 +156,130 @@ class TestStateTransition(unittest.TestCase):
                        "--result", "failed", "--report-file", ".ai-flow/reports/r2.md", "--engine", "e", "--model", "m")
         self.assertEqual(r.returncode, 0)
         self.assertIn("REVIEW_FAILED", r.stdout)
+
+    def test_review_passed_accepts_worktree_snapshot(self):
+        self.proj.create_state(self.slug)
+        steps = [
+            ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
+            ("execute_started", []),
+            ("implementation_completed", []),
+        ]
+        for event, extra in steps:
+            r = self._run("transition", "--slug", self.slug, "--event", event, *extra)
+            self.assertEqual(r.returncode, 0, f"事件 {event} 失败: {r.stderr}")
+
+        r = self._run(
+            "transition", "--slug", self.slug, "--event", "review_passed",
+            "--result", "passed", "--report-file", ".ai-flow/reports/r.md",
+            "--engine", "e", "--model", "m",
+            "--worktree-snapshot-json", WORKTREE_SNAPSHOT,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+        state_file = self.proj.state_dir / f"{self.slug}.json"
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        payload = state["transitions"][-1]["payload"]
+        self.assertIn("worktree_snapshot", payload)
+        self.assertEqual(payload["worktree_snapshot"]["repos"][0]["repo_id"], "owner")
+
+    def test_review_failed_rejects_worktree_snapshot(self):
+        self.proj.create_state(self.slug)
+        steps = [
+            ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
+            ("execute_started", []),
+            ("implementation_completed", []),
+        ]
+        for event, extra in steps:
+            r = self._run("transition", "--slug", self.slug, "--event", event, *extra)
+            self.assertEqual(r.returncode, 0, f"事件 {event} 失败: {r.stderr}")
+
+        r = self._run(
+            "transition", "--slug", self.slug, "--event", "review_failed",
+            "--result", "failed", "--report-file", ".ai-flow/reports/r.md",
+            "--engine", "e", "--model", "m",
+            "--worktree-snapshot-json", WORKTREE_SNAPSHOT,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("失败事件不接受参数 --worktree-snapshot-json", r.stderr)
+
+    def test_review_passed_rejects_invalid_worktree_snapshot(self):
+        self.proj.create_state(self.slug)
+        steps = [
+            ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
+            ("execute_started", []),
+            ("implementation_completed", []),
+        ]
+        for event, extra in steps:
+            r = self._run("transition", "--slug", self.slug, "--event", event, *extra)
+            self.assertEqual(r.returncode, 0, f"事件 {event} 失败: {r.stderr}")
+
+        bad_snapshot = json.dumps({"repos": [{"repo_id": "owner", "entries": [{"path": "", "tokens": ["M"]}]}]})
+        r = self._run(
+            "transition", "--slug", self.slug, "--event", "review_passed",
+            "--result", "passed", "--report-file", ".ai-flow/reports/r.md",
+            "--engine", "e", "--model", "m",
+            "--worktree-snapshot-json", bad_snapshot,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("path 不能为空", r.stderr)
+
+    def test_review_passed_accepts_real_git_status_tokens(self):
+        self.proj.create_state(self.slug)
+        steps = [
+            ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
+            ("execute_started", []),
+            ("implementation_completed", []),
+        ]
+        for event, extra in steps:
+            r = self._run("transition", "--slug", self.slug, "--event", event, *extra)
+            self.assertEqual(r.returncode, 0, f"事件 {event} 失败: {r.stderr}")
+
+        snapshot = json.dumps({
+            "repos": [
+                {
+                    "repo_id": "owner",
+                    "entries": [
+                        {"path": "README.md", "tokens": ["??"]},
+                        {"path": "src/app.js", "tokens": ["MM"]},
+                    ],
+                }
+            ]
+        }, ensure_ascii=False)
+        r = self._run(
+            "transition", "--slug", self.slug, "--event", "review_passed",
+            "--result", "passed", "--report-file", ".ai-flow/reports/r.md",
+            "--engine", "e", "--model", "m",
+            "--worktree-snapshot-json", snapshot,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_review_passed_rejects_snapshot_repo_mismatch(self):
+        self.proj.create_state(self.slug)
+        steps = [
+            ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
+            ("execute_started", []),
+            ("implementation_completed", []),
+        ]
+        for event, extra in steps:
+            r = self._run("transition", "--slug", self.slug, "--event", event, *extra)
+            self.assertEqual(r.returncode, 0, f"事件 {event} 失败: {r.stderr}")
+
+        mismatch_snapshot = json.dumps({
+            "repos": [
+                {
+                    "repo_id": "other-repo",
+                    "entries": [{"path": "README.md", "tokens": ["M"]}],
+                }
+            ]
+        }, ensure_ascii=False)
+        r = self._run(
+            "transition", "--slug", self.slug, "--event", "review_passed",
+            "--result", "passed", "--report-file", ".ai-flow/reports/r.md",
+            "--engine", "e", "--model", "m",
+            "--worktree-snapshot-json", mismatch_snapshot,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("必须与 execution_scope.repos 完全一致", r.stderr)
 
 
 class TestShowCommand(unittest.TestCase):

@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_install_layout.sh — install.sh 安装布局回归测试
-# 验证 runtime/lib 会完整安装，并保留 flow-root-helper.sh。
+# 验证 runtime/lib 会完整安装，并保留 flow-root-helper.sh / worktree-snapshot.sh。
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/testkit.bash"
@@ -38,6 +38,12 @@ test_runtime_lib_is_preserved() {
         test_pass "安装后保留 flow-root-helper.sh"
     else
         test_fail "安装后保留 flow-root-helper.sh" "缺少 $ai_flow_home/lib/flow-root-helper.sh"
+    fi
+
+    if [ -f "$ai_flow_home/lib/worktree-snapshot.sh" ]; then
+        test_pass "安装后保留 worktree-snapshot.sh"
+    else
+        test_fail "安装后保留 worktree-snapshot.sh" "缺少 $ai_flow_home/lib/worktree-snapshot.sh"
     fi
 
     if [ -f "$ai_flow_home/lib/rule-loader.sh" ]; then

@@ -8,6 +8,34 @@ source "$SCRIPT_DIR/lib/testkit.bash"
 AUTO_RUN_SH="$SCRIPTS_DIR/flow-auto-run.sh"
 FLOW_STATE_SH="$SCRIPTS_DIR/flow-state.sh"
 
+snapshot_json_for_entries() {
+    local repo_id="$1"
+    shift
+    python3 - "$repo_id" "$@" <<'PY'
+import json
+import sys
+
+repo_id, *pairs = sys.argv[1:]
+if len(pairs) % 2 != 0:
+    raise SystemExit("path/token pairs required")
+
+entries = []
+for index in range(0, len(pairs), 2):
+    path = pairs[index]
+    token = pairs[index + 1]
+    entries.append({"path": path, "tokens": [token]})
+
+print(json.dumps({
+    "repos": [
+        {
+            "repo_id": repo_id,
+            "entries": entries,
+        }
+    ]
+}, ensure_ascii=False))
+PY
+}
+
 echo "=== flow-auto-run.sh 测试 ==="
 echo ""
 
@@ -150,7 +178,7 @@ test_usage() {
     assert_exit_code "$exit_code" 1 "无参数时显示用法"
 }
 
-# --- 测试 9: dirty check 干净 ---
+# --- 测试 9: DONE 状态缺少快照时即使仓库干净也保守返回 dirty ---
 test_dirty_clean() {
     local dir
     dir="$(create_temp_project "auto-run-9")"
@@ -170,8 +198,164 @@ test_dirty_clean() {
 
     local output exit_code=0
     output="$(AI_FLOW_ACTOR=test bash "$AUTO_RUN_SH" dirty "20260519-test-dirty-clean" 2>&1)" || exit_code=$?
-    assert_exit_code "$exit_code" 0 "dirty check 干净仓库"
-    assert_contains "$output" "clean" "干净仓库返回 clean"
+    assert_exit_code "$exit_code" 0 "缺少快照时 dirty check 正常退出"
+    assert_contains "$output" "dirty" "缺少快照时干净仓库也保守返回 dirty"
+    cd "$SCRIPT_DIR"
+    cleanup_temp_project "$dir"
+}
+
+# --- 测试 10: DONE 状态下与最近通过审查快照一致，返回 clean ---
+test_dirty_clean_when_snapshot_matches() {
+    local dir
+    dir="$(create_temp_project "auto-run-10")"
+    cd "$dir"
+    git init -q
+    git config user.email "test@test.com"
+    git config user.name "Test"
+    touch README.md
+    git add README.md
+    git commit -q -m "init"
+
+    create_minimal_state "$dir" "20260519-test-dirty-snapshot-clean"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-clean" \
+        --event plan_review_passed --result passed \
+        --engine test-engine --model test-model >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-clean" \
+        --event execute_started >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-clean" \
+        --event implementation_completed >/dev/null 2>&1
+
+    printf 'change\n' >> README.md
+    local snapshot
+    snapshot="$(snapshot_json_for_entries "owner" "README.md" "M")"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-clean" \
+        --event review_passed --result passed \
+        --report-file .ai-flow/reports/r1.md \
+        --engine test-engine --model test-model \
+        --worktree-snapshot-json "$snapshot" >/dev/null 2>&1
+
+    local output exit_code=0
+    output="$(AI_FLOW_ACTOR=test bash "$AUTO_RUN_SH" dirty "20260519-test-dirty-snapshot-clean" 2>&1)" || exit_code=$?
+    assert_exit_code "$exit_code" 0 "快照一致时 dirty check 正常退出"
+    assert_contains "$output" "clean" "快照一致返回 clean"
+    cd "$SCRIPT_DIR"
+    cleanup_temp_project "$dir"
+}
+
+# --- 测试 11: DONE 状态下与最近通过审查快照不一致，返回 dirty ---
+test_dirty_when_snapshot_differs() {
+    local dir
+    dir="$(create_temp_project "auto-run-11")"
+    cd "$dir"
+    git init -q
+    git config user.email "test@test.com"
+    git config user.name "Test"
+    touch README.md
+    git add README.md
+    git commit -q -m "init"
+
+    create_minimal_state "$dir" "20260519-test-dirty-snapshot-diff"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-diff" \
+        --event plan_review_passed --result passed \
+        --engine test-engine --model test-model >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-diff" \
+        --event execute_started >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-diff" \
+        --event implementation_completed >/dev/null 2>&1
+
+    printf 'change\n' >> README.md
+    local snapshot
+    snapshot="$(snapshot_json_for_entries "owner" "README.md" "M")"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-diff" \
+        --event review_passed --result passed \
+        --report-file .ai-flow/reports/r1.md \
+        --engine test-engine --model test-model \
+        --worktree-snapshot-json "$snapshot" >/dev/null 2>&1
+
+    printf 'new\n' > extra.txt
+
+    local output exit_code=0
+    output="$(AI_FLOW_ACTOR=test bash "$AUTO_RUN_SH" dirty "20260519-test-dirty-snapshot-diff" 2>&1)" || exit_code=$?
+    assert_exit_code "$exit_code" 0 "快照不一致时 dirty check 正常退出"
+    assert_contains "$output" "dirty" "快照不一致返回 dirty"
+    assert_contains "$output" "owner" "快照不一致输出 repo 标识"
+    cd "$SCRIPT_DIR"
+    cleanup_temp_project "$dir"
+}
+
+# --- 测试 12: DONE 状态缺少快照时保守返回 dirty ---
+test_dirty_when_snapshot_missing() {
+    local dir
+    dir="$(create_temp_project "auto-run-12")"
+    cd "$dir"
+    git init -q
+    git config user.email "test@test.com"
+    git config user.name "Test"
+    touch README.md
+    git add README.md
+    git commit -q -m "init"
+
+    create_minimal_state "$dir" "20260519-test-dirty-snapshot-missing"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-missing" \
+        --event plan_review_passed --result passed \
+        --engine test-engine --model test-model >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-missing" \
+        --event execute_started >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-missing" \
+        --event implementation_completed >/dev/null 2>&1
+
+    printf 'change\n' >> README.md
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-missing" \
+        --event review_passed --result passed \
+        --report-file .ai-flow/reports/r1.md \
+        --engine test-engine --model test-model >/dev/null 2>&1
+
+    local output exit_code=0
+    output="$(AI_FLOW_ACTOR=test bash "$AUTO_RUN_SH" dirty "20260519-test-dirty-snapshot-missing" 2>&1)" || exit_code=$?
+    assert_exit_code "$exit_code" 0 "缺少快照时 dirty check 正常退出"
+    assert_contains "$output" "dirty" "缺少快照时保守返回 dirty"
+    cd "$SCRIPT_DIR"
+    cleanup_temp_project "$dir"
+}
+
+# --- 测试 13: 真实 git 状态 token（?? / MM）与快照一致时返回 clean ---
+test_dirty_clean_with_real_git_status_tokens() {
+    local dir
+    dir="$(create_temp_project "auto-run-13")"
+    cd "$dir"
+    git init -q
+    git config user.email "test@test.com"
+    git config user.name "Test"
+    printf 'base\n' > tracked.txt
+    git add tracked.txt
+    git commit -q -m "init"
+
+    create_minimal_state "$dir" "20260519-test-dirty-real-status"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-real-status" \
+        --event plan_review_passed --result passed \
+        --engine test-engine --model test-model >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-real-status" \
+        --event execute_started >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-real-status" \
+        --event implementation_completed >/dev/null 2>&1
+
+    printf 'staged\n' >> tracked.txt
+    git add tracked.txt
+    printf 'unstaged\n' >> tracked.txt
+    printf 'new\n' > extra.txt
+
+    local snapshot
+    snapshot="$(snapshot_json_for_entries "owner" "extra.txt" "??" "tracked.txt" "MM")"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-real-status" \
+        --event review_passed --result passed \
+        --report-file .ai-flow/reports/r1.md \
+        --engine test-engine --model test-model \
+        --worktree-snapshot-json "$snapshot" >/dev/null 2>&1
+
+    local output exit_code=0
+    output="$(AI_FLOW_ACTOR=test bash "$AUTO_RUN_SH" dirty "20260519-test-dirty-real-status" 2>&1)" || exit_code=$?
+    assert_exit_code "$exit_code" 0 "真实 git 状态 token 时 dirty check 正常退出"
+    assert_contains "$output" "clean" "真实 git 状态 token 一致时返回 clean"
     cd "$SCRIPT_DIR"
     cleanup_temp_project "$dir"
 }
@@ -186,6 +370,10 @@ test_resolve_multiple
 test_resolve_no_match
 test_usage
 test_dirty_clean
+test_dirty_clean_when_snapshot_matches
+test_dirty_when_snapshot_differs
+test_dirty_when_snapshot_missing
+test_dirty_clean_with_real_git_status_tokens
 
 print_summary
 exit "$fail_count"
