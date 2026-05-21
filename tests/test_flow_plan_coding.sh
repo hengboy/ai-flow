@@ -127,6 +127,7 @@ test_done_rejected() {
     dir="$(create_temp_project "plan-coding-7")"
     create_minimal_state "$dir" "20260519-test-done"
     cd "$dir"
+    create_minimal_review_report "$dir" "r.md"
     # 快速走到 DONE
     for cmd in \
         "plan_review_passed --result passed --engine e --model m" \

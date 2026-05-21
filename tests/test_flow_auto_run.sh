@@ -118,6 +118,7 @@ test_list_excludes_done_when_clean() {
         --event implementation_completed >/dev/null 2>&1
 
     printf 'change\n' >> README.md
+    create_minimal_review_report "$dir" "r1.md"
     local snapshot
     snapshot="$(snapshot_json_for_entries "owner" "README.md" "M")"
     bash "$FLOW_STATE_SH" transition --slug "20260519-test-done-clean" \
@@ -156,6 +157,7 @@ test_list_includes_done_when_dirty() {
         --event implementation_completed >/dev/null 2>&1
 
     printf 'change\n' >> README.md
+    create_minimal_review_report "$dir" "r1.md"
     local snapshot
     snapshot="$(snapshot_json_for_entries "owner" "README.md" "M")"
     bash "$FLOW_STATE_SH" transition --slug "20260519-test-done-dirty" \
@@ -305,6 +307,7 @@ test_dirty_clean_when_snapshot_matches() {
         --event implementation_completed >/dev/null 2>&1
 
     printf 'change\n' >> README.md
+    create_minimal_review_report "$dir" "r1.md"
     local snapshot
     snapshot="$(snapshot_json_for_entries "owner" "README.md" "M")"
     bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-clean" \
@@ -343,6 +346,7 @@ test_dirty_when_snapshot_differs() {
         --event implementation_completed >/dev/null 2>&1
 
     printf 'change\n' >> README.md
+    create_minimal_review_report "$dir" "r1.md"
     local snapshot
     snapshot="$(snapshot_json_for_entries "owner" "README.md" "M")"
     bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-diff" \
@@ -384,6 +388,7 @@ test_dirty_when_snapshot_missing() {
         --event implementation_completed >/dev/null 2>&1
 
     printf 'change\n' >> README.md
+    create_minimal_review_report "$dir" "r1.md"
     bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-snapshot-missing" \
         --event review_passed --result passed \
         --report-file .ai-flow/reports/r1.md \
@@ -423,6 +428,7 @@ test_dirty_clean_with_real_git_status_tokens() {
     printf 'unstaged\n' >> tracked.txt
     printf 'new\n' > extra.txt
 
+    create_minimal_review_report "$dir" "r1.md"
     local snapshot
     snapshot="$(snapshot_json_for_entries "owner" "extra.txt" "??" "tracked.txt" "MM")"
     bash "$FLOW_STATE_SH" transition --slug "20260519-test-dirty-real-status" \

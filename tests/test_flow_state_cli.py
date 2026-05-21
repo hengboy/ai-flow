@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent / "runtime" / "scripts"
 FLOW_STATE_SH = SCRIPT_DIR / "flow-state.sh"
@@ -78,6 +79,281 @@ class TestStateTransition(unittest.TestCase):
             cwd=self.proj.root, env=self.proj.env,
         )
 
+    def _write_plan(self, content: str):
+        plan_dir = self.proj.root / ".ai-flow" / "plans"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "test.md").write_text(content, encoding="utf-8")
+
+    def _write_report(self, content: str, name: str = "r.md"):
+        report_dir = self.proj.root / ".ai-flow" / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / name).write_text(content, encoding="utf-8")
+
+    def _review_report(self, *, mode: str = "regular", covered_steps: Optional[List[Tuple[str, str]]] = None) -> str:
+        rows = covered_steps or [("step-one", "第一步")]
+        coverage_lines = "\n".join(
+            f"| `{step_id}`（{title}） | 已实现 | 已覆盖 |"
+            for step_id, title in rows
+        )
+        return f"""# 审查报告：测试功能
+
+> 审查日期：2026-05-19
+> 审查时间：10:10:00
+> 需求简称：{self.slug}
+> 审查模式：{mode}
+> 审查轮次：1
+> 审查结果：passed
+> 对比计划：`.ai-flow/plans/test.md`
+> 审查工具：test
+> 规则标识：`review`
+
+## 1. 总体评价
+
+总体通过
+
+### 1.1 审查上下文
+
+| 项目 | 内容 |
+|------|------|
+| Plan 文件 | `.ai-flow/plans/test.md` |
+| 变更范围 | test |
+| 上一轮报告 | 无 |
+| 验证证据 | test |
+
+### 1.2 定向验证执行证据
+
+| 命令 | 结果 | 结论 |
+|------|------|------|
+| `echo ok` | PASS | test |
+
+## 2. 计划覆盖度检查
+
+| 实施步骤 | 状态 | 备注 |
+|----------|------|------|
+{coverage_lines}
+
+**覆盖率**：100%
+
+### 2.1 计划外变更识别
+
+| 变更文件/模块 | 变更内容摘要 | 判定 | 备注 |
+|----------|----------|------|------|
+| `a.txt` | test | 接受 | test |
+
+## 3. 代码质量审查
+
+### 3.1 架构与设计
+
+- 无
+
+### 3.2 规范性
+
+- 无
+
+### 3.3 安全性
+
+- 无
+
+### 3.4 性能
+
+- 无
+
+### 3.5 逻辑正确性
+
+| 检查项 | 审查结果 | 问题描述 |
+|--------|----------|----------|
+| 边界条件 | 通过 | test |
+
+### 3.6 缺陷族覆盖度
+
+| 缺陷族 | 覆盖状态 | 依据 |
+|--------|----------|------|
+| test-family | 已覆盖 | test |
+
+## 4. 缺陷清单
+
+### 4.1 严重缺陷
+
+无
+
+### 4.2 建议改进
+
+无
+
+## 5. 审查结论
+
+- [x] **通过** — 所有步骤已实现，无严重缺陷
+
+## 6. 缺陷修复追踪
+
+无
+"""
+
+    def _standard_plan(self, *, all_done: bool = True, step_count: int = 1) -> str:
+        action_mark = "x" if all_done else " "
+        step_two = f"""
+
+### 第二步
+
+**Step ID**：`step-two`
+
+**目标**：完成第二步
+
+**文件边界**：
+- Modify: `b.txt` — test
+- Test: `tests/b_test.py` — test
+
+**本轮 review 预期关注面**：test-family
+
+**执行动作**：
+- [{action_mark}] **实现**
+  - 命令：`echo ok`
+  - 预期：PASS
+
+**本步验收**：
+- [{action_mark}] 命令成功
+
+**本步关闭条件**：命令通过
+
+**阻塞条件**：- 无
+""" if step_count > 1 else ""
+        file_boundary_rows = """| `a.txt` | owner | Modify | test | `step-one` |
+| `b.txt` | owner | Modify | test | `step-two` |""" if step_count > 1 else "| `a.txt` | owner | Modify | test | `step-one` |"
+        return f"""# 实施计划：测试功能
+
+> 创建日期：2026-05-19
+> 创建时间：10:00:00
+> 需求简称：测试功能
+> 需求来源：单元测试
+> 执行范围：owner
+> Plan 参与仓库：owner
+> 状态文件：.ai-flow/state/test.json
+> 文档角色：实施计划
+> 状态文件约束：仅 flow-state.sh transition 可修改
+> 执行约定：按 Step 顺序执行
+> 验证约定：运行计划中的验证命令
+> 规则标识：test
+
+## 1. 需求概述
+
+**目标**：验证状态门禁
+
+**背景**：测试
+
+**原始需求（原文）**：
+测试
+
+**非目标**：无
+
+## 2. 技术分析
+
+### 2.1 涉及模块
+
+| 模块 | 仓库 | 职责 | 变更类型 |
+|------|------|------|----------|
+| test | owner | test | 修改 |
+
+### 2.2 数据模型变更
+
+不涉及数据库变更
+
+### 2.3 API 变更
+
+| 接口 | 方法 | 路径 | 说明 |
+|------|------|------|------|
+| 无新增/修改接口 | - | - | - |
+
+### 2.4 依赖影响
+
+无
+
+### 2.5 文件边界总览
+
+| 文件 | 仓库 | 操作 | 职责 | 对应 Step ID |
+|------|------|------|------|----------|
+{file_boundary_rows}
+
+### 2.6 高风险路径与缺陷族
+
+| 高风险能力/路径 | 影响面 | 典型失效模式 | 对应缺陷族 | 必须覆盖的验证方式 |
+|----------------|--------|--------------|------------|--------------------|
+| test | test | test | test-family | 单测 |
+
+## 3. 实施步骤
+
+### 第一步
+
+**Step ID**：`step-one`
+
+**目标**：完成测试步骤
+
+**文件边界**：
+- Modify: `a.txt` — test
+- Test: `tests/a_test.py` — test
+
+**本轮 review 预期关注面**：test-family
+
+**执行动作**：
+- [{action_mark}] **实现**
+  - 命令：`echo ok`
+  - 预期：PASS
+
+**本步验收**：
+- [{action_mark}] 命令成功
+
+**本步关闭条件**：命令通过
+
+**阻塞条件**：- 无
+{step_two}
+
+## 4. 测试计划
+
+### 4.1 单元测试
+
+- [ ] test
+
+### 4.2 集成测试
+
+- [ ] 无
+
+### 4.3 回归验证
+
+- [ ] `echo ok`
+
+### 4.4 定向验证矩阵
+
+| 缺陷族 | 目标风险路径 | 定向验证命令 | 验证类型 | 通过标准 |
+|--------|--------------|--------------|----------|----------|
+| test-family | test | `echo ok` | 单测 | 输出 ok |
+
+## 5. 风险与注意事项
+
+- 无
+
+## 6. 验收标准
+
+- [ ] test
+
+## 7. 需求变更记录
+
+| 时间 | 变更描述 | 确认方式 |
+|------|----------|----------|
+
+## 8. 计划审核记录
+
+### 8.1 当前审核结论
+
+- 待审核
+
+### 8.2 偏差与建议
+
+- 无
+
+### 8.3 审核历史
+
+- 无
+"""
+
     def test_plan_review_passed(self):
         self.proj.create_state(self.slug)
         r = self._run("transition", "--slug", self.slug,
@@ -94,9 +370,21 @@ class TestStateTransition(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("PLAN_REVIEW_FAILED", r.stdout)
 
+    def test_plan_review_passed_rejects_nonstandard_plan(self):
+        self.proj.create_state(self.slug)
+        self._write_plan("# 错误计划\n\n## 3. 实施步骤\n\n### 2.1 错误步骤\n")
+        r = self._run(
+            "transition", "--slug", self.slug, "--event", "plan_review_passed",
+            "--result", "passed", "--engine", "e", "--model", "m",
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("plan 结构校验失败", r.stderr)
+
     def test_full_lifecycle_to_done(self):
         """完整流程: 创建 -> 审核通过 -> 执行 -> 完成 -> 审查通过。"""
         self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=True))
+        self._write_report(self._review_report())
         steps = [
             ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
             ("execute_started", []),
@@ -109,6 +397,49 @@ class TestStateTransition(unittest.TestCase):
         state_file = self.proj.state_dir / f"{self.slug}.json"
         state = json.loads(state_file.read_text(encoding="utf-8"))
         self.assertEqual(state["current_status"], "DONE")
+
+    def test_review_passed_rejects_report_missing_plan_step(self):
+        self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=True, step_count=2))
+        self._write_report(self._review_report(covered_steps=[("step-one", "第一步")]))
+        steps = [
+            ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
+            ("execute_started", []),
+            ("implementation_completed", []),
+        ]
+        for event, extra in steps:
+            r = self._run("transition", "--slug", self.slug, "--event", event, *extra)
+            self.assertEqual(r.returncode, 0, f"事件 {event} 失败: {r.stderr}")
+
+        r = self._run(
+            "transition", "--slug", self.slug, "--event", "review_passed",
+            "--result", "passed", "--report-file", ".ai-flow/reports/r.md",
+            "--engine", "e", "--model", "m",
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("报告覆盖度校验失败", r.stderr)
+        self.assertIn("缺少以下 plan 步骤: step-two", r.stderr)
+
+    def test_implementation_completed_rejects_nonstandard_plan(self):
+        self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=True))
+        self._run("transition", "--slug", self.slug, "--event", "plan_review_passed",
+                  "--result", "passed", "--engine", "e", "--model", "m")
+        self._run("transition", "--slug", self.slug, "--event", "execute_started")
+        self._write_plan("# 错误计划\n\n## 3. 实施步骤\n\n### 2.1 错误步骤\n")
+        r = self._run("transition", "--slug", self.slug, "--event", "implementation_completed")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("plan 结构校验失败", r.stderr)
+
+    def test_implementation_completed_rejects_incomplete_plan(self):
+        self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=False))
+        self._run("transition", "--slug", self.slug, "--event", "plan_review_passed",
+                  "--result", "passed", "--engine", "e", "--model", "m")
+        self._run("transition", "--slug", self.slug, "--event", "execute_started")
+        r = self._run("transition", "--slug", self.slug, "--event", "implementation_completed")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("plan 完成度校验失败", r.stderr)
 
     def test_transition_count_seq(self):
         """验证 transition 的 seq 自动递增。"""
@@ -144,6 +475,8 @@ class TestStateTransition(unittest.TestCase):
 
     def test_recheck_from_done(self):
         self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=True))
+        self._write_report(self._review_report())
         steps = [
             ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
             ("execute_started", []),
@@ -159,6 +492,8 @@ class TestStateTransition(unittest.TestCase):
 
     def test_review_passed_accepts_worktree_snapshot(self):
         self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=True))
+        self._write_report(self._review_report())
         steps = [
             ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
             ("execute_started", []),
@@ -184,6 +519,7 @@ class TestStateTransition(unittest.TestCase):
 
     def test_review_failed_rejects_worktree_snapshot(self):
         self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=True))
         steps = [
             ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
             ("execute_started", []),
@@ -204,6 +540,8 @@ class TestStateTransition(unittest.TestCase):
 
     def test_review_passed_rejects_invalid_worktree_snapshot(self):
         self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=True))
+        self._write_report(self._review_report())
         steps = [
             ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
             ("execute_started", []),
@@ -225,6 +563,8 @@ class TestStateTransition(unittest.TestCase):
 
     def test_review_passed_accepts_real_git_status_tokens(self):
         self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=True))
+        self._write_report(self._review_report())
         steps = [
             ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
             ("execute_started", []),
@@ -255,6 +595,8 @@ class TestStateTransition(unittest.TestCase):
 
     def test_review_passed_rejects_snapshot_repo_mismatch(self):
         self.proj.create_state(self.slug)
+        self._write_plan(self._standard_plan(all_done=True))
+        self._write_report(self._review_report())
         steps = [
             ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
             ("execute_started", []),
@@ -401,6 +743,18 @@ class TestDerivedState(unittest.TestCase):
 
     def _create_with_review(self):
         self.proj.create_state(self.slug)
+        plan_dir = self.proj.root / ".ai-flow" / "plans"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "test.md").write_text(
+            TestStateTransition._standard_plan(self, all_done=True),
+            encoding="utf-8",
+        )
+        report_dir = self.proj.root / ".ai-flow" / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "r1.md").write_text(
+            TestStateTransition._review_report(self),
+            encoding="utf-8",
+        )
         steps = [
             ("plan_review_passed", ["--result", "passed", "--engine", "e", "--model", "m"]),
             ("execute_started", []),
