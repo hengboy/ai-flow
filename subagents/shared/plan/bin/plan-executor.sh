@@ -1242,6 +1242,29 @@ revise_plan_from_failed_review() {
     review_section_backup=$(mktemp)
     save_plan_review_record_section "$PLAN_FILE" "$review_section_backup"
 
+    # --- Plan version backup (non-blocking) ---
+    {
+        local history_dir="$FLOW_DIR/plans/history/${SLUG}"
+        mkdir -p "$history_dir"
+        local manifest="$history_dir/manifest.json"
+        [ -f "$manifest" ] || echo '[]' > "$manifest"
+        local next_version
+        next_version=$(ls "$history_dir"/v*.md 2>/dev/null | wc -l | tr -d ' ')
+        next_version=$((next_version + 1))
+        local version_tag="v${next_version}"
+        cp "$PLAN_FILE" "$history_dir/${version_tag}.md"
+        local backup_ts
+        backup_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        python3 -c "
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data.append({'version': sys.argv[2], 'timestamp': sys.argv[3], 'plan_file_snapshot': sys.argv[2] + '.md'})
+json.dump(data, open(path, 'w'), indent=2, ensure_ascii=False)
+" "$manifest" "$version_tag" "$backup_ts"
+        echo "    Plan 已备份到 $history_dir/${version_tag}.md"
+    } || echo "WARNING: Plan version backup failed, continuing with revision" >&2
+
     PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
     PLAN_REVIEW_ITEMS_FOR_PROMPT=$(cat "$review_items_file")
     revision_prompt=$(render_prompt_template "$PLAN_REVISION_PROMPT_TEMPLATE")

@@ -136,6 +136,19 @@ NEXT: ai-flow-plan-review|none
 SUMMARY: <one-line-summary>
 ```
 
+## 计划版本管理
+
+每次 plan 修订时，`plan-executor.sh` 会自动将修订前的内容备份到 `.ai-flow/plans/history/<slug>/` 目录。
+
+| 工具 | 用途 | 示例 |
+|------|------|------|
+| `flow-plan-history.sh` | 列出指定 slug 的所有历史版本 | `bash runtime/scripts/flow-plan-history.sh --slug <slug>` |
+| `flow-plan-history.sh --json` | 以 JSON 格式输出版本历史 | `bash runtime/scripts/flow-plan-history.sh --slug <slug> --json` |
+| `flow-plan-diff.sh` | 对比两个历史版本差异 | `bash runtime/scripts/flow-plan-diff.sh --slug <slug> --from v1 --to v2` |
+| `flow-plan-diff.sh --to current` | 对比历史版本与当前 plan（依赖 `flow-state.sh`） | `bash runtime/scripts/flow-plan-diff.sh --slug <slug> --from v1 --to current` |
+
+版本历史保存在 `.ai-flow/plans/history/<slug>/` 目录，包含 `manifest.json`（版本元数据）和 `vN.md`（版本化 plan 快照）。
+
 ## 完成后
 
 - `RESULT: success`：读取 `ARTIFACT`、`STATE`、`NEXT`、`SUMMARY`，确认 draft 已落盘
