@@ -31,6 +31,155 @@ class FlowUtils:
             return None
 
     @staticmethod
+    def parse_plan_steps(plan_file):
+        """解析 plan 中的实施步骤。
+
+        兼容标准 plan 模板的 `### ...` 步骤块，并尽量识别旧 plan 的
+        2.x 层级步骤块；但只要缺少标准 Step 子字段，就会标记为无效。
+        """
+        try:
+            text = Path(plan_file).read_text(encoding='utf-8')
+        except Exception as exc:
+            return {"ok": False, "error": f"无法读取 plan 文件: {exc}", "steps": []}
+
+        lines = text.splitlines()
+        in_steps = False
+        current = None
+        steps = []
+
+        def flush():
+            nonlocal current
+            if current is not None:
+                steps.append(current)
+                current = None
+
+        def new_step(title):
+            return {
+                "title": title,
+                "step_id": "",
+                "goal": "",
+                "file_boundary": [],
+                "review_focus": "",
+                "actions_all": [],
+                "actions_pending": [],
+                "actions_done": [],
+                "acceptance_all": [],
+                "acceptance_pending": [],
+                "acceptance_done": [],
+                "close_condition": "",
+                "blockers": "",
+                "raw": [],
+                "valid": True,
+                "errors": [],
+                "_mode": None,
+                "_in_file_boundary": False,
+                "_in_actions": False,
+                "_in_acceptance": False,
+            }
+
+        for line in lines:
+            if line.startswith("## 4.") or line.startswith("## 5.") or line.startswith("## 6.") or line.startswith("## 7.") or line.startswith("## 8."):
+                if in_steps:
+                    flush()
+                    break
+            if line.startswith("## 3. 实施步骤"):
+                in_steps = True
+                continue
+            if not in_steps:
+                continue
+
+            if line.startswith("### "):
+                title = line.replace("### ", "", 1).strip()
+                if title:
+                    flush()
+                    current = new_step(title)
+                    current["raw"].append(line)
+                    # 标准模板之外的 2.x 章节仍允许进入解析，但后续会被严格校验
+                    if re.match(r"^\d+\.\d+(?:\.\d+)?\s+", title):
+                        current["_mode"] = "legacy"
+                    else:
+                        current["_mode"] = "standard"
+                    continue
+
+            if current is None:
+                continue
+
+            current["raw"].append(line)
+            stripped = line.strip()
+            if line.startswith("**Step ID**："):
+                current["step_id"] = line.replace("**Step ID**：", "", 1).strip().strip("`")
+            elif line.startswith("**目标**："):
+                current["goal"] = line.replace("**目标**：", "", 1).strip()
+            elif line.startswith("**文件边界**："):
+                current["_in_file_boundary"] = True
+                current["_in_actions"] = False
+                current["_in_acceptance"] = False
+            elif line.startswith("**本轮 review 预期关注面**："):
+                current["review_focus"] = line.replace("**本轮 review 预期关注面**：", "", 1).strip()
+                current["_in_file_boundary"] = False
+            elif line.startswith("**执行动作**："):
+                current["_in_actions"] = True
+                current["_in_file_boundary"] = False
+                current["_in_acceptance"] = False
+            elif line.startswith("**本步验收**："):
+                current["_in_acceptance"] = True
+                current["_in_actions"] = False
+                current["_in_file_boundary"] = False
+            elif line.startswith("**本步关闭条件**："):
+                current["close_condition"] = line.replace("**本步关闭条件**：", "", 1).strip()
+                current["_in_acceptance"] = False
+            elif line.startswith("**阻塞条件**："):
+                current["blockers"] = line.replace("**阻塞条件**：", "", 1).strip()
+                current["_in_acceptance"] = False
+            else:
+                if current["_in_file_boundary"] and stripped.startswith(("- Create:", "- Modify:", "- Test:")):
+                    current["file_boundary"].append(stripped)
+                elif current["_in_actions"] and stripped.startswith(("- [ ]", "- [x]", "- [X]")):
+                    current["actions_all"].append(stripped)
+                    if stripped.startswith(("- [x]", "- [X]")):
+                        current["actions_done"].append(stripped)
+                    else:
+                        current["actions_pending"].append(stripped)
+                elif current["_in_acceptance"] and stripped.startswith(("- [ ]", "- [x]", "- [X]")):
+                    current["acceptance_all"].append(stripped)
+                    if stripped.startswith(("- [x]", "- [X]")):
+                        current["acceptance_done"].append(stripped)
+                    else:
+                        current["acceptance_pending"].append(stripped)
+
+        flush()
+
+        for step in steps:
+            errors = []
+            if not step["step_id"]:
+                errors.append("缺少 Step ID")
+            if not step["goal"]:
+                errors.append("缺少目标")
+            if not step["file_boundary"]:
+                errors.append("缺少文件边界")
+            if not step["review_focus"]:
+                errors.append("缺少本轮 review 预期关注面")
+            if not step["actions_all"]:
+                errors.append("缺少执行动作")
+            if not step["acceptance_all"]:
+                errors.append("缺少本步验收")
+            if not step["close_condition"]:
+                errors.append("缺少本步关闭条件")
+            if not step["blockers"]:
+                errors.append("缺少阻塞条件")
+            step["valid"] = not errors
+            step["errors"] = errors
+            for key in ("_mode", "_in_file_boundary", "_in_actions", "_in_acceptance"):
+                step.pop(key, None)
+
+        ok = bool(steps) and all(step["valid"] for step in steps)
+        return {
+            "ok": ok,
+            "error": "" if ok else "plan 实施步骤结构不符合标准模板",
+            "steps": steps,
+        }
+
+    @staticmethod
     def parse_markdown_table(file_path, section_name):
         """提取 Markdown 文件特定章节下的表格数据"""
         try:
@@ -149,6 +298,150 @@ class FlowUtils:
             return errors
         except Exception as e:
             return [f"验证过程出错: {str(e)}"]
+
+    @staticmethod
+    def validate_plan_structure(plan_file):
+        """验证 plan 的实施步骤是否符合标准模板。"""
+        result = FlowUtils.parse_plan_steps(plan_file)
+        if result["ok"]:
+            return []
+        errors = [result.get("error") or "plan 实施步骤结构不合法"]
+        for step in result.get("steps") or []:
+            if step.get("errors"):
+                label = step.get("step_id") or step.get("title") or "unknown step"
+                errors.append(f"{label}: {'; '.join(step['errors'])}")
+        return errors
+
+    @staticmethod
+    def validate_plan_completion(plan_file):
+        """验证 plan 是否已完成所有执行动作。"""
+        result = FlowUtils.parse_plan_steps(plan_file)
+        if not result["ok"]:
+            return [result.get("error") or "plan 实施步骤结构不合法"]
+        errors = []
+        for step in result.get("steps") or []:
+            label = step.get("step_id") or step.get("title") or "unknown step"
+            if step.get("actions_pending"):
+                errors.append(f"{label}: 仍有未完成执行动作")
+            if step.get("acceptance_pending"):
+                errors.append(f"{label}: 仍有未完成验收项")
+        return errors
+
+    @staticmethod
+    def validate_plan_coverage(plan_file, report_file, review_mode="regular"):
+        """验证审查报告的计划覆盖度是否与 plan 的步骤集合一致。"""
+        try:
+            Path(plan_file).read_text(encoding="utf-8")
+        except Exception as exc:
+            return [f"无法读取 plan 文件: {exc}"]
+
+        try:
+            report_text = Path(report_file).read_text(encoding="utf-8")
+        except Exception as exc:
+            return [f"无法读取审查报告: {exc}"]
+
+        plan_result = FlowUtils.parse_plan_steps(plan_file)
+        if not plan_result["ok"]:
+            return [plan_result.get("error") or "plan 实施步骤结构不合法"]
+
+        normalized_mode = (review_mode or "").strip().lower()
+        if normalized_mode in {"", "auto"}:
+            mode_match = re.search(r"(?m)^> 审查模式：([^\n]+)$", report_text)
+            if mode_match:
+                normalized_mode = mode_match.group(1).strip().lower()
+        if normalized_mode not in {"regular", "incremental", "recheck"}:
+            normalized_mode = "regular"
+
+        errors = []
+        plan_step_ids = []
+        seen_plan_ids = set()
+        for step in plan_result.get("steps") or []:
+            step_id = str(step.get("step_id") or "").strip()
+            if not step_id:
+                errors.append("plan 实施步骤缺少 Step ID")
+                continue
+            if step_id in seen_plan_ids:
+                errors.append(f"plan 实施步骤 Step ID 重复: {step_id}")
+                continue
+            seen_plan_ids.add(step_id)
+            plan_step_ids.append(step_id)
+
+        section_match = re.search(
+            r"(?ms)^## 2\. 计划覆盖度检查(?:[（(][^)\n）]+[)）])?\s*\n"
+            r"(.*?)(?=^(?:##|###) 2\.1 |^## 3\. |\Z)",
+            report_text,
+        )
+        if not section_match:
+            return ["报告缺少 ## 2. 计划覆盖度检查"]
+
+        rows = []
+        for line in section_match.group(1).splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("|"):
+                continue
+            cells = [part.strip() for part in stripped.split("|")[1:-1]]
+            if len(cells) < 3:
+                continue
+            raw_step = cells[0].strip("`").strip()
+            if not raw_step or raw_step in {"实施步骤", "Step ID", "Step ID（必须一一对应）"}:
+                continue
+            if set(raw_step) == {"-"}:
+                continue
+            step_id = re.split(r"[（(]", raw_step, maxsplit=1)[0].strip().strip("`")
+            if not step_id:
+                errors.append("计划覆盖度检查存在空步骤标识")
+                continue
+            rows.append({
+                "step_id": step_id,
+                "status": cells[1].replace("**", "").strip(),
+                "raw_label": raw_step,
+            })
+
+        if not rows:
+            errors.append("计划覆盖度检查缺少有效表格内容")
+            return errors
+
+        seen_report_ids = set()
+        duplicate_report_ids = []
+        incomplete_rows = []
+        allowed_statuses = {"已实现", "未实现", "部分实现"}
+        for row in rows:
+            step_id = row["step_id"]
+            if step_id in seen_report_ids:
+                duplicate_report_ids.append(step_id)
+            else:
+                seen_report_ids.add(step_id)
+            if row["status"] not in allowed_statuses:
+                errors.append(
+                    f"计划覆盖度检查状态非法: {step_id} -> {row['status'] or '空'}"
+                )
+            if row["status"] in {"未实现", "部分实现"}:
+                incomplete_rows.append(f"{step_id} -> {row['status']}")
+
+        if duplicate_report_ids:
+            errors.append("计划覆盖度检查存在重复步骤: " + ", ".join(sorted(set(duplicate_report_ids))))
+
+        plan_step_set = set(plan_step_ids)
+        report_step_set = seen_report_ids
+
+        if normalized_mode == "incremental":
+            missing = [step_id for step_id in seen_report_ids if step_id not in plan_step_set]
+            if missing:
+                errors.append("计划覆盖度检查包含 plan 未定义步骤: " + ", ".join(sorted(missing)))
+            if not report_step_set:
+                errors.append("计划覆盖度检查缺少任何步骤覆盖")
+        else:
+            missing = [step_id for step_id in plan_step_ids if step_id not in report_step_set]
+            extra = [step_id for step_id in report_step_set if step_id not in plan_step_set]
+            if missing:
+                errors.append("计划覆盖度检查缺少以下 plan 步骤: " + ", ".join(missing))
+            if extra:
+                errors.append("计划覆盖度检查包含 plan 未定义步骤: " + ", ".join(sorted(extra)))
+
+        if incomplete_rows:
+            errors.append("计划覆盖度检查存在未完成项: " + ", ".join(incomplete_rows))
+
+        return errors
 
     @staticmethod
     def render_template(template_path, env_vars):
@@ -657,6 +950,19 @@ if __name__ == "__main__":
             print(line)
     elif cmd == "validate-plan-paths":
         res = FlowUtils.validate_plan_paths(sys.argv[2], sys.argv[3])
+        for err in res:
+            print(err)
+    elif cmd == "validate-plan-structure":
+        res = FlowUtils.validate_plan_structure(sys.argv[2])
+        for err in res:
+            print(err)
+    elif cmd == "validate-plan-completion":
+        res = FlowUtils.validate_plan_completion(sys.argv[2])
+        for err in res:
+            print(err)
+    elif cmd == "validate-plan-coverage":
+        review_mode = sys.argv[4] if len(sys.argv) > 4 else "regular"
+        res = FlowUtils.validate_plan_coverage(sys.argv[2], sys.argv[3], review_mode)
         for err in res:
             print(err)
     elif cmd == "trim-marker":

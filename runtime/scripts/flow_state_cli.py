@@ -137,10 +137,19 @@ _lib_dir = Path(__file__).resolve().parent.parent / "lib"
 if str(_lib_dir) not in sys.path:
     sys.path.insert(0, str(_lib_dir))
 
+_shared_lib_dir = Path(__file__).resolve().parent.parent.parent / "subagents" / "shared" / "lib"
+if str(_shared_lib_dir) not in sys.path:
+    sys.path.insert(0, str(_shared_lib_dir))
+
 try:
     from flow_config import get_config_value as _get_config_value
 except ImportError:
     _get_config_value = None
+
+try:
+    from flow_utils import FlowUtils as _FlowUtils
+except ImportError:
+    _FlowUtils = None
 
 PROJECT_DIR = resolve_project_dir()
 FLOW_DIR = PROJECT_DIR / ".ai-flow"
@@ -381,6 +390,62 @@ def validate_worktree_snapshot(
                 f"{field_prefix}.repos 必须与 execution_scope.repos 完全一致: "
                 f"expected={sorted(expected_repo_ids)!r} actual={sorted(actual_repo_ids)!r}"
             )
+
+
+def validate_plan_structure_for_state(state: dict[str, Any], event: str) -> None:
+    if _FlowUtils is None:
+        return
+    plan_file = state.get("plan_file")
+    if not isinstance(plan_file, str) or not plan_file.strip():
+        raise FlowError("plan_file 不能为空")
+    plan_path = Path(plan_file)
+    if not plan_path.is_absolute():
+        plan_path = PROJECT_DIR / plan_path
+    errors = _FlowUtils.validate_plan_structure(str(plan_path))
+    if errors:
+        raise FlowError(
+            f"{event} 前 plan 结构校验失败: " + " | ".join(errors)
+        )
+    if event in {"implementation_completed", "fix_completed"}:
+        completion_errors = _FlowUtils.validate_plan_completion(str(plan_path))
+        if completion_errors:
+            raise FlowError(
+                f"{event} 前 plan 完成度校验失败: " + " | ".join(completion_errors)
+            )
+
+
+def validate_review_report_coverage_for_state(
+    state: dict[str, Any],
+    event: str,
+    payload: dict[str, Any],
+) -> None:
+    if _FlowUtils is None:
+        return
+    if event not in {"review_passed", "recheck_passed"}:
+        return
+
+    plan_file = state.get("plan_file")
+    if not isinstance(plan_file, str) or not plan_file.strip():
+        raise FlowError("plan_file 不能为空")
+    report_file = payload.get("report_file")
+    if not isinstance(report_file, str) or not report_file.strip():
+        raise FlowError(f"{event}.report_file 不能为空")
+
+    plan_path = Path(plan_file)
+    if not plan_path.is_absolute():
+        plan_path = PROJECT_DIR / plan_path
+    report_path = Path(report_file)
+    if not report_path.is_absolute():
+        report_path = PROJECT_DIR / report_path
+
+    coverage_errors = _FlowUtils.validate_plan_coverage(
+        str(plan_path),
+        str(report_path),
+    )
+    if coverage_errors:
+        raise FlowError(
+            f"{event} 前报告覆盖度校验失败: " + " | ".join(coverage_errors)
+        )
 
 
 def validate_payload(
@@ -702,7 +767,10 @@ def append_transition(
     next_status = EVENT_TRANSITIONS.get((event, current_status))
     if next_status is None:
         raise FlowError(f"非法迁移: event={event} from={current_status}")
+    if event in {"plan_review_passed", "implementation_completed", "fix_completed", "review_passed", "recheck_passed"}:
+        validate_plan_structure_for_state(state, event)
     validate_payload(event, payload, state=state)
+    validate_review_report_coverage_for_state(state, event, payload)
     state["transitions"].append(
         {
             "seq": len(state["transitions"]) + 1,

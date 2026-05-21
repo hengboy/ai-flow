@@ -21,6 +21,7 @@ AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 CLAUDE_HOME="$HOME/.claude"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
 WORKTREE_SNAPSHOT_LIB="$AI_FLOW_HOME/lib/worktree-snapshot.sh"
+FLOW_UTILS_PY="$AGENT_DIR/../lib/flow_utils.py"
 IS_PLAN_REPOS_MODE=0
 PLAN_REPO_IDS=()
 PLAN_REPO_PATHS=()
@@ -820,6 +821,10 @@ extract_family_coverage_section() {
 }
 
 list_reviewable_git_paths() {
+    if [ "$REVIEW_MODE" = "incremental" ]; then
+        compute_incremental_changes "$LATEST_REGULAR_REVIEW"
+        return
+    fi
     if [ "$IS_PLAN_REPOS_MODE" -eq 1 ]; then
         list_plan_repo_reviewable_git_paths
     else
@@ -833,6 +838,74 @@ list_reviewable_git_paths() {
             }
         '
     fi
+}
+
+compute_incremental_changes() {
+    local last_review_file="${1:-}"
+
+    if [ -n "$last_review_file" ] && [ -f "$(resolve_project_path "$last_review_file")" ]; then
+        local resolved_file
+        resolved_file="$(resolve_project_path "$last_review_file")"
+        local base_timestamp
+        base_timestamp=$(python3 - "$resolved_file" <<'PY'
+import sys, re
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+date_match = re.search(r'^> 审查日期：(\d{4}-\d{2}-\d{2})', text, re.M)
+time_match = re.search(r'^> 审查时间：(\d{2}:\d{2}:\d{2})', text, re.M)
+if date_match and time_match:
+    print(f"{date_match.group(1)} {time_match.group(1)}")
+PY
+        )
+        if [ -n "$base_timestamp" ]; then
+            python3 - "$base_timestamp" "$PROJECT_DIR" <<'PY'
+import subprocess, sys
+from datetime import datetime
+from pathlib import Path
+
+base_ts = sys.argv[1]
+project_dir = Path(sys.argv[2])
+
+for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"):
+    try:
+        datetime.strptime(base_ts, fmt)
+        break
+    except ValueError:
+        continue
+else:
+    raise SystemExit(1)
+
+result = subprocess.run(
+    ["git", "log", "--since", base_ts, "--name-status", "--pretty=format:"],
+    capture_output=True, text=True, cwd=project_dir, timeout=30,
+)
+changed = set()
+for line in result.stdout.splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    parts = line.split(None, 1)
+    if len(parts) == 2 and parts[1]:
+        changed.add(parts[1])
+
+result2 = subprocess.run(
+    ["git", "status", "--porcelain", "--untracked-files=all"],
+    capture_output=True, text=True, cwd=project_dir, timeout=30,
+)
+for line in result2.stdout.splitlines():
+    path = line[4:].strip()
+    if path and not path.startswith(".ai-flow/"):
+        changed.add(path)
+
+changed = {p for p in changed if not p.startswith(".ai-flow/")}
+for p in sorted(changed):
+    print(p)
+PY
+            return
+        fi
+    fi
+
+    list_reviewable_git_paths
 }
 
 is_documentation_path() {
@@ -1130,6 +1203,10 @@ if missing:
 PY
 }
 
+validate_plan_step_coverage() {
+    python3 "$FLOW_UTILS_PY" validate-plan-coverage "$PLAN_FILE_ABS" "$REPORT_FILE" "$REVIEW_MODE"
+}
+
 IS_STANDALONE=0
 STANDALONE_DATE=""
 STANDALONE_REPORT_DIR=""
@@ -1264,6 +1341,11 @@ else
             REVIEW_MODE="regular"
             CURRENT_ROUND=$((REGULAR_ROUND_COUNT + 1))
             BASE_NAME="${SLUG}-review"
+            if [ "$REGULAR_ROUND_COUNT" -ge 1 ] && \
+               [ -n "$LATEST_REGULAR_REVIEW" ] && \
+               [ -f "$(resolve_project_path "$LATEST_REGULAR_REVIEW")" ]; then
+                REVIEW_MODE="incremental"
+            fi
             ;;
         DONE)
             REVIEW_MODE="recheck"
@@ -1387,6 +1469,9 @@ case "$REVIEW_MODE:$CURRENT_ROUND" in
         ;;
     standalone:*)
         REVIEW_SCOPE_GUIDANCE="这是 standalone review：未绑定任何 AI Flow 计划。请审查当前未提交的 Git 变更，关注代码质量、安全性和正确性。"
+        ;;
+    incremental:*)
+        REVIEW_SCOPE_GUIDANCE="这是 incremental review：仅审查上次常规审查后新增的 Git 变更。已审查过的内容不在本轮审查范围内。重点关注新增文件、修改文件的变更行和新增 untracked 文件。"
         ;;
 esac
 
@@ -1770,6 +1855,10 @@ if [ -n "$ERRORS" ]; then
     echo "    报告文件已保留但标记为无效: $REPORT_FILE"
     fail_protocol "审查报告结构校验失败: $(normalize_one_line "$ERRORS")"
 fi
+
+if ! plan_step_coverage_error=$(validate_plan_step_coverage 2>&1); then
+    fail_protocol "计划覆盖度检查不通过: $(normalize_one_line "$plan_step_coverage_error")"
+fi
 echo "    结构校验通过"
 
 # --- 严重度推导审查结果 ---
@@ -1862,19 +1951,22 @@ else
         review_snapshot_json="$(collect_current_worktree_snapshot_json)"
         transition_extra_args+=(--worktree-snapshot-json "$review_snapshot_json")
     fi
-    if [ "$REVIEW_MODE" = "regular" ]; then
-        if [ "$RESULT" = "failed" ]; then
-            REVIEW_EVENT="review_failed"
-        else
-            REVIEW_EVENT="review_passed"
-        fi
-    else
-        if [ "$RESULT" = "failed" ]; then
-            REVIEW_EVENT="recheck_failed"
-        else
-            REVIEW_EVENT="recheck_passed"
-        fi
-    fi
+    case "$REVIEW_MODE" in
+        regular|incremental)
+            if [ "$RESULT" = "failed" ]; then
+                REVIEW_EVENT="review_failed"
+            else
+                REVIEW_EVENT="review_passed"
+            fi
+            ;;
+        recheck)
+            if [ "$RESULT" = "failed" ]; then
+                REVIEW_EVENT="recheck_failed"
+            else
+                REVIEW_EVENT="recheck_passed"
+            fi
+            ;;
+    esac
     AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" transition \
         --slug "$SLUG" \
         --event "$REVIEW_EVENT" \
