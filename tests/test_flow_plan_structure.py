@@ -148,10 +148,113 @@ def build_plan(action_mark: str = "x", acceptance_mark: str = "x") -> str:
 """
 
 
+def build_report(*, rows: list[str], mode: str = "regular", section_title: str = "## 2. 计划覆盖度检查") -> str:
+    coverage_rows = "\n".join(rows)
+    return f"""# 审查报告：测试功能
+
+> 审查日期：2026-05-19
+> 审查时间：10:10:00
+> 需求简称：test
+> 审查模式：{mode}
+> 审查轮次：1
+> 审查结果：passed
+> 对比计划：`.ai-flow/plans/test.md`
+> 审查工具：test
+> 规则标识：`review`
+
+## 1. 总体评价
+
+总体通过
+
+### 1.1 审查上下文
+
+| 项目 | 内容 |
+|------|------|
+| Plan 文件 | `.ai-flow/plans/test.md` |
+| 变更范围 | test |
+| 上一轮报告 | 无 |
+| 验证证据 | test |
+
+### 1.2 定向验证执行证据
+
+| 命令 | 结果 | 结论 |
+|------|------|------|
+| `echo ok` | PASS | test |
+
+{section_title}
+
+| 实施步骤 | 状态 | 备注 |
+|----------|------|------|
+{coverage_rows}
+
+**覆盖率**：100%
+
+### 2.1 计划外变更识别
+
+| 变更文件/模块 | 变更内容摘要 | 判定 | 备注 |
+|----------|----------|------|------|
+| `a.txt` | test | 接受 | test |
+
+## 3. 代码质量审查
+
+### 3.1 架构与设计
+
+- 无
+
+### 3.2 规范性
+
+- 无
+
+### 3.3 安全性
+
+- 无
+
+### 3.4 性能
+
+- 无
+
+### 3.5 逻辑正确性
+
+| 检查项 | 审查结果 | 问题描述 |
+|--------|----------|----------|
+| 边界条件 | 通过 | test |
+
+### 3.6 缺陷族覆盖度
+
+| 缺陷族 | 覆盖状态 | 依据 |
+|--------|----------|------|
+| test-family | 已覆盖 | test |
+
+## 4. 缺陷清单
+
+### 4.1 严重缺陷
+
+无
+
+### 4.2 建议改进
+
+无
+
+## 5. 审查结论
+
+- [x] **通过** — 所有步骤已实现，无严重缺陷
+
+## 6. 缺陷修复追踪
+
+无
+"""
+
+
 class TestFlowPlanStructure(unittest.TestCase):
     def _write_temp_plan(self, content: str) -> str:
         tmpdir = tempfile.mkdtemp()
         path = Path(tmpdir) / "plan.md"
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def _write_temp_report(self, content: str) -> str:
+        tmpdir = tempfile.mkdtemp()
+        path = Path(tmpdir) / "report.md"
         path.write_text(content, encoding="utf-8")
         return str(path)
 
@@ -176,6 +279,65 @@ class TestFlowPlanStructure(unittest.TestCase):
         errors = FlowUtils.validate_plan_completion(path)
         self.assertTrue(errors)
         self.assertIn("仍有未完成验收项", errors[0])
+
+    def test_validate_plan_coverage_passes_for_matching_report(self):
+        plan = self._write_temp_plan(build_plan())
+        report = self._write_temp_report(
+            build_report(rows=["| `step-one`（第一步） | 已实现 | 已覆盖 |"])
+        )
+        self.assertEqual(FlowUtils.validate_plan_coverage(plan, report), [])
+
+    def test_validate_plan_coverage_fails_when_step_missing(self):
+        plan = self._write_temp_plan(
+            build_plan().replace(
+                "| `a.txt` | owner | Modify | test | `step-one` |",
+                "| `a.txt` | owner | Modify | test | `step-one` |\n| `b.txt` | owner | Modify | test | `step-two` |",
+            ).replace(
+                "## 4. 测试计划",
+                """
+### 第二步
+
+**Step ID**：`step-two`
+
+**目标**：第二步
+
+**文件边界**：
+- Modify: `b.txt` — test
+- Test: `tests/b_test.py` — test
+
+**本轮 review 预期关注面**：test-family
+
+**执行动作**：
+- [x] **实现**
+  - 命令：`echo ok`
+  - 预期：PASS
+
+**本步验收**：
+- [x] 命令成功
+
+**本步关闭条件**：命令通过
+
+**阻塞条件**：- 无
+
+## 4. 测试计划""",
+            )
+        )
+        report = self._write_temp_report(
+            build_report(rows=["| `step-one`（第一步） | 已实现 | 已覆盖 |"])
+        )
+        errors = FlowUtils.validate_plan_coverage(plan, report)
+        self.assertTrue(errors)
+        self.assertIn("缺少以下 plan 步骤: step-two", errors[0])
+
+    def test_validate_plan_coverage_accepts_legacy_full_section_title(self):
+        plan = self._write_temp_plan(build_plan())
+        report = self._write_temp_report(
+            build_report(
+                rows=["| `step-one`（第一步） | **已实现** | 已覆盖 |"],
+                section_title="## 2. 计划覆盖度检查（全量）",
+            )
+        )
+        self.assertEqual(FlowUtils.validate_plan_coverage(plan, report), [])
 
 
 if __name__ == "__main__":
