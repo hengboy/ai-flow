@@ -45,12 +45,18 @@ STATE_DIR="$FLOW_DIR/state"
 FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
 
 SHOW_STATS=false
+SHOW_DIAGRAM=false
+DIAGRAM_FORMAT="ascii"
+DIAGRAM_SLUG=""
 for arg in "$@"; do
     case "$arg" in
         --stats) SHOW_STATS=true ;;
+        --diagram) SHOW_DIAGRAM=true ;;
+        --diagram-format=*) DIAGRAM_FORMAT="${arg#*=}" ;;
+        --diagram-slug=*) DIAGRAM_SLUG="${arg#*=}" ;;
     esac
 done
-export SHOW_STATS
+export SHOW_STATS SHOW_DIAGRAM DIAGRAM_FORMAT DIAGRAM_SLUG
 
 if [ ! -d "$FLOW_DIR" ]; then
     echo "当前项目没有 .ai-flow/ 目录"
@@ -267,6 +273,46 @@ if show_stats and states:
         print()
         print("--- 耗时统计 ---")
         print("  (flow_utils 模块不可用，跳过耗时计算)")
+
+# --- 流程图 ---
+show_diagram = os.environ.get("SHOW_DIAGRAM", "false") == "true"
+if show_diagram:
+    diagram_format = os.environ.get("DIAGRAM_FORMAT", "ascii")
+    diagram_slug = os.environ.get("DIAGRAM_SLUG", "")
+    lib_dir = Path(flow_state_sh).parent.parent.parent / "subagents" / "shared" / "lib"
+    if lib_dir.is_dir():
+        sys.path.insert(0, str(lib_dir))
+    try:
+        if diagram_format == "svg":
+            from flow_utils import render_svg_flow as render_flow
+        else:
+            from flow_utils import render_ascii_flow as render_flow
+        from flow_utils import build_flow_graph, calculate_stage_durations
+
+        print()
+        print("--- 流程图 ---")
+        for state in states:
+            if diagram_slug and state["slug"] != diagram_slug:
+                continue
+            transitions = state.get("transitions", [])
+            if not transitions:
+                continue
+            stage_durations_list = calculate_stage_durations(transitions)
+            stage_dur_map = {}
+            for sd in stage_durations_list:
+                stage_dur_map[sd.stage_name] = sd.duration_ms
+            nodes, edges = build_flow_graph(
+                transitions, state["current_status"], stage_dur_map
+            )
+            output = render_flow(nodes, edges)
+            print(f"  === {state['slug']} [{state['current_status']}] ===")
+            for line in output.splitlines():
+                print(f"  {line}")
+            print()
+    except ImportError:
+        print()
+        print("--- 流程图 ---")
+        print("  (flow_utils 模块不可用，跳过流程图生成)")
 
 print("===============================")
 PY

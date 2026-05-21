@@ -5,6 +5,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Optional
 
 class FlowUtils:
     @staticmethod
@@ -222,6 +223,255 @@ def _parse_iso_datetime(iso_str: str) -> datetime:
     if tz_offset is not None:
         dt = dt.replace(tzinfo=tz_offset)
     return dt
+
+
+@dataclass
+class FlowNode:
+    state: str
+    label: str
+    x: int = 0
+    y: int = 0
+    is_current: bool = False
+    is_failed: bool = False
+    duration_ms: int = 0
+    diagnosis: str = ""
+
+
+@dataclass
+class FlowEdge:
+    from_state: str
+    to_state: str
+    event: str = ""
+    label: str = ""
+    is_traversed: bool = False
+
+
+FLOW_NODES = {
+    "AWAITING_PLAN_REVIEW": FlowNode("AWAITING_PLAN_REVIEW", "待计划审核"),
+    "PLAN_REVIEW_FAILED": FlowNode("PLAN_REVIEW_FAILED", "计划审核失败", is_failed=True),
+    "PLANNED": FlowNode("PLANNED", "计划已审核"),
+    "IMPLEMENTING": FlowNode("IMPLEMENTING", "开发中"),
+    "AWAITING_REVIEW": FlowNode("AWAITING_REVIEW", "待审查"),
+    "REVIEW_FAILED": FlowNode("REVIEW_FAILED", "审查失败", is_failed=True),
+    "FIXING_REVIEW": FlowNode("FIXING_REVIEW", "修复中"),
+    "DONE": FlowNode("DONE", "完成"),
+}
+
+FLOW_EDGES = [
+    FlowEdge("AWAITING_PLAN_REVIEW", "PLANNED", "plan_review_passed", "审核通过"),
+    FlowEdge("AWAITING_PLAN_REVIEW", "PLAN_REVIEW_FAILED", "plan_review_failed", "审核失败"),
+    FlowEdge("PLAN_REVIEW_FAILED", "AWAITING_PLAN_REVIEW", "plan_reopened", "重新提交"),
+    FlowEdge("PLANNED", "IMPLEMENTING", "execute_started", "开始执行"),
+    FlowEdge("PLANNED", "AWAITING_PLAN_REVIEW", "plan_reopened", "需求变更"),
+    FlowEdge("IMPLEMENTING", "AWAITING_REVIEW", "implementation_completed", "完成编码"),
+    FlowEdge("IMPLEMENTING", "AWAITING_PLAN_REVIEW", "plan_reopened", "需求变更"),
+    FlowEdge("AWAITING_REVIEW", "DONE", "review_passed", "审查通过"),
+    FlowEdge("AWAITING_REVIEW", "REVIEW_FAILED", "review_failed", "审查失败"),
+    FlowEdge("AWAITING_REVIEW", "IMPLEMENTING", "implementation_reopened", "重新实现"),
+    FlowEdge("REVIEW_FAILED", "FIXING_REVIEW", "fix_started", "开始修复"),
+    FlowEdge("REVIEW_FAILED", "IMPLEMENTING", "implementation_reopened", "重新实现"),
+    FlowEdge("FIXING_REVIEW", "AWAITING_REVIEW", "fix_completed", "修复完成"),
+    FlowEdge("FIXING_REVIEW", "IMPLEMENTING", "implementation_reopened", "重新实现"),
+    FlowEdge("DONE", "DONE", "recheck_passed", "再审查通过"),
+    FlowEdge("DONE", "REVIEW_FAILED", "recheck_failed", "再审查失败"),
+    FlowEdge("DONE", "IMPLEMENTING", "implementation_reopened", "重新实现"),
+]
+
+
+def _format_duration_short(ms: int) -> str:
+    if ms < 1000:
+        return f"{ms}ms"
+    elif ms < 60000:
+        return f"{ms / 1000:.0f}s"
+    elif ms < 3600000:
+        return f"{ms / 60000:.0f}min"
+    else:
+        return f"{ms / 3600000:.1f}h"
+
+
+def build_flow_graph(
+    transitions: list,
+    current_status: str,
+    stage_durations: Optional[dict] = None,
+    diagnosis: Optional[str] = None,
+) -> tuple:
+    import copy
+    nodes = {k: copy.deepcopy(v) for k, v in FLOW_NODES.items()}
+    edges = [copy.deepcopy(e) for e in FLOW_EDGES]
+
+    traversed_pairs = set()
+    for t in transitions:
+        frm = t.get("from")
+        to = t.get("to")
+        if frm and to:
+            traversed_pairs.add((frm, to))
+
+    for edge in edges:
+        if (edge.from_state, edge.to_state) in traversed_pairs:
+            edge.is_traversed = True
+
+    if current_status in nodes:
+        nodes[current_status].is_current = True
+
+    if stage_durations:
+        # calculate_stage_durations 返回的 key 是阶段名（plan_review/coding/review），
+        # 需要映射到对应的状态节点。
+        stage_to_states = {
+            "plan_review": ["AWAITING_PLAN_REVIEW", "PLAN_REVIEW_FAILED"],
+            "coding": ["PLANNED", "IMPLEMENTING"],
+            "review": ["AWAITING_REVIEW", "REVIEW_FAILED", "FIXING_REVIEW", "DONE"],
+        }
+        for stage_name, duration in stage_durations.items():
+            target_states = stage_to_states.get(stage_name, [])
+            for state_key in target_states:
+                if state_key in nodes:
+                    nodes[state_key].duration_ms = duration
+
+    if diagnosis and current_status in nodes:
+        nodes[current_status].diagnosis = diagnosis
+
+    return list(nodes.values()), edges
+
+
+def render_ascii_flow(nodes: list, edges: list) -> str:
+    current = [n for n in nodes if n.is_current][0] if any(n.is_current for n in nodes) else None
+    traversed_pairs = {(e.from_state, e.to_state) for e in edges if e.is_traversed}
+
+    main_path_states = [
+        "AWAITING_PLAN_REVIEW",
+        "PLANNED",
+        "IMPLEMENTING",
+        "AWAITING_REVIEW",
+        "DONE",
+    ]
+    failed_branches = {
+        "PLAN_REVIEW_FAILED": ("AWAITING_PLAN_REVIEW", "below"),
+        "REVIEW_FAILED": ("AWAITING_REVIEW", "below"),
+    }
+
+    lines = []
+    main_nodes_in_path = [s for s in main_path_states if s in {n.state for n in nodes}]
+
+    node_map = {n.state: n for n in nodes}
+
+    parts = []
+    for i, state_key in enumerate(main_nodes_in_path):
+        node = node_map[state_key]
+        label = node.label
+        if node.is_current:
+            marker = ">>>"
+        elif i > 0 and (main_nodes_in_path[i - 1], state_key) in traversed_pairs:
+            marker = "-->"
+        else:
+            marker = "- ->"
+
+        dur_str = f" ({_format_duration_short(node.duration_ms)})" if node.duration_ms > 0 else ""
+        parts.append(f"{marker} [{label}]{dur_str}")
+
+    lines.append("  " + "".join(parts))
+
+    for fail_state, (parent_state, position) in failed_branches.items():
+        if fail_state not in node_map:
+            continue
+        fail_node = node_map[fail_state]
+        parent_idx = main_nodes_in_path.index(parent_state) if parent_state in main_nodes_in_path else -1
+        if parent_idx < 0:
+            continue
+
+        prefix_width = 0
+        for j in range(parent_idx + 1):
+            prev_state = main_nodes_in_path[j]
+            prev_node = node_map[prev_state]
+            prefix_width += len(prev_node.label) + 4
+            if j > 0:
+                prev_key = main_nodes_in_path[j - 1]
+                if (prev_key, prev_state) in traversed_pairs:
+                    prefix_width += 3
+                else:
+                    prefix_width += 4
+
+        dur_str = f" ({_format_duration_short(fail_node.duration_ms)})" if fail_node.duration_ms > 0 else ""
+        fail_label = f"[{fail_node.label}]{dur_str}"
+        lines.append("  " + " " * prefix_width + "|")
+        lines.append("  " + " " * prefix_width + "V")
+        lines.append("  " + " " * prefix_width + fail_label)
+
+    return "\n".join(lines)
+
+
+def render_svg_flow(nodes: list, edges: list) -> str:
+    node_map = {n.state: n for n in nodes}
+
+    layout = {
+        "AWAITING_PLAN_REVIEW": (20, 60),
+        "PLAN_REVIEW_FAILED": (20, 180),
+        "PLANNED": (200, 60),
+        "IMPLEMENTING": (380, 60),
+        "AWAITING_REVIEW": (560, 60),
+        "REVIEW_FAILED": (560, 180),
+        "FIXING_REVIEW": (740, 180),
+        "DONE": (740, 60),
+    }
+
+    node_width = 120
+    node_height = 40
+    svg_width = 900
+    svg_height = 260
+
+    parts = []
+    parts.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{svg_width}" height="{svg_height}" viewBox="0 0 {svg_width} {svg_height}">'
+    )
+    parts.append(
+        "<style>"
+        ".node { fill: #f0f0f0; stroke: #333; stroke-width: 1.5; rx: 6; }"
+        ".node-current { fill: #dbeafe; stroke: #2563eb; stroke-width: 2; }"
+        ".node-failed { fill: #fee2e2; stroke: #dc2626; stroke-width: 2; }"
+        ".node-label { font: 12px sans-serif; text-anchor: middle; dominant-baseline: central; fill: #111; }"
+        ".edge-traversed { stroke: #333; stroke-width: 2; fill: none; }"
+        ".edge-pending { stroke: #999; stroke-width: 1.5; stroke-dasharray: 5,5; fill: none; }"
+        ".duration-label { font: 10px sans-serif; fill: #666; text-anchor: middle; }"
+        "</style>"
+    )
+
+    for edge in edges:
+        if edge.from_state not in layout or edge.to_state not in layout:
+            continue
+        x1, y1 = layout[edge.from_state]
+        x2, y2 = layout[edge.to_state]
+        x1 += node_width / 2
+        y1 += node_height
+        x2 += node_width / 2
+
+        cls = "edge-traversed" if edge.is_traversed else "edge-pending"
+        mid_y = (y1 + y2) / 2
+        path_d = f"M {x1} {y1} Q {x1} {mid_y} {(x1 + x2) / 2} {mid_y} T {x2} {y2}"
+        parts.append(f'<path class="{cls}" d="{path_d}"/>')
+
+    for state_key, (x, y) in layout.items():
+        if state_key not in node_map:
+            continue
+        node = node_map[state_key]
+        cls = "node"
+        if node.is_current:
+            cls = "node-current"
+        elif node.is_failed:
+            cls = "node-failed"
+
+        parts.append(
+            f'<rect class="{cls}" x="{x}" y="{y}" width="{node_width}" height="{node_height}"/>'
+        )
+        parts.append(
+            f'<text class="node-label" x="{x + node_width / 2}" y="{y + node_height / 2}">{node.label}</text>'
+        )
+
+        if node.duration_ms > 0:
+            parts.append(
+                f'<text class="duration-label" x="{x + node_width / 2}" y="{y + node_height + 14}">{_format_duration_short(node.duration_ms)}</text>'
+            )
+
+    parts.append("</svg>")
+    return "\n".join(parts)
 
 
 @dataclass

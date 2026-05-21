@@ -9,6 +9,34 @@ description: 查看当前项目 .ai-flow/state/ 下所有流程状态，并按 J
 
 **Announce at start:** "正在使用 ai-flow-status 技能查看当前项目的 AI 协作流程状态。"
 
+## 参数
+
+```bash
+$HOME/.config/ai-flow/scripts/flow-status.sh [选项]
+
+选项:
+  --stats          显示各流程的阶段耗时统计
+  --diagram        输出流程图（默认 ASCII 格式）
+  --diagram-format=  指定流程图格式：ascii（默认）或 svg
+  --diagram-slug=    只显示指定 slug 的流程图
+```
+
+使用示例：
+
+```bash
+# 查看状态 + 耗时统计
+$HOME/.config/ai-flow/scripts/flow-status.sh --stats
+
+# 查看状态 + ASCII 流程图
+$HOME/.config/ai-flow/scripts/flow-status.sh --diagram
+
+# 查看状态 + SVG 流程图
+$HOME/.config/ai-flow/scripts/flow-status.sh --diagram --diagram-format=svg
+
+# 只显示指定流程的流程图
+$HOME/.config/ai-flow/scripts/flow-status.sh --diagram --diagram-slug=20260521-08-visual-flow-diagram
+```
+
 ## 运行目录
 
 - 单仓模式：在目标 Git 仓库根目录运行。
