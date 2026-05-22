@@ -10,6 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
+FLOW_PLAN_GROUP_SH="$SCRIPT_DIR/flow-plan-group.sh"
 WORKTREE_SNAPSHOT_LIB="${AI_FLOW_HOME}/lib/worktree-snapshot.sh"
 
 AUTO_RUN_ALLOWED_STATUSES=(
@@ -48,6 +49,7 @@ source "$WORKTREE_SNAPSHOT_LIB"
 validate_dependencies() {
     [ -x "$FLOW_STATE_SH" ] || fail "错误: 缺少 flow-state 脚本: $FLOW_STATE_SH"
     [ -f "$WORKTREE_SNAPSHOT_LIB" ] || fail "错误: 缺少 worktree-snapshot 脚本: $WORKTREE_SNAPSHOT_LIB"
+    # flow-plan-group.sh 是可选依赖（用于 group 识别）
 }
 
 candidate_state_tsv() {
@@ -124,6 +126,52 @@ for item in items:
             ]
         )
     )
+PY
+}
+
+resolve_group_candidate_slug() {
+    local query="$1"
+    if [ ! -d "$GROUPS_DIR" ]; then
+        return 1
+    fi
+
+    python3 - "$query" "$GROUPS_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+query = sys.argv[1].strip().lower()
+groups_dir = Path(sys.argv[2])
+if not query:
+    raise SystemExit("resolve 需要提供 slug 或唯一关键词")
+
+rows = []
+for path in sorted(groups_dir.glob("*.json")):
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+        rows.append({
+            "slug": state.get("group_slug", path.stem),
+            "status": state.get("current_status", "unknown"),
+            "title": state.get("title", ""),
+        })
+    except Exception:
+        pass
+
+if not rows:
+    raise SystemExit("no groups found")
+
+exact = [r for r in rows if r["slug"] == query or r["slug"].lower() == query]
+if len(exact) == 1:
+    print(f"group:{exact[0]['slug']}")
+    raise SystemExit(0)
+
+needle = query
+matched = [r for r in rows if needle in r["slug"].lower() or needle in r["title"].lower()]
+if not matched:
+    raise SystemExit("no group match")
+if len(matched) > 1:
+    raise SystemExit("multiple group match")
+print(f"group:{matched[0]['slug']}")
 PY
 }
 
@@ -338,6 +386,7 @@ validate_dependencies
 PROJECT_DIR="$(resolve_flow_root)" || fail "当前目录不在包含 .ai-flow/state 的 flow root 内。"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
 STATE_DIR="$FLOW_DIR/state"
+GROUPS_DIR="$FLOW_DIR/plan-groups/state"
 [ -d "$STATE_DIR" ] || fail "当前项目缺少 .ai-flow/state 目录。"
 
 declare -a REPO_IDS=()
@@ -347,10 +396,34 @@ declare -a REPO_GIT_ROOTS=()
 case "${1:-}" in
     list)
         [ $# -eq 1 ] || usage
-        candidate_state_tsv
+        echo "--- 计划组 ---"
+        if [ -d "$GROUPS_DIR" ]; then
+            python3 - "$GROUPS_DIR" <<'PY'
+import json, sys
+from pathlib import Path
+for p in sorted(Path(sys.argv[1]).glob("*.json")):
+    try:
+        s = json.loads(p.read_text())
+        print(f"  [group] {s.get('group_slug', p.stem)}\t{s.get('current_status')}\t{s.get('title', '')}")
+    except: pass
+PY
+        else
+            echo "  (无)"
+        fi
+        echo ""
+        echo "--- 普通 Plan ---"
+        candidate_state_tsv | while IFS=$'\t' read -r slug status title updated plan_file; do
+            printf '  [plan]  %s\t%s\t%s\n' "$slug" "$status" "$title"
+        done
         ;;
     resolve)
         [ $# -eq 2 ] || usage
+        # 先尝试 group 匹配
+        group_result="$(resolve_group_candidate_slug "$2" 2>/dev/null || true)"
+        if [ -n "$group_result" ] && [[ "$group_result" == group:* ]]; then
+            echo "$group_result"
+            exit 0
+        fi
         resolve_candidate_slug "$2"
         ;;
     dirty)

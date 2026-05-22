@@ -96,7 +96,9 @@ PY
     shopt -u nullglob
 fi
 
-python3 - "$PROJECT_DIR" "$VALID_LIST" "$INVALID_LIST" "$FLOW_STATE_SH" "$FLOW_DIR" <<'PY'
+GROUP_STATE_DIR="$PROJECT_DIR/.ai-flow/plan-groups/state"
+
+python3 - "$PROJECT_DIR" "$VALID_LIST" "$INVALID_LIST" "$FLOW_STATE_SH" "$FLOW_DIR" "$GROUP_STATE_DIR" <<'PY'
 import json
 import os
 import sys
@@ -110,6 +112,7 @@ invalid_list = Path(sys.argv[3])
 flow_state_sh = Path(sys.argv[4])
 flow_dir = Path(sys.argv[5])
 state_dir = flow_dir / "state"
+group_state_dir = Path(sys.argv[6]) if len(sys.argv) > 6 else None
 
 def rel(path_value):
     if not path_value:
@@ -192,8 +195,36 @@ status_labels = [
     ("DONE", "✅", "可再审查"),
 ]
 
+# --- 计划组展示区 + 子 plan 反查映射 ---
+child_to_group = {}  # created_slug -> (group_slug, child_id)
+group_states = []
+if group_state_dir and group_state_dir.is_dir():
+    try:
+        group_files = sorted(group_state_dir.glob("*.json"))
+    except Exception:
+        group_files = []
+    for gf in group_files:
+        try:
+            gs = json.loads(gf.read_text(encoding="utf-8"))
+            group_states.append(gs)
+            for child in gs.get("children", []):
+                if child.get("created_slug"):
+                    child_to_group[child["created_slug"]] = (gs["group_slug"], child["child_id"])
+        except Exception:
+            pass
+
+if group_states:
+    print("--- 计划组 ---")
+    for gs in group_states:
+        children = gs.get("children", [])
+        created_count = sum(1 for c in children if c.get("created_slug"))
+        print(f"  {gs['group_slug']:<30} [{gs['current_status']}]  title={gs.get('title', '')}  children={created_count}/{len(children)}")
+    print()
+
+status_labels_with_group = status_labels
+
 print("--- 待处理 ---")
-for status, icon, label in status_labels:
+for status, icon, label in status_labels_with_group:
     print(f"{status}:")
     matched = [state for state in states if state["current_status"] == status]
     if not matched:
@@ -203,6 +234,14 @@ for status, icon, label in status_labels:
         derived = state.get("derived") or {}
         latest = derived.get("latest_recheck_review_file") or derived.get("latest_regular_review_file")
         detail = f"report: {rel(latest)}" if latest else "report: -"
+
+        # 反查所属计划组
+        group_tag = ""
+        slug = state.get("slug", "")
+        if slug in child_to_group:
+            g_slug, c_id = child_to_group[slug]
+            group_tag = f"[group:{g_slug} child:{c_id}] "
+
         if status == "AWAITING_PLAN_REVIEW":
             next_action = "ai-flow-plan-review"
         elif status == "PLAN_REVIEW_FAILED":
@@ -211,10 +250,12 @@ for status, icon, label in status_labels:
             next_action = "ai-flow-plan-coding"
         else:
             next_action = "ai-flow-plan-coding-review"
-        print(f"  {icon} {state['slug']} [{status}] {label}  {detail}  next: {next_action}")
+        print(f"  {icon} {state['slug']} [{status}] {label}  {detail}  {group_tag}next: {next_action}")
     print()
 if states:
     pass
+
+# --- 子 plan 反查标记已在上文定义 ---
 
 counts = Counter(state["current_status"] for state in states)
 print("--- 统计 ---")
