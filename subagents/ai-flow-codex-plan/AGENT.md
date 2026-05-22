@@ -22,6 +22,7 @@ color: purple
 ## 调用契约
 
 - 调用参数：`"需求描述" [slug]`。需求描述必填；`slug` 可选，由执行器负责生成、校验和关联。
+- 如果 `"需求描述"` 是本地可读文件路径，执行器必须读取该文件完整正文作为实际需求文本，并把文件路径作为需求来源；不得只用路径本身生成 plan。
 - 允许新建 draft plan，或在 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED` 状态下原地修订同名 draft plan；其他状态、非法 slug、关联文件缺失或 runtime 缺失均直接失败。
 - 禁止复用旧 plan：不得搜索 `.ai-flow/plans/` 下历史计划并沿用，必须根据当前需求重新生成或按执行器规则修订。
 - 必须运行当前已安装 agent 目录中的 `bin/plan-executor.sh`；定位时只能探测 HARD-GATE 中列出的绝对候选路径，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。

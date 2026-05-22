@@ -166,7 +166,7 @@ case "$CURRENT_STATUS" in
         ;;
     IMPLEMENTING)
         PROTOCOL_STATE="IMPLEMENTING"
-        PROTOCOL_SUMMARY="当前已在 IMPLEMENTING，可继续按计划执行。"
+        PROTOCOL_SUMMARY="当前已在 IMPLEMENTING，可继续执行未勾选的 step / action。"
         ;;
     FIXING_REVIEW)
         PROTOCOL_STATE="FIXING_REVIEW"

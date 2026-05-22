@@ -48,6 +48,7 @@ PLAN_ENGINE_MODE="${ENGINE_MODE_OVERRIDE:-auto}"
 PLAN_ENGINE_NAME=""
 PLAN_ENGINE_MODEL=""
 REQUIREMENT=""
+REQUIREMENT_SOURCE_LABEL="需求描述"
 MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
 RULE_BUNDLE_JSON=""
 RULE_PROMPT_BLOCK=""
@@ -83,6 +84,37 @@ else
     REQUIREMENT="$1"
     MODEL="$(default_model_for_engine "$AGENT_ENGINE")"
 fi
+
+normalize_requirement_input() {
+    local raw="$1"
+    local resolved
+
+    if [ -z "$raw" ]; then
+        return 0
+    fi
+
+    if [[ "$raw" = /* ]]; then
+        if [ -f "$raw" ]; then
+            REQUIREMENT="$(cat "$raw")"
+            REQUIREMENT_SOURCE_LABEL="$(display_path "$PROJECT_DIR" "$raw")"
+        fi
+        return 0
+    fi
+
+    if [ -f "$ORIGINAL_PROJECT_DIR/$raw" ]; then
+        resolved="$ORIGINAL_PROJECT_DIR/$raw"
+        REQUIREMENT="$(cat "$resolved")"
+        REQUIREMENT_SOURCE_LABEL="$(display_path "$PROJECT_DIR" "$(cd "$(dirname "$resolved")" && pwd)/$(basename "$resolved")")"
+        return 0
+    fi
+
+    if [ -f "$PROJECT_DIR/$raw" ]; then
+        resolved="$PROJECT_DIR/$raw"
+        REQUIREMENT="$(cat "$resolved")"
+        REQUIREMENT_SOURCE_LABEL="$(display_path "$PROJECT_DIR" "$(cd "$(dirname "$resolved")" && pwd)/$(basename "$resolved")")"
+        return 0
+    fi
+}
 
 require_file() {
     local path="$1"
@@ -260,7 +292,7 @@ render_plan_template_content() {
     AI_FLOW_TEMPLATE_DATE="$PLAN_CREATED_DATE" \
     AI_FLOW_TEMPLATE_TIME="$PLAN_CREATED_TIME" \
     AI_FLOW_TEMPLATE_DATE_PREFIX="$DATE_PREFIX" \
-    AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL="需求描述" \
+    AI_FLOW_TEMPLATE_REQUIREMENT_SOURCE_LABEL="$REQUIREMENT_SOURCE_LABEL" \
     AI_FLOW_TEMPLATE_REQUIREMENT_TEXT="$requirement_text" \
     AI_FLOW_TEMPLATE_EXEC_SCOPE="$exec_scope_label" \
     AI_FLOW_TEMPLATE_REPO_LIST="$repo_list" \
@@ -1660,6 +1692,14 @@ PY
 }
 
 ensure_project_root_context
+if [ "$INTERNAL_PLAN_REVIEW" -eq 0 ]; then
+    normalize_requirement_input "$REQUIREMENT"
+fi
+if [ "${AI_FLOW_PLAN_EXECUTOR_DUMP_NORMALIZED_REQUIREMENT:-0}" = "1" ]; then
+    printf 'SOURCE:%s\n' "$REQUIREMENT_SOURCE_LABEL"
+    printf 'REQUIREMENT_BEGIN\n%s\nREQUIREMENT_END\n' "$REQUIREMENT"
+    exit 0
+fi
 capture_plan_created_context
 mkdir -p "$PLANS_DIR" "$FLOW_DIR/reports" "$STATE_DIR"
 

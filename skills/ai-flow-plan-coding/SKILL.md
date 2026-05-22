@@ -49,7 +49,7 @@ $HOME/.config/ai-flow/scripts/flow-status.sh
 - `AWAITING_PLAN_REVIEW`：拒绝进入编码，提示回到 `/ai-flow-plan-review`
 - `PLAN_REVIEW_FAILED`：拒绝进入 execute，提示回到 `/ai-flow-plan` 修订并复审
 - `PLANNED`：表示计划已审核通过；必须先调用 `$HOME/.config/ai-flow/scripts/flow-plan-coding.sh {slug}`，由 runtime 推进到 `IMPLEMENTING`
-- `IMPLEMENTING`：先调用 `$HOME/.config/ai-flow/scripts/flow-plan-coding.sh {slug}` 做规则门禁校验，再继续开发
+- `IMPLEMENTING`：先调用 `$HOME/.config/ai-flow/scripts/flow-plan-coding.sh {slug}` 做规则门禁校验；若计划中仍有未勾选的 step / action，则继续执行这些未完成项，不得因已处于 IMPLEMENTING 而停止
 - `REVIEW_FAILED`：必须先调用 `$HOME/.config/ai-flow/scripts/flow-plan-coding.sh {slug}`，由 runtime 推进到 `FIXING_REVIEW`
 - `FIXING_REVIEW`：先调用 `$HOME/.config/ai-flow/scripts/flow-plan-coding.sh {slug}` 做规则门禁校验，再继续修复
 - `AWAITING_REVIEW`：拒绝进入 execute，提示先做 review
@@ -74,7 +74,7 @@ $HOME/.config/ai-flow/scripts/flow-change.sh {slug} “变更描述”
 
 ### 5. 未完成任务检测与用户确认
 
-在调用 `transition --event implementation_completed` / `transition --event fix_completed` **之前**，必须对照计划逐项检查是否全部完成。以下情况视为未完成：
+在调用 `transition --event implementation_completed` / `transition --event fix_completed` **之前**，必须对照计划逐项检查是否全部完成。`IMPLEMENTING` 再次进入 `/ai-flow-plan-coding` 时，也要优先续跑所有未勾选的 step / action。以下情况视为未完成：
 
 - 任务涉及当前 workspace 之外的目录或仓库，无法在当前会话中修改
 - 任务依赖的外部服务/资源不可用

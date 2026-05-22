@@ -59,6 +59,151 @@ EOF
     cleanup_temp_project "$dir"
 }
 
+# --- 测试 4: IMPLEMENTING 状态继续执行未勾选 step ---
+test_implementing_continues_pending_steps() {
+    local dir
+    dir="$(create_temp_project "plan-coding-4-impl")"
+
+    mkdir -p "$dir/.ai-flow/plans"
+    cat > "$dir/.ai-flow/plans/test.md" <<'EOF'
+# 测试计划
+## 1. 需求概述
+
+**目标**：测试
+
+**背景**：测试
+
+**原始需求（原文）**：
+测试
+
+**非目标**：无
+
+## 2. 技术分析
+
+### 2.1 涉及模块
+
+| 模块 | 仓库 | 职责 | 变更类型 |
+|------|------|------|----------|
+| test | owner | test | 修改 |
+
+### 2.2 数据模型变更
+
+不涉及数据库变更
+
+### 2.3 API 变更
+
+| 接口 | 方法 | 路径 | 说明 |
+|------|------|------|------|
+| 无新增/修改接口 | - | - | - |
+
+### 2.4 依赖影响
+
+无
+
+### 2.5 文件边界总览
+
+| 文件 | 仓库 | 操作 | 职责 | 对应 Step ID |
+|------|------|------|------|----------|
+| `a.txt` | owner | Modify | test | `step-one` |
+
+### 2.6 高风险路径与缺陷族
+
+| 高风险能力/路径 | 影响面 | 典型失效模式 | 对应缺陷族 | 必须覆盖的验证方式 |
+|----------------|--------|--------------|------------|--------------------|
+| test | test | test | test-family | 单测 |
+
+## 3. 实施步骤
+
+### 第一步
+
+**Step ID**：`step-one`
+
+**目标**：测试
+
+**文件边界**：
+- Modify: `a.txt` — test
+- Test: `tests/a_test.py` — test
+
+**本轮 review 预期关注面**：test-family
+
+**执行动作**：
+- [ ] **实现**
+  - 命令：`echo ok`
+  - 预期：PASS
+
+**本步验收**：
+- [ ] 命令成功
+
+**本步关闭条件**：命令通过
+
+**阻塞条件**：- 无
+
+## 4. 测试计划
+
+### 4.1 单元测试
+
+- [ ] test
+
+### 4.2 集成测试
+
+- [ ] 无
+
+### 4.3 回归验证
+
+- [ ] `echo ok`
+
+### 4.4 定向验证矩阵
+
+| 缺陷族 | 目标风险路径 | 定向验证命令 | 验证类型 | 通过标准 |
+|--------|--------------|--------------|----------|----------|
+| test-family | test | `echo ok` | 单测 | 输出 ok |
+
+## 5. 风险与注意事项
+
+- 无
+
+## 6. 验收标准
+
+- [ ] test
+
+## 7. 需求变更记录
+
+| 时间 | 变更描述 | 确认方式 |
+|------|----------|----------|
+
+## 8. 计划审核记录
+
+### 8.1 当前审核结论
+
+- 待审核
+
+### 8.2 偏差与建议
+
+- 无
+
+### 8.3 审核历史
+
+- 无
+EOF
+
+    create_minimal_state "$dir" "20260519-test-impl-continue"
+    cd "$dir"
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-impl-continue" \
+        --event plan_review_passed --result passed \
+        --engine test-engine --model test-model >/dev/null 2>&1
+    bash "$FLOW_STATE_SH" transition --slug "20260519-test-impl-continue" \
+        --event execute_started >/dev/null 2>&1
+
+    local output exit_code=0
+    output="$(AI_FLOW_HOME="$PROJECT_ROOT/runtime" bash "$PLAN_CODING_SH" "20260519-test-impl-continue" 2>&1)" || exit_code=$?
+    assert_exit_code "$exit_code" 0 "IMPLEMENTING 状态可继续运行"
+    assert_contains "$output" "当前已在 IMPLEMENTING" "IMPLEMENTING 状态输出成功摘要"
+    assert_contains "$output" "未勾选的 step / action" "IMPLEMENTING 状态明确提示继续执行未完成项"
+
+    cd "$SCRIPT_DIR"
+    cleanup_temp_project "$dir"
+}
+
 # --- 测试 4: AWAITING_PLAN_REVIEW 状态被拒 ---
 test_awaiting_plan_review_rejected() {
     local dir
@@ -150,6 +295,7 @@ test_done_rejected() {
 test_no_slug
 test_slug_not_found
 test_planned_passes
+test_implementing_continues_pending_steps
 test_awaiting_plan_review_rejected
 test_implementing_continue
 test_review_failed_state
