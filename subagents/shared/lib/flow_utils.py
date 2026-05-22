@@ -106,8 +106,9 @@ class FlowUtils:
 
             current["raw"].append(line)
             stripped = line.strip()
-            if line.startswith("**Step ID**："):
-                current["step_id"] = line.replace("**Step ID**：", "", 1).strip().strip("`")
+            # 兼容全角/半角冒号，以及前后可能存在的空格
+            if re.match(r"^\*\*Step ID\*\*\s*[：:]\s*", line):
+                current["step_id"] = re.sub(r"^\*\*Step ID\*\*\s*[：:]\s*", "", line).strip().strip("`")
             elif line.startswith("**目标**："):
                 current["goal"] = line.replace("**目标**：", "", 1).strip()
             elif line.startswith("**文件边界**："):

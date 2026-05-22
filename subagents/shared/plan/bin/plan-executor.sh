@@ -729,8 +729,41 @@ validate_plan_structure() {
         if ! grep -q '^### ' "$plan_file"; then
             errors="${errors}缺少可执行 Step\n"
         fi
-        if ! grep -q '^- \[ \]' "$plan_file"; then
-            errors="${errors}缺少待执行复选框动作\n"
+        # 检查每个 Step 都包含 **Step ID**（兼容全角/半角冒号，允许前后空格）
+        # 只统计 ## 3. 实施步骤 到 ## 4. 之间的 ### 标题
+        local step_ids_found step_count
+        step_ids_found=$(python3 - "$plan_file" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"(?s)^## 3\. 实施步骤\n(.*?)^## 4\.", text, re.MULTILINE)
+if not match:
+    print(0); sys.exit(0)
+section = match.group(1)
+step_count = len(re.findall(r"^### ", section, re.MULTILINE))
+step_id_count = len(re.findall(r"\*\*Step ID\*\*\s*[：:]", section))
+print(f"{step_id_count}/{step_count}")
+PY
+)
+        local step_id_count="${step_ids_found%/*}"
+        local step_total="${step_ids_found#*/}"
+        if [ "$step_id_count" -lt "$step_total" ] 2>/dev/null; then
+            step_ids_missing=$((step_total - step_id_count))
+            errors="${errors}有 ${step_ids_missing} 个 Step 缺少 **Step ID**（共 ${step_total} 个 Step，仅匹配到 ${step_id_count} 个）\n"
+        fi
+        # 检查复选框：兼容 - [ ] 和 - [x] 两种形式，且必须在实施步骤区域内
+        if ! python3 - "$plan_file" <<'PY'
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"(?s)^## 3\. 实施步骤\n(.*?)^## 4\.", text, re.MULTILINE)
+if not match:
+    sys.exit(1)
+section = match.group(1)
+sys.exit(0 if re.search(r"^- \[[ xX]\]", section, re.MULTILINE) else 1)
+PY
+        then
+            errors="${errors}缺少待执行复选框动作（- [ ] 或 - [x]）\n"
         fi
         if ! grep -q '命令：' "$plan_file"; then
             errors="${errors}缺少验证命令\n"
@@ -747,10 +780,14 @@ validate_plan_structure() {
         if ! grep -q '\*\*阻塞条件\*\*' "$plan_file"; then
             errors="${errors}缺少 Step 级别的阻塞条件\n"
         fi
-        local step_errors
-        step_errors=$(python3 "$FLOW_UTILS_PY" validate-plan-structure "$plan_file" 2>/dev/null || true)
-        if [ -n "$step_errors" ]; then
-            errors="${errors}Step 结构校验失败:\n${step_errors}\n"
+        # Python Step 结构校验：使用 flow_utils.py 解析每个 Step 的必填字段
+        local flow_utils_py="${AI_FLOW_DIR:-.}/subagents/shared/lib/flow_utils.py"
+        if [ -f "$flow_utils_py" ]; then
+            local py_errors
+            py_errors=$(python3 "$flow_utils_py" validate-plan-structure "$plan_file" 2>/dev/null || true)
+            if [ -n "$py_errors" ]; then
+                errors="${errors}Step 结构校验失败:\n${py_errors}\n"
+            fi
         fi
         if ! awk '
             /^### 2\.6 高风险路径与缺陷族/ {in_section=1; next}
