@@ -85,6 +85,17 @@ def _load_json(path: Path) -> dict | None:
         return None
 
 
+def _shell_quote_value(value: Any) -> str:
+    """把 Python 值编码成 shell 可安全 eval 的字面量。"""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if value is None:
+        return ""
+    return str(value).replace("'", "'\\\"'\\\"'")
+
+
 def load_config() -> dict:
     """读取用户级+项目级 setting.json，返回合并后的配置。"""
     home = Path(os.environ.get("AI_FLOW_HOME", Path.home() / ".config" / "ai-flow"))
@@ -150,7 +161,7 @@ if __name__ == "__main__":
                     items.extend(flatten(v, new_key))
                 elif v is not None:
                     env_name = f"AI_FLOW_SETTING_{new_key.upper()}"
-                    escaped = str(v).replace("'", "'\\\"'\\\"'")
+                    escaped = _shell_quote_value(v)
                     items.append(f"{env_name}='{escaped}'")
         return items
 

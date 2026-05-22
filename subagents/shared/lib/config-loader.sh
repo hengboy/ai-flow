@@ -83,7 +83,10 @@ def flatten(obj, prefix=''):
                 items.extend(flatten(v, new_key))
             elif v is not None:
                 env_name = f'AI_FLOW_SETTING_{new_key.upper()}'
-                escaped = str(v).replace(\"'\", \"'\\\"'\\\"'\")
+                if isinstance(v, bool):
+                    escaped = 'true' if v else 'false'
+                else:
+                    escaped = str(v).replace(\"'\", \"'\\\"'\\\"'\")
                 items.append(f\"{env_name}='{escaped}'\")
     return items
 

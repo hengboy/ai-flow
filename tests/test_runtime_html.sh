@@ -42,6 +42,25 @@ else
     fail "关闭配置下 status 应返回非 0"
 fi
 
+# --- 3.1 flow-html.sh 开启模式可读取配置 ---
+echo ">>> 开启模式测试"
+tmp_home="$(mktemp -d)"
+cp -R "$AI_FLOW_HOME/." "$tmp_home/"
+cat > "$tmp_home/setting.json" <<'EOF'
+{"html":{"enabled":true}}
+EOF
+mkdir -p "$tmp_home/.ai-flow/state"
+if AI_FLOW_HOME="$tmp_home" bash "$tmp_home/scripts/flow-html.sh" status >/dev/null 2>&1; then
+    if [ -f "$tmp_home/.ai-flow/html/index.html" ]; then
+        pass "开启配置下 status 生成 HTML"
+    else
+        fail "开启配置下 status 应生成 HTML"
+    fi
+else
+    fail "开启配置下 status 不应失败"
+fi
+rm -rf "$tmp_home"
+
 # --- 4. flow-html.sh --help ---
 echo ">>> --help 测试"
 if bash "$AI_FLOW_HOME/scripts/flow-html.sh" --help >/dev/null 2>&1; then

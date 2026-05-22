@@ -18,7 +18,7 @@ source "${AI_FLOW_HOME}/lib/flow-root-helper.sh" || true
 PROJECT_DIR="$(resolve_flow_root)" || PROJECT_DIR="$(pwd)"
 
 # 读取配置
-html_enabled="$("${AI_FLOW_HOME}/lib/flow_config.py" 2>/dev/null | grep "^AI_FLOW_SETTING_HTML_ENABLED=" | head -1 | cut -d"'" -f2 || echo "false")"
+html_enabled="$(python3 "${AI_FLOW_HOME}/lib/flow_config.py" 2>/dev/null | grep "^AI_FLOW_SETTING_HTML_ENABLED=" | head -1 | cut -d"'" -f2 || echo "false")"
 
 check_enabled() {
     if [ "$html_enabled" != "true" ]; then

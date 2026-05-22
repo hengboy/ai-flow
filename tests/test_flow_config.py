@@ -15,6 +15,7 @@ from flow_config import (
     _deep_merge,
     _get_nested,
     _load_json,
+    _shell_quote_value,
     get_config_source,
     get_config_value,
     load_config,
@@ -70,6 +71,11 @@ def test_load_json_invalid():
         f.write(b"{bad")
         f.flush()
         assert _load_json(Path(f.name)) is None
+
+
+def test_shell_quote_value_booleans():
+    assert _shell_quote_value(True) == "true"
+    assert _shell_quote_value(False) == "false"
 
 
 # --- load_config integration ---
