@@ -7,6 +7,7 @@ source "$SCRIPT_DIR/lib/testkit.bash"
 
 PLAN_CODING_SH="$SCRIPTS_DIR/flow-plan-coding.sh"
 FLOW_STATE_SH="$SCRIPTS_DIR/flow-state.sh"
+PLAN_CODING_SKILL="$PROJECT_ROOT/skills/ai-flow-plan-coding/SKILL.md"
 
 echo "=== flow-plan-coding.sh 测试 ==="
 echo ""
@@ -28,6 +29,15 @@ test_slug_not_found() {
     assert_exit_code "$exit_code" 1 "找不到 slug 时失败"
     assert_contains "$output" "找不到" "找不到 slug 时输出错误"
     cleanup_temp_project "$dir"
+}
+
+# --- 测试 3: plan-coding skill 要求每个 Step 完成后即时勾选 ---
+test_skill_requires_immediate_step_checkbox_update() {
+    local content
+    content="$(sed -n '1,220p' "$PLAN_CODING_SKILL")"
+    assert_contains "$content" "每完成一个 Step 后" "skill 明确要求 Step 完成后更新复选框"
+    assert_contains "$content" "立即勾选" "skill 明确要求立即勾选"
+    assert_contains "$content" "禁止等到全部 Step 完成后统一勾选" "skill 禁止最后统一勾选"
 }
 
 # --- 测试 3: PLANNED 状态通过门禁 ---
@@ -294,6 +304,7 @@ test_done_rejected() {
 # --- 运行 ---
 test_no_slug
 test_slug_not_found
+test_skill_requires_immediate_step_checkbox_update
 test_planned_passes
 test_implementing_continues_pending_steps
 test_awaiting_plan_review_rejected

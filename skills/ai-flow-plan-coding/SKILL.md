@@ -60,7 +60,8 @@ $HOME/.config/ai-flow/scripts/flow-status.sh
 - 读取 `.ai-flow/plans/{slug}.md`
 - 批判性检查 plan 是否可执行
 - 按 Step 顺序实施
-- 更新计划文档中的复选框
+- 每完成一个 Step 后，必须基于该 Step 的本轮验证证据，立即勾选该 Step 下对应的 `执行动作` 与 `本步验收` 复选框，并保存计划文档
+- 禁止等到全部 Step 完成后统一勾选；进入下一个 Step、宣告本 Step 完成或推进状态前，当前 Step 的复选框必须已经更新
 - `REVIEW_FAILED` / `FIXING_REVIEW` 阶段默认按”缺陷族”收敛修复，不按单个 DEF 编号孤立修补
 - 如果 plan 的 `执行范围` 为 `workspace`，文件路径相对于 workspace 根目录；修改文件时需确保路径包含正确的 repo 前缀
 - 开始任何修改前，必须先确认当前 Step 的目标、文件边界、验证命令和关闭条件都可执行；若存在 plan 缺口、命名/路径失真、验证方式缺失、验收标准无法证明或与仓库事实冲突，必须停止并向用户确认，不得靠猜测继续实现
