@@ -39,20 +39,18 @@ PY
 echo "=== flow-auto-run.sh 测试 ==="
 echo ""
 
-# --- 测试 1: 无状态文件时 list 为空 ---
+# --- 测试 1: 无状态文件时 list 无候选 ---
 test_list_no_states() {
     local dir
     dir="$(create_temp_project "auto-run-1")"
     cd "$dir"
     local output exit_code=0
     output="$(AI_FLOW_ACTOR=test bash "$AUTO_RUN_SH" list 2>&1)" || exit_code=$?
-    # 有 .ai-flow/state 但无 json 文件，list 应输出空
     assert_exit_code "$exit_code" 0 "list 在无状态文件时正常退出"
-    if [[ -z "$output" ]]; then
-        test_pass "list 在无状态文件时输出为空"
-    else
-        test_fail "list 在无状态文件时输出为空" "实际输出: $output"
-    fi
+    assert_contains "$output" "--- 计划组 ---" "list 输出计划组分区"
+    assert_contains "$output" "--- 普通 Plan ---" "list 输出普通 plan 分区"
+    assert_not_contains "$output" "[plan]" "list 在无状态文件时无普通 plan 候选"
+    assert_not_contains "$output" "[group]" "list 在无状态文件时无计划组候选"
     cd "$SCRIPT_DIR"
     cleanup_temp_project "$dir"
 }
@@ -87,11 +85,7 @@ test_list_filters_non_auto_states() {
     local output exit_code=0
     output="$(AI_FLOW_ACTOR=test bash "$AUTO_RUN_SH" list 2>&1)" || exit_code=$?
     assert_exit_code "$exit_code" 0 "list 过滤非自动状态"
-    if [[ -z "$output" ]]; then
-        test_pass "list 过滤掉 AWAITING_PLAN_REVIEW"
-    else
-        test_fail "list 过滤掉 AWAITING_PLAN_REVIEW" "不应输出: $output"
-    fi
+    assert_not_contains "$output" "20260519-test-filter" "list 过滤掉 AWAITING_PLAN_REVIEW"
     cd "$SCRIPT_DIR"
     cleanup_temp_project "$dir"
 }

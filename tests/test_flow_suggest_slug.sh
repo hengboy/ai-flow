@@ -84,12 +84,14 @@ test_empty_description() {
 # --- 测试 8: 项目级 slug 冲突检查 ---
 test_project_slug_conflict_check() {
     local dir
+    local date_prefix
+    date_prefix="$(date +%Y%m%d)"
     dir="$(create_temp_project "slug-conflict")"
     # 在项目目录创建一个已有的状态文件
-    cat > "$dir/.ai-flow/state/20260519-test-slug.json" <<'EOF'
+    cat > "$dir/.ai-flow/state/${date_prefix}-test-slug.json" <<EOF
 {
     "schema_version": 4,
-    "slug": "20260519-test-slug",
+    "slug": "${date_prefix}-test-slug",
     "title": "已有计划",
     "plan_file": ".ai-flow/plans/test.md",
     "execution_scope": {"mode": "plan_repos", "repos": [{"id": "owner", "path": ".", "git_root": ".", "role": "owner"}]},
@@ -103,11 +105,11 @@ EOF
     local output exit_code=0
     output="$(cd "$dir" && bash "$SUGGEST_SH" "test slug" 2>&1)" || exit_code=$?
     assert_exit_code "$exit_code" 0 "项目级冲突检查正常退出"
-    # 因为 20260519-test-slug 已存在，应该输出带后缀的版本
-    if [[ "$output" == "20260519-test-slug-1" ]]; then
+    # 因为当天的 test-slug 已存在，应该输出带后缀的版本
+    if [[ "$output" == "${date_prefix}-test-slug-1" ]]; then
         test_pass "项目级 slug 冲突检查使用项目目录"
     else
-        test_fail "项目级 slug 冲突检查使用项目目录" "期望=20260519-test-slug-1 实际=$output"
+        test_fail "项目级 slug 冲突检查使用项目目录" "期望=${date_prefix}-test-slug-1 实际=$output"
     fi
     cleanup_temp_project "$dir"
 }

@@ -11,6 +11,7 @@ exec 3>&1 1>&2
 
 AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
 FLOW_STATE_SH="$AI_FLOW_HOME/scripts/flow-state.sh"
+FLOW_PLAN_GROUP_SH="$AI_FLOW_HOME/scripts/flow-plan-group.sh"
 ORIGINAL_PROJECT_DIR="$(pwd)"
 PROJECT_DIR="$ORIGINAL_PROJECT_DIR"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
@@ -27,12 +28,15 @@ if [ "${1:-}" = "--internal-plan-review" ]; then
 else
     SLUG="${2:-}"
 fi
+DATED_SLUG=""
 
 PLAN_CREATED_AT=""
 PLAN_CREATED_DATE=""
 PLAN_CREATED_TIME=""
 DATE_PREFIX=""
 PLANS_DIR="$FLOW_DIR/plans"
+GROUPS_DIR="$FLOW_DIR/plan-groups"
+GROUP_STATE_DIR="$GROUPS_DIR/state"
 OWNER_GIT_ROOT=""
 REPO_SCOPE_JSON=""
 PLAN_REPO_IDS=()
@@ -133,6 +137,19 @@ validate_installed_resources() {
     require_file "$PLAN_REVISION_PROMPT_TEMPLATE" "plan 修订 prompt"
 }
 
+ensure_dated_slug() {
+    local candidate="$1"
+    if echo "$candidate" | grep -qE '^[0-9]{8}-'; then
+        printf '%s\n' "$candidate"
+    else
+        printf '%s-%s\n' "$DATE_PREFIX" "$candidate"
+    fi
+}
+
+normalize_group_slug() {
+    printf '%s\n' "$1"
+}
+
 has_project_root_marker() {
     local dir="$1"
     local marker
@@ -215,6 +232,8 @@ ensure_project_root_context() {
         FLOW_DIR="$PROJECT_DIR/.ai-flow"
         STATE_DIR="$FLOW_DIR/state"
         PLANS_DIR="$FLOW_DIR/plans"
+        GROUPS_DIR="$FLOW_DIR/plan-groups"
+        GROUP_STATE_DIR="$GROUPS_DIR/state"
         cd "$PROJECT_DIR"
         return 0
     fi
@@ -256,7 +275,7 @@ PY
 
 sync_plan_header_metadata() {
     local plan_file="$1"
-    python3 - "$plan_file" "$PLAN_CREATED_DATE" "$PLAN_CREATED_TIME" "$SLUG" "$DATE_PREFIX" <<'PY'
+    python3 - "$plan_file" "$PLAN_CREATED_DATE" "$PLAN_CREATED_TIME" "$SLUG" "${DATED_SLUG:-$(ensure_dated_slug "$SLUG")}" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -265,15 +284,15 @@ path = Path(sys.argv[1])
 created_date = sys.argv[2]
 created_time = sys.argv[3]
 slug = sys.argv[4]
-date_prefix = sys.argv[5]
+dated_slug = sys.argv[5]
 
 text = path.read_text(encoding="utf-8")
 replacements = {
     r"(?m)^> 创建日期：.*$": f"> 创建日期：{created_date}",
     r"(?m)^> 创建时间：.*$": f"> 创建时间：{created_time}",
     r"(?m)^> 需求简称：.*$": f"> 需求简称：{slug}",
-    r"(?m)^> 状态文件：.*$": f"> 状态文件：`.ai-flow/state/{date_prefix}-{slug}.json`",
-    r"(?m)^> 状态文件约束：.*$": f"> 状态文件约束：`.ai-flow/state/{date_prefix}-{slug}.json` 只能使用 `flow-state.sh` 的固定 schema；不得在 plan 中设计 `requirement_key`、`status`、`steps`、`verification_results`、`change_register` 等自定义字段。",
+    r"(?m)^> 状态文件：.*$": f"> 状态文件：`.ai-flow/state/{dated_slug}.json`",
+    r"(?m)^> 状态文件约束：.*$": f"> 状态文件约束：`.ai-flow/state/{dated_slug}.json` 只能使用 `flow-state.sh` 的固定 schema；不得在 plan 中设计 `requirement_key`、`status`、`steps`、`verification_results`、`change_register` 等自定义字段。",
 }
 for pattern, replacement in replacements.items():
     text = re.sub(pattern, replacement, text, count=1)
@@ -474,7 +493,257 @@ slug_exists() {
     if [ -f "$STATE_DIR/${candidate}.json" ]; then
         return 0
     fi
+    if [ -f "$GROUP_STATE_DIR/${candidate}.json" ]; then
+        return 0
+    fi
     find "$FLOW_DIR/plans" -name "*-${candidate}.md" -type f 2>/dev/null | grep -q .
+}
+
+group_slug_exists() {
+    local candidate="$1"
+    [ -f "$GROUP_STATE_DIR/${candidate}.json" ] \
+        || [ -f "$GROUPS_DIR/${candidate}.md" ] \
+        || [ -f "$STATE_DIR/${candidate}.json" ] \
+        || find "$FLOW_DIR/plans" -name "*-${candidate}.md" -type f 2>/dev/null | grep -q .
+}
+
+is_long_task_requirement() {
+    local requirement_length line_count explicit_group_signal
+    requirement_length=$(printf '%s' "$REQUIREMENT" | wc -m | tr -d ' ')
+    line_count=$(printf '%s\n' "$REQUIREMENT" | wc -l | tr -d ' ')
+    explicit_group_signal=$(printf '%s' "$REQUIREMENT" | grep -E -- '--group|长任务|计划组|拆分|多阶段' || true)
+
+    if [ -n "$explicit_group_signal" ]; then
+        return 0
+    fi
+    # 大型上游方案即使没有显式关键词，也不适合落成一份普通 plan。
+    if [ "$requirement_length" -ge 9000 ] || [ "$line_count" -ge 180 ]; then
+        return 0
+    fi
+    return 1
+}
+
+generate_plan_group_children_json() {
+    python3 - "$REQUIREMENT" "$SLUG" <<'PY'
+import json
+import re
+import sys
+
+requirement = sys.argv[1]
+slug = re.sub(r"^\d{8}-", "", sys.argv[2])
+
+def semantic_slug(text: str, fallback: str) -> str:
+    words = re.findall(r"[A-Za-z][A-Za-z0-9]+", text.lower())
+    stop = {
+        "the", "and", "for", "with", "from", "into", "task", "step",
+        "phase", "implement", "implementation", "workflow",
+    }
+    picked = [word for word in words if word not in stop][:4]
+    if picked:
+        candidate = "-".join(picked)
+    else:
+        cjk = "".join(re.findall(r"[\u4e00-\u9fff]+", text))
+        candidate = cjk[:18] if cjk else fallback
+    candidate = re.sub(r"[^a-z0-9\u4e00-\u9fff-]", "-", candidate).strip("-")
+    return candidate or fallback
+
+def clean_title(raw: str) -> str:
+    raw = re.sub(r"^[#*\s>.-]+", "", raw).strip()
+    raw = re.sub(r"[*\s]+$", "", raw).strip()
+    raw = re.sub(r"^(Task|Step)\s+\d+\s*[:：.)-]?\s*", "", raw, flags=re.I).strip()
+    return raw or "子计划"
+
+task_titles: list[str] = []
+structured_heading_re = re.compile(
+    r"^\s*#{2,5}\s+\**\s*(?:Task|Step)\s+\d+\s*[:：.)-]?\s*(.+?)\s*\**\s*$",
+    re.I,
+)
+for line in requirement.splitlines():
+    match = structured_heading_re.match(line)
+    if match:
+        task_titles.append(clean_title(match.group(1)))
+
+if not task_titles:
+    list_item_re = re.compile(
+        r"^\s*(?:[-*]|\d+[.)、])\s+\**\s*(?:Task|Step)\s+\d+\s*[:：.)-]?\s*(.+?)\s*\**\s*$",
+        re.I,
+    )
+    for line in requirement.splitlines():
+        match = list_item_re.match(line)
+        if match:
+            task_titles.append(clean_title(match.group(1)))
+
+if not task_titles:
+    generic_headers = {
+        "需求概述", "原始需求", "技术分析", "代码事实", "模块依赖", "现有模式",
+        "关键约束", "文件职责矩阵", "与需求映射对照", "实施步骤", "测试计划",
+        "风险与注意事项", "验收标准", "需求变更记录", "计划审核记录",
+        "审核记录", "children_json",
+    }
+
+    def is_generic_header(title: str) -> bool:
+        normalized = re.sub(r"^\d+(?:\.\d+)*\s*[.、]?\s*", "", title).strip()
+        normalized = normalized.strip("*").strip()
+        return normalized in generic_headers
+
+    capability_headers = [
+        line.strip().lstrip("#").strip()
+        for line in requirement.splitlines()
+        if re.match(r"^\s*#{2,4}\s+", line)
+    ]
+    task_titles = [
+        clean_title(title)
+        for title in capability_headers
+        if clean_title(title) and not is_generic_header(clean_title(title))
+    ][:8]
+
+if not task_titles:
+    task_titles = ["基础能力与模型边界", "核心流程实现", "接口与持久化集成", "验证与收口"]
+
+children = []
+used_slugs = set()
+previous_id = None
+for index, title in enumerate(task_titles, start=1):
+    child_id = f"child-{index:02d}"
+    base_semantic = semantic_slug(title, f"{slug}-part-{index:02d}")
+    child_slug = f"{slug}-{base_semantic}"
+    child_slug = re.sub(r"-+", "-", child_slug).strip("-")[:60]
+    if child_slug in used_slugs:
+        child_slug = f"{child_slug}-{index:02d}"[:60]
+    used_slugs.add(child_slug)
+    children.append({
+        "child_id": child_id,
+        "title": title,
+        "depends_on": [previous_id] if previous_id else [],
+        "scope_summary": title,
+        "primary_risk": "待在子计划中结合真实文件边界细化",
+        "planned_semantic_slug": child_slug,
+        "created_slug": None,
+        "plan_file": None,
+        "state_file": None,
+    })
+    previous_id = child_id
+
+print(json.dumps(children, ensure_ascii=False))
+PY
+}
+
+derive_plan_group_title() {
+    local fallback="$1"
+    python3 - "$REQUIREMENT" "$fallback" <<'PY'
+import sys
+
+requirement = sys.argv[1]
+fallback = sys.argv[2]
+
+title = ""
+for line in requirement.splitlines():
+    stripped = line.strip()
+    if stripped:
+        title = stripped
+        break
+
+print((title or fallback)[:80])
+PY
+}
+
+write_plan_group_document() {
+    local group_file="$1"
+    local title="$2"
+    local children_json="$3"
+    local requirement_source="$4"
+    python3 - "$group_file" "$title" "$SLUG" "$PLAN_CREATED_DATE" "$PLAN_CREATED_TIME" "$requirement_source" "$children_json" "$REQUIREMENT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+title = sys.argv[2]
+slug = sys.argv[3]
+created_date = sys.argv[4]
+created_time = sys.argv[5]
+requirement_source = sys.argv[6]
+children = json.loads(sys.argv[7])
+requirement = sys.argv[8].strip()
+
+lines = [
+    f"# 计划组：{title}",
+    "",
+    f"> 创建日期：{created_date}",
+    f"> 创建时间：{created_time}",
+    f"> 需求简称：{slug}",
+    f"> 需求来源：{requirement_source}",
+    "> 文档角色：计划组拆分方案",
+    "> 状态文件约束：仅 flow-plan-group-state.sh transition 可修改计划组状态文件",
+    "",
+    "## 1. 原始需求",
+    "",
+    requirement,
+    "",
+    "## 2. 拆分原则",
+    "",
+    "- 每个 child 生成独立 draft plan，经独立 plan review 后再执行。",
+    "- child 按 depends_on 声明的依赖顺序启动；未满足依赖前不得创建子 plan。",
+    "- 计划组只负责范围拆分、顺序和最终收口，不直接承载代码实施步骤。",
+    "",
+    "## 3. 子计划列表",
+    "",
+    "| 子项 ID | 标题 | 依赖 | 语义 Slug | 范围摘要 | 主要风险 |",
+    "|---------|------|------|-----------|----------|----------|",
+]
+for child in children:
+    deps = ", ".join(child.get("depends_on") or []) or "-"
+    lines.append(
+        f"| {child['child_id']} | {child['title']} | {deps} | "
+        f"{child['planned_semantic_slug']} | {child['scope_summary']} | {child['primary_risk']} |"
+    )
+lines.extend([
+    "",
+    "## 4. children_json",
+    "",
+    "```json",
+    json.dumps(children, ensure_ascii=False, indent=2),
+    "```",
+    "",
+    "## 5. 审核记录",
+    "",
+    "- 待审核：拆分方案通过后进入 `GROUP_PLANNED`，再按依赖顺序创建子计划。",
+])
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
+create_plan_group_for_long_task() {
+    require_file "$FLOW_PLAN_GROUP_SH" "AI Flow runtime 脚本 flow-plan-group.sh"
+
+    local group_slug group_file children_json group_title
+    group_slug="$(normalize_group_slug "$(ensure_dated_slug "$SLUG")")"
+    SLUG="$group_slug"
+    group_file=".ai-flow/plan-groups/${group_slug}.md"
+    group_title="$(derive_plan_group_title "$group_slug")"
+    [ -n "$group_title" ] || group_title="$group_slug"
+
+    if group_slug_exists "$group_slug"; then
+        fail_protocol "同名计划组已存在: ${group_slug}；如需重新生成，请先清理对应计划组文件和状态，或更换简称"
+    fi
+
+    children_json="$(generate_plan_group_children_json)"
+    mkdir -p "$GROUPS_DIR" "$GROUP_STATE_DIR"
+    write_plan_group_document "$PROJECT_DIR/$group_file" "$group_title" "$children_json" "$REQUIREMENT_SOURCE_LABEL"
+
+    AI_FLOW_ACTOR="${AGENT_NAME:-plan-executor.sh}" bash "$FLOW_PLAN_GROUP_SH" create \
+        --group-slug "$group_slug" \
+        --title "$group_title" \
+        --group-file "$group_file" \
+        --children-json "$children_json" >/dev/null
+
+    PROTOCOL_ARTIFACT="$group_file"
+    PROTOCOL_STATE="AWAITING_GROUP_REVIEW"
+    PROTOCOL_NEXT="ai-flow-plan-review"
+    PROTOCOL_SUMMARY="长任务已创建计划组 [$group_slug]，状态进入 [AWAITING_GROUP_REVIEW]。"
+    emit_current_protocol
+    exit 0
 }
 
 resolve_existing_state_file_for_slug() {
@@ -1912,6 +2181,7 @@ fi
 
 EXISTING_STATE_FILE=""
 if [ "$SLUG_EXPLICIT" = true ] && EXISTING_STATE_FILE="$(resolve_existing_state_file_for_slug "$SLUG")"; then
+    DATED_SLUG="$(basename "$EXISTING_STATE_FILE" .json)"
     PLAN_STATUS=$(state_json_value "$EXISTING_STATE_FILE" "current_status")
     PLAN_FILE=$(state_json_value "$EXISTING_STATE_FILE" "plan_file")
     case "$PLAN_STATUS" in
@@ -1954,7 +2224,11 @@ else
     if slug_exists "$SLUG"; then
         fail_protocol "同名计划或状态已存在: ${SLUG}；如需重新生成，请先清理对应的 .ai-flow/state/${SLUG}.json 和计划文件，或更换简称"
     fi
-    PLAN_FILE="$PLANS_DIR/${DATE_PREFIX}-${SLUG}.md"
+    if is_long_task_requirement; then
+        create_plan_group_for_long_task
+    fi
+    DATED_SLUG="$(ensure_dated_slug "$SLUG")"
+    PLAN_FILE="$PLANS_DIR/${DATED_SLUG}.md"
 fi
 PROTOCOL_ARTIFACT="$(display_path "$PROJECT_DIR" "$PLAN_FILE")"
 
@@ -2177,13 +2451,13 @@ else
 
     echo ">>> 初始化状态文件..."
     AI_FLOW_ACTOR="$AGENT_NAME" "$FLOW_STATE_SH" transition \
-        --slug "${DATE_PREFIX}-${SLUG}" \
+        --slug "$DATED_SLUG" \
         --event plan_created \
         --title "$PLAN_TITLE" \
         --plan-file "$PLAN_FILE" \
         --repo-scope-json "$REPO_SCOPE_JSON" \
         --at "$PLAN_CREATED_AT"
-    PLAN_STATUS=$("$FLOW_STATE_SH" show --slug "${DATE_PREFIX}-${SLUG}" --field current_status)
+    PLAN_STATUS=$("$FLOW_STATE_SH" show --slug "$DATED_SLUG" --field current_status)
     echo "    状态已验证为 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"
     PROTOCOL_NEXT="ai-flow-plan-review"

@@ -56,6 +56,34 @@ def test_transition_group_created():
     created[0].unlink()
 
 
+def test_create_group_with_chinese_slug():
+    """计划组 slug 应与普通 plan 一样允许中文。"""
+    slug = "20260523-通用适配"
+    state_dir = PROJECT_ROOT / ".ai-flow" / "plan-groups" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / f"{slug}.json"
+    state_file.unlink(missing_ok=True)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "transition",
+         "--group-slug", slug,
+         "--event", "group_created",
+         "--title", "通用适配",
+         "--group-file", f".ai-flow/plan-groups/{slug}.md",
+         "--children-json", json.dumps([
+             {"child_id": "child-定义装配", "title": "定义装配", "depends_on": [],
+              "scope_summary": "定义装配", "primary_risk": "low",
+              "planned_semantic_slug": "通用适配-定义装配",
+              "created_slug": None, "plan_file": None, "state_file": None}
+         ], ensure_ascii=False)],
+        capture_output=True, text=True,
+    )
+
+    assert result.returncode == 0, f"中文 slug 创建失败: {result.stderr}"
+    assert state_file.exists(), f"状态文件应被创建: {state_file}"
+    state_file.unlink()
+
+
 def test_validate_rejects_invalid_schema():
     """validate 应拒绝缺少必填字段的状态文件。"""
     result = subprocess.run(
@@ -227,6 +255,9 @@ if __name__ == "__main__":
 
     test_transition_group_created()
     print("PASS: test_transition_group_created")
+
+    test_create_group_with_chinese_slug()
+    print("PASS: test_create_group_with_chinese_slug")
 
     test_validate_rejects_invalid_schema()
     print("PASS: test_validate_rejects_invalid_schema")

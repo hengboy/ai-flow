@@ -56,8 +56,8 @@ GROUP_TRANSITION_EVENTS = {
     "child_added",
 }
 
-GROUP_SLUG_RE = re.compile(r"^(\d{8}-)?[a-z0-9][a-z0-9-]*$")
-CHILD_ID_RE = re.compile(r"^child-[a-z0-9][a-z0-9-]*$")
+GROUP_SLUG_RE = re.compile(r"^(\d{8}-)?[a-z0-9一-鿿][a-z0-9一-鿿-]*$")
+CHILD_ID_RE = re.compile(r"^child-[a-z0-9一-鿿][a-z0-9一-鿿-]*$")
 
 CHILD_SCHEMA_KEYS = {
     "child_id", "title", "depends_on", "scope_summary",

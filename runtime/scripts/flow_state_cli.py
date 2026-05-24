@@ -65,8 +65,8 @@ TRANSITION_EVENTS = {
 }
 PLAN_REVIEW_PASS_RESULTS = {"passed", "passed_with_notes"}
 REVIEW_PASS_RESULTS = {"passed", "passed_with_notes"}
-SLUG_RE = re.compile(r"^\d{8}-[a-z0-9][a-z0-9-]*$")
-SEMANTIC_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+SLUG_RE = re.compile(r"^\d{8}-[a-z0-9一-鿿][a-z0-9一-鿿-]*$")
+SEMANTIC_SLUG_RE = re.compile(r"^[a-z0-9一-鿿][a-z0-9一-鿿-]*$")
 REPO_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
