@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AI_FLOW_HOME="${AI_FLOW_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FLOW_STATE_SH="$SCRIPT_DIR/flow-state.sh"
 FLOW_PLAN_GROUP_SH="$SCRIPT_DIR/flow-plan-group.sh"
+FLOW_PLAN_GROUP_STATE_SH="$SCRIPT_DIR/flow-plan-group-state.sh"
 WORKTREE_SNAPSHOT_LIB="${AI_FLOW_HOME}/lib/worktree-snapshot.sh"
 
 AUTO_RUN_ALLOWED_STATUSES=(
@@ -27,6 +28,7 @@ usage() {
   flow-auto-run.sh list
   flow-auto-run.sh resolve <slug或唯一关键词>
   flow-auto-run.sh dirty <dated-slug>
+  flow-auto-run.sh run-group --group-slug <slug>
 EOF
     exit 1
 }
@@ -49,6 +51,7 @@ source "$WORKTREE_SNAPSHOT_LIB"
 validate_dependencies() {
     [ -x "$FLOW_STATE_SH" ] || fail "错误: 缺少 flow-state 脚本: $FLOW_STATE_SH"
     [ -f "$WORKTREE_SNAPSHOT_LIB" ] || fail "错误: 缺少 worktree-snapshot 脚本: $WORKTREE_SNAPSHOT_LIB"
+    [ -x "$FLOW_PLAN_GROUP_STATE_SH" ] || fail "错误: 缺少 flow-plan-group-state.sh: $FLOW_PLAN_GROUP_STATE_SH"
     # flow-plan-group.sh 是可选依赖（用于 group 识别）
 }
 
@@ -382,6 +385,94 @@ dirty_check() {
     fi
 }
 
+cmd_run_group() {
+    local group_slug=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --group-slug) group_slug="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    [ -n "$group_slug" ] || fail "run-group: --group-slug 不能为空"
+
+    local state_file="$GROUPS_DIR/${group_slug}.json"
+    [ -f "$state_file" ] || fail "找不到计划组状态文件: $state_file"
+
+    local current_status
+    current_status="$(bash "$FLOW_PLAN_GROUP_STATE_SH" show --group-slug "$group_slug" --field current_status)"
+
+    local next_action="none"
+    local next_child="none"
+
+    case "$current_status" in
+        AWAITING_GROUP_REVIEW)
+            next_action="needs group review"
+            ;;
+        GROUP_PLANNED|RUNNING_CHILD)
+            next_child="$(python3 - "$state_file" "$STATE_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state_file = Path(sys.argv[1])
+plan_state_dir = Path(sys.argv[2])
+state = json.loads(state_file.read_text(encoding="utf-8"))
+children = state.get("children", [])
+
+created_slugs = {}
+for child in children:
+    if child.get("created_slug"):
+        created_slugs[child["child_id"]] = child["created_slug"]
+
+done_children = set()
+for child_id, slug in created_slugs.items():
+    child_state_path = plan_state_dir / f"{slug}.json"
+    if child_state_path.exists():
+        child_state = json.loads(child_state_path.read_text(encoding="utf-8"))
+        if child_state.get("current_status") == "DONE":
+            done_children.add(child_id)
+
+for child in children:
+    child_id = child["child_id"]
+    if child_id in created_slugs:
+        continue
+    deps = child.get("depends_on", [])
+    if all(dep in done_children for dep in deps):
+        print(child_id)
+        raise SystemExit(0)
+
+print("none")
+PY
+            )"
+            if [ "$next_child" != "none" ]; then
+                next_action="start child: $next_child"
+            else
+                next_action="all children created"
+            fi
+            ;;
+        AWAITING_GROUP_FINAL_REVIEW)
+            next_action="needs final review"
+            ;;
+        GROUP_DONE)
+            next_action="group done"
+            ;;
+        GROUP_FINAL_REVIEW_FAILED)
+            next_action="final review failed, needs manual intervention"
+            ;;
+        *)
+            next_action="unknown status: $current_status"
+            ;;
+    esac
+
+    echo "group_slug=$group_slug"
+    echo "current_status=$current_status"
+    echo "next_action=$next_action"
+    if [ -n "$next_child" ]; then
+        echo "next_child=$next_child"
+    fi
+}
+
 validate_dependencies
 PROJECT_DIR="$(resolve_flow_root)" || fail "当前目录不在包含 .ai-flow/state 的 flow root 内。"
 FLOW_DIR="$PROJECT_DIR/.ai-flow"
@@ -429,6 +520,10 @@ PY
     dirty)
         [ $# -eq 2 ] || usage
         dirty_check "$2"
+        ;;
+    run-group)
+        shift
+        cmd_run_group "$@"
         ;;
     *)
         usage

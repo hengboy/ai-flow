@@ -106,6 +106,16 @@ Agent(
 )
 ```
 
+当审核目标为计划组时，调用格式为：
+
+```text
+Agent(
+    description="审核计划组",
+    subagent_type="<按上表选择>",
+    prompt="group_slug：{group_slug}\nmode：group_review|group_final_review"
+)
+```
+
 完成后读取 `REVIEW_RESULT`、`STATE`、`NEXT`、`SUMMARY`。`REVIEW_RESULT: passed|passed_with_notes` 时下一步进入 `/ai-flow-plan-coding`；`REVIEW_RESULT: failed` 时按"审核后偏差处理策略"决定；任何非成功结果直接报告 `SUMMARY` 并停止。
 
 ### subagent 职责
@@ -115,6 +125,8 @@ Agent(
 - 回写 `## 8. 计划审核记录`，作为唯一审核文档载体
 - 推进 `.ai-flow/state/{slug}.json`
 - 返回固定摘要协议，且包含 `REVIEW_RESULT`
+- 当 `mode` 为 `group_review` 时：审核拆分方案、children_json 依赖顺序、范围覆盖和风险声明；审核报告写入 `.ai-flow/plan-groups/reports/{group_slug}-group-review-r{round}.md`
+- 当 `mode` 为 `group_final_review` 时：审核所有 child DONE 状态、latest review 覆盖和跨 child 风险收口；审核报告写入 `.ai-flow/plan-groups/reports/{group_slug}-final-review-r{round}.md`
 
 ## 固定输出协议
 

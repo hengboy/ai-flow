@@ -50,11 +50,52 @@ $HOME/.config/ai-flow/scripts/flow-auto-run.sh resolve "<slug或唯一关键词>
 
 - 无显式参数时，**无 slug 必须列出候选并等待用户选择**
 - 即使候选只有 1 个，也不得自动代选
-- 解析成功后，内部后续动作一律绑定到解析出的完整 slug
+- 解析成功后，检查返回值是否以 `group:` 开头：
+  - 若返回 `group:<group_slug>` 格式，进入 **group 模式**（见下方"group 模式状态驱动循环"章节）
+  - 若返回普通 slug，继续普通 plan 模式
+- 普通 plan 模式下，内部后续动作一律绑定到解析出的完整 slug
 
 ## 状态驱动循环
 
 循环中只以 `.ai-flow/state/<slug>.json` 的 `current_status` 为真实状态源；plan / review markdown 首行不是状态源。
+
+### Group 模式状态驱动循环
+
+当 resolve 返回 `group:<group_slug>` 格式时，进入 group 模式。group 模式下后续所有动作绑定到 group slug，不再使用普通 plan slug。
+
+**核心原则**：group 模式下只调用 `flow-plan-group.sh` 的手动入口（start-child / child-completed / final-review），不实现第二套状态逻辑。子 plan 的 coding/review 仍走普通 plan 流程。
+
+1. 获取 group 当前状态：
+
+```bash
+bash "$HOME/.config/ai-flow/scripts/flow-plan-group-state.sh" show --group-slug <group_slug> --field current_status
+```
+
+2. 根据状态分支处理：
+
+- **`AWAITING_GROUP_REVIEW`**：委派 `ai-flow-plan-review` 执行 group review（复用既有 review 委派规则，mode=group_review）。review 通过后回到循环起点。
+
+- **`GROUP_PLANNED` / `RUNNING_CHILD`**：
+  1. 调用 `flow-plan-group.sh start-child --group-slug <group_slug>` 创建下一个 child
+  2. 子 plan 创建后进入 `AWAITING_PLAN_REVIEW`
+  3. 委派 `ai-flow-plan-review` 审核子 plan
+  4. 子 plan 审核通过后，调用 `flow-plan-coding.sh <child-dated-slug>` 执行 coding
+  5. coding 完成后，委派 `ai-flow-plan-coding-review` 审核
+  6. review 通过（子 plan 进入 DONE）：调用 `flow-plan-group.sh child-completed --group-slug <group_slug>`
+  7. 回到循环起点，检查是否还有下一个 child
+
+- **`AWAITING_GROUP_FINAL_REVIEW`**：所有 child 已完成，委派 `ai-flow-plan-review` 执行 final review（mode=group_final_review）。review 通过后循环成功结束。
+
+- **`GROUP_DONE`**：循环成功结束，输出总结。
+
+- **`GROUP_FINAL_REVIEW_FAILED`**：输出总结报告和下一步建议，**不自动改代码，不自动追加 child**，停止循环。
+
+3. 循环终止条件：
+   - 成功：`GROUP_DONE`
+   - 失败：`GROUP_FINAL_REVIEW_FAILED`
+   - 人工阻塞：子 plan review failed 且无回流方向
+
+4. 每轮循环必须重新获取 group 状态证据，不缓存上一轮结论。
 
 ### A. `PLANNED` / `IMPLEMENTING`
 
@@ -153,6 +194,10 @@ recheck 规则：
 - 禁止直接编辑 `.ai-flow/state/*.json`
 - 禁止绕过 `flow-plan-coding.sh` / `flow-code-optimize.sh` / `flow-state.sh` 直接推进状态
 - 每轮 coding / fix / review / recheck 都必须重新获取本轮证据；不得复用上一轮成功结论直接跳过验证
+- **group 模式隔离**：
+  - group 模式下禁止对 group 层使用普通 plan 的 `flow-state.sh transition`（子 plan 的 coding/review 仍走普通 plan 流程）
+  - group 层状态只通过 `flow-plan-group.sh` 的 start-child / child-completed / final-review 入口推进
+  - `GROUP_FINAL_REVIEW_FAILED` 场景不包含任何代码修改或自动追加 child 的指令
 
 ## 固定输出协议
 
@@ -162,6 +207,7 @@ recheck 规则：
 RESULT: success|failed|partial
 AGENT: ai-flow-auto-run
 SLUG: <dated-slug|none>
+GROUP_SLUG: <group_slug|none>
 STATE: <final-status|none>
 NEXT: ai-flow-plan-coding|ai-flow-code-optimize|ai-flow-plan-coding-review|ai-flow-git-commit|none
 SUMMARY: <one-line-summary>
