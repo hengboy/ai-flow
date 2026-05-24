@@ -78,12 +78,6 @@ test_runtime_script_uses_installed_helper() {
     ONSPACE_SUBAGENTS_CLAUDE_DIR="$onespace_dir/subagents/local_state/models/claude" \
     bash "$INSTALL_SH" >/dev/null 2>&1
 
-    mkdir -p "$project_dir/.ai-flow/plans"
-    cat > "$project_dir/.ai-flow/plans/test.md" <<'EOF'
-# Test Plan
-## 1. 概述
-## 7. 需求变更记录
-EOF
     create_minimal_state "$project_dir" "$slug"
 
     cat > "$project_dir/.ai-flow/rule.yaml" <<'EOF'

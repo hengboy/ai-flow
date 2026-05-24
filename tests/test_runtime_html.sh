@@ -5,7 +5,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-AI_FLOW_HOME="${AI_FLOW_HOME:-$HOME/.config/ai-flow}"
+AI_FLOW_HOME="${AI_FLOW_HOME:-$PROJECT_DIR/runtime}"
+TEST_FLOW_PROJECT="$(mktemp -d "$PROJECT_DIR/.ai-flow-tests/runtime-html.XXXXXX")"
+mkdir -p "$TEST_FLOW_PROJECT/.ai-flow/state"
 
 PASS=0
 FAIL=0
@@ -36,7 +38,7 @@ fi
 
 # --- 3. flow-html.sh 关闭模式返回非 0 ---
 echo ">>> 关闭模式测试"
-if ! bash "$AI_FLOW_HOME/scripts/flow-html.sh" status >/dev/null 2>&1; then
+if ! (cd "$TEST_FLOW_PROJECT" && AI_FLOW_HOME="$AI_FLOW_HOME" bash "$AI_FLOW_HOME/scripts/flow-html.sh" status >/dev/null 2>&1); then
     pass "关闭配置下 status 返回非 0"
 else
     fail "关闭配置下 status 应返回非 0"
@@ -49,9 +51,10 @@ cp -R "$AI_FLOW_HOME/." "$tmp_home/"
 cat > "$tmp_home/setting.json" <<'EOF'
 {"html":{"enabled":true}}
 EOF
-mkdir -p "$tmp_home/.ai-flow/state"
-if AI_FLOW_HOME="$tmp_home" bash "$tmp_home/scripts/flow-html.sh" status >/dev/null 2>&1; then
-    if [ -f "$tmp_home/.ai-flow/html/index.html" ]; then
+tmp_project="$(mktemp -d "$PROJECT_DIR/.ai-flow-tests/runtime-html-enabled.XXXXXX")"
+mkdir -p "$tmp_project/.ai-flow/state"
+if (cd "$tmp_project" && AI_FLOW_HOME="$tmp_home" bash "$tmp_home/scripts/flow-html.sh" status >/dev/null 2>&1); then
+    if [ -f "$tmp_project/.ai-flow/html/index.html" ]; then
         pass "开启配置下 status 生成 HTML"
     else
         fail "开启配置下 status 应生成 HTML"
@@ -59,7 +62,7 @@ if AI_FLOW_HOME="$tmp_home" bash "$tmp_home/scripts/flow-html.sh" status >/dev/n
 else
     fail "开启配置下 status 不应失败"
 fi
-rm -rf "$tmp_home"
+rm -rf "$tmp_home" "$tmp_project"
 
 # --- 4. flow-html.sh --help ---
 echo ">>> --help 测试"
@@ -162,5 +165,7 @@ echo "  $PASS passed, $FAIL failed"
 echo "==============================="
 
 if [ "$FAIL" -gt 0 ]; then
+    rm -rf "$TEST_FLOW_PROJECT"
     exit 1
 fi
+rm -rf "$TEST_FLOW_PROJECT"
