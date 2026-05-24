@@ -23,6 +23,8 @@ color: purple
 
 - 调用参数：`"需求描述" [slug]`。需求描述必填；`slug` 可选，由执行器负责生成、校验和关联。
 - 如果 `"需求描述"` 是本地可读文件路径，执行器必须读取该文件完整正文作为实际需求文本，并把文件路径作为需求来源；不得只用路径本身生成 plan。
+- 如果需求显式包含 `--group`、提到长任务/计划组/拆分/多阶段，或执行器判定为大型需求，执行器必须创建 `.ai-flow/plan-groups/{slug}.md` 与 `.ai-flow/plan-groups/state/{slug}.json`，状态进入 `AWAITING_GROUP_REVIEW`；不得生成普通 `.ai-flow/plans/*` draft plan。
+- slug 由执行器统一规范化；若已包含 `YYYYMMDD-` 日期前缀，不得再次追加日期前缀。
 - 允许新建 draft plan，或在 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED` 状态下原地修订同名 draft plan；其他状态、非法 slug、关联文件缺失或 runtime 缺失均直接失败。
 - 禁止复用旧 plan：不得搜索 `.ai-flow/plans/` 下历史计划并沿用，必须根据当前需求重新生成或按执行器规则修订。
 - 必须运行当前已安装 agent 目录中的 `bin/plan-executor.sh`；定位时只能探测 HARD-GATE 中列出的绝对候选路径，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。

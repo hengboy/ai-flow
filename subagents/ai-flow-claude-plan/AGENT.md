@@ -30,6 +30,12 @@ color: purple
 - 调用参数：`"需求描述" [slug]`。需求描述必填；`slug` 可选。
 - 如果 `"需求描述"` 是本地可读文件路径，必须先读取该文件完整正文并以正文生成 plan；`需求来源` 记录文件路径。不得只把路径本身写进 `原始需求（原文）` 后继续生成。
 - 必须在可识别项目根目录运行。多仓模式下在 owner 文件夹的根目录运行（owner 本身可以不是 Git 仓库，仅作为多个子仓库的容器目录）；跨仓范围在 plan 文件中声明。
+- 如果需求显式包含 `--group`、提到长任务/计划组/拆分/多阶段，或需求规模明显不适合一份普通 plan，必须创建计划组而不是普通 plan：
+  - 计划组文档路径固定为 `.ai-flow/plan-groups/{group_slug}.md`，状态文件路径固定为 `.ai-flow/plan-groups/state/{group_slug}.json`
+  - 必须通过 `$HOME/.config/ai-flow/scripts/flow-plan-group.sh create --group-slug {group_slug} --title {title} --group-file .ai-flow/plan-groups/{group_slug}.md --children-json '{children_json}'` 创建状态，进入 `AWAITING_GROUP_REVIEW`
+  - `children_json` 必须是数组，每个 child 包含 `child_id`、`title`、`depends_on`、`scope_summary`、`primary_risk`、`planned_semantic_slug`、`created_slug`、`plan_file`、`state_file`
+  - 长任务不会立即生成任何 `.ai-flow/plans/*` 子 plan；子 plan 只在计划组通过审核进入 `GROUP_PLANNED` 后按依赖顺序创建
+  - slug 允许中文；若 slug 已包含 `YYYYMMDD-` 日期前缀，不得再次追加日期前缀
 - 允许新建 draft plan，或在 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED` 状态下原地修订同名 draft plan；其他状态、非法 slug、重名冲突或关联 plan 缺失时直接失败。
 - 禁止复用旧 plan：不得搜索 `.ai-flow/plans/` 下历史计划并沿用，必须根据当前需求重新生成或修订。
 - 必须读取共享提示词和模板：`plan-generation.md` / `plan-revision.md`、`plan-template.md`。

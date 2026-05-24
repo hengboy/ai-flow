@@ -16,6 +16,7 @@ description: 执行重构类改动；绑定 slug 时遵守 plan-coding 状态门
 - 绑定 `slug` 时：第一执行动作必须是调用 `$HOME/.config/ai-flow/scripts/flow-code-refactor.sh {slug}`；该 runtime 入口沿用 `/ai-flow-plan-coding` 的状态门禁和执行前规则校验
 - 无 `slug` 时：允许独立执行，不创建也不修改 `.ai-flow/state`
 - 若目标 repo 存在 `.ai-flow/rule.yaml`，重构时必须先遵守其中的项目级约束与验证要求
+- 重构时必须主动识别本次触达范围内的硬编码；状态值、类型值、配置项、路径、命令名、错误码、固定文案、魔法数字等若已有枚举或常量定义，必须优先复用或补充其定义；若不存在合适定义，应抽取为语义明确的枚举或常量，避免新增或扩散硬编码
 - 独立重构完成后，如需审查，统一使用 `/ai-flow-plan-coding-review`
 - 如果任务只是在既有架构内做可读性、安全性或可维护性优化，应优先使用 `/ai-flow-code-optimize`
 - 如果重构过程中引入新需求或业务语义变化，应先回到 `/ai-flow-plan` 补充或修订计划
