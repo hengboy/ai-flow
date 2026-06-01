@@ -30,6 +30,10 @@ color: purple
 - 必须运行当前已安装 agent 目录中的 `bin/plan-executor.sh`；定位时只能探测 HARD-GATE 中列出的绝对候选路径，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
 - 不得手工生成 plan 或手工维护状态文件。状态只能由 `$HOME/.config/ai-flow/scripts/flow-state.sh` 创建或更新。
 - 必须保留并校验 plan 的强制结构，包括 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等关键章节。
+- 验证门禁：执行器在写入 plan 文件后、状态初始化前，必须通过 `$HOME/.config/ai-flow/scripts/plan-validate.sh` 执行两道验证：
+  1. 文件名格式验证：`validate-filename "{slug}.md"`
+  2. 模板内容验证（自动修复）：`validate-template .ai-flow/plans/{slug}.md --auto-fix`
+  验证不通过（含不可修复错误）时，执行器必须终止并报告错误，不执行状态初始化。
 - frontmatter 中的 `model` 只是宿主 agent 元数据；实际模型、推理强度和降级路径由 `bin/plan-executor.sh` 决定。
 - 当前代理与 `ai-flow-claude-plan` 形成降级配对，codex 不可用时 SKILL 层自动委派到 claude subagent。
 

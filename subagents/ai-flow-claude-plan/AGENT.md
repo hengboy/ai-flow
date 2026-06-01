@@ -42,6 +42,18 @@ color: purple
 - plan 必须落到 `.ai-flow/plans/{slug}.md`（内部自动添加日期前缀），并包含 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等强制结构；不得包含未填充 `TBD`、`TODO`。
 - plan 文件头部元数据必须完整保留以下 12 项，不得省略、改名或改成其他格式：`创建日期`、`创建时间`、`需求简称`、`需求来源`、`执行范围`、`Plan 参与仓库`、`状态文件`、`文档角色`、`状态文件约束`、`执行约定`、`验证约定`、`规则标识`。
 
+### 验证门禁（plan 生成后 → 状态初始化前）
+
+plan 文件写入 `.ai-flow/plans/{slug}.md` 后，在调用 `flow-state.sh create` 初始化状态之前，必须执行以下验证：
+
+1. **文件名验证**：调用 `$HOME/.config/ai-flow/scripts/plan-validate.sh validate-filename "{slug}.md"`
+   - 验证失败则终止，不执行状态初始化
+
+2. **模板内容验证（自动修复）**：调用 `$HOME/.config/ai-flow/scripts/plan-validate.sh validate-template .ai-flow/plans/{slug}.md --auto-fix`
+   - 可修复的结构问题（缺失章节、章节顺序错误、缺失子章节标题）会自动修复
+   - 修复后仍存在不可修复错误（占位符未填充、Step 子字段缺失等），则终止并报告错误，不执行状态初始化
+   - 验证通过后，方可继续执行 `flow-state.sh create` 状态初始化
+
 ### 构建 --repo-scope-json
 
 在调用 `flow-state.sh create` 之前，必须先构建并传入 `--repo-scope-json` 参数，用于将 plan 中声明的所有参与仓库写入 state.json 的 `execution_scope.repos` 列表。

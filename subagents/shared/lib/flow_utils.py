@@ -445,6 +445,310 @@ class FlowUtils:
         return errors
 
     @staticmethod
+    def validate_plan_filename(filename):
+        """验证 plan 文件名是否符合 YYYYMMDD-slug.md 格式。
+
+        返回 (ok, errors) 元组。
+        """
+        basename = os.path.basename(filename)
+        pattern = r'^\d{8}-[a-z0-9一-鿿][a-z0-9一-鿿-]*\.md$'
+        if re.match(pattern, basename):
+            return True, []
+        errors = [f"文件名不符合 YYYYMMDD-slug.md 格式: {basename}"]
+        return False, errors
+
+    @staticmethod
+    def validate_plan_template_compliance(plan_file, template_file=None):
+        """验证 plan 文件内容是否与模板匹配。
+
+        返回 (passed, errors, fixable_errors) 三元组：
+        - passed: bool，是否完全合规
+        - errors: list[str]，不可修复的错误（需要内容生成）
+        - fixable_errors: list[str]，可自动修复的结构问题
+        """
+        try:
+            text = Path(plan_file).read_text(encoding='utf-8')
+        except Exception as exc:
+            return False, [f"无法读取 plan 文件: {exc}"], []
+
+        errors = []
+        fixable_errors = []
+        lines = text.splitlines()
+
+        # 1. 首行检查
+        if not lines or not lines[0].startswith("# 实施计划："):
+            errors.append("首行必须是 # 实施计划：{需求名称}")
+
+        # 2. 元数据引用块格式检查
+        in_metadata = False
+        metadata_lines = []
+        for line in lines:
+            if line.startswith("# 实施计划："):
+                in_metadata = True
+                continue
+            if in_metadata:
+                if line.startswith("> "):
+                    metadata_lines.append(line)
+                elif line.startswith("## "):
+                    in_metadata = False
+                    break
+                elif line.strip() == "":
+                    continue
+                else:
+                    # 非空非引用行，元数据格式中断
+                    in_metadata = False
+
+        required_metadata_keys = [
+            "创建日期", "创建时间", "需求简称", "需求来源",
+            "执行范围", "Plan 参与仓库", "状态文件", "文档角色",
+            "状态文件约束", "执行约定", "验证约定", "规则标识",
+        ]
+        metadata_text = "\n".join(metadata_lines)
+        for key in required_metadata_keys:
+            if key not in metadata_text:
+                errors.append(f"元数据缺少必填项: {key}")
+
+        # 3. 顶级章节检查
+        required_sections = [
+            ("## 1. 需求概述", True),
+            ("## 2. 技术分析", True),
+            ("## 3. 实施步骤", True),
+            ("## 4. 测试计划", True),
+            ("## 5. 风险与注意事项", True),
+            ("## 6. 验收标准", True),
+            ("## 7. 需求变更记录", True),
+            ("## 8. 计划审核记录", True),
+        ]
+        found_sections = []
+        for line in lines:
+            for section, required in required_sections:
+                if line.strip() == section:
+                    found_sections.append(section)
+
+        # 检查缺失章节
+        for section, _ in required_sections:
+            if section not in found_sections:
+                fixable_errors.append(f"缺少顶级章节: {section}")
+
+        # 检查章节顺序
+        if len(found_sections) == len(required_sections):
+            for i, (section, _) in enumerate(required_sections):
+                if found_sections[i] != section:
+                    fixable_errors.append("顶级章节顺序与模板不一致")
+                    break
+        elif len(found_sections) < len(required_sections):
+            # 有缺失章节时，顺序检查无意义
+            pass
+
+        # 4. 必须存在的子章节检查
+        required_subsections = [
+            "### 2.1 涉及模块",
+            "### 2.2 数据模型变更",
+            "### 2.3 API 变更",
+            "### 2.4 依赖影响",
+            "### 2.5 文件边界总览",
+            "### 2.6 高风险路径与缺陷族",
+            "### 4.1 单元测试",
+            "### 4.2 集成测试",
+            "### 4.3 回归验证",
+            "### 4.4 定向验证矩阵",
+            "### 8.1 当前审核结论",
+            "### 8.2 偏差与建议",
+            "### 8.3 审核历史",
+        ]
+        for subsection in required_subsections:
+            if subsection not in text:
+                fixable_errors.append(f"缺少子章节: {subsection}")
+
+        # 5. 未填充占位符检查（{xxx} 形式，但排除 markdown 代码块内的）
+        # 先提取非代码块区域
+        in_code_block = False
+        non_code_text = []
+        for line in lines:
+            if line.strip().startswith("```"):
+                in_code_block = not in_code_block
+                continue
+            if not in_code_block:
+                non_code_text.append(line)
+        non_code_text_joined = "\n".join(non_code_text)
+        # 匹配 {中文} 或 {英文} 占位符
+        placeholder_pattern = r'\{[^{}\n]+\}'
+        placeholders = re.findall(placeholder_pattern, non_code_text_joined)
+        if placeholders:
+            for ph in placeholders[:5]:  # 最多报告 5 个
+                errors.append(f"存在未替换占位符: {ph}")
+            if len(placeholders) > 5:
+                errors.append(f"等共 {len(placeholders)} 个未替换占位符")
+
+        # 6. Step 子字段检查（复用 parse_plan_steps）
+        step_result = FlowUtils.parse_plan_steps(plan_file)
+        if step_result.get("steps"):
+            for step in step_result["steps"]:
+                if not step.get("step_id"):
+                    errors.append(f"Step '{step.get('title', 'unknown')}': 缺少 **Step ID**")
+                if not step.get("goal"):
+                    errors.append(f"Step '{step.get('title', 'unknown')}': 缺少 **目标**")
+                if not step.get("file_boundary"):
+                    errors.append(f"Step '{step.get('title', 'unknown')}': 缺少 **文件边界**")
+                if not step.get("review_focus"):
+                    errors.append(f"Step '{step.get('title', 'unknown')}': 缺少 **本轮 review 预期关注面**")
+                if not step.get("actions_all"):
+                    errors.append(f"Step '{step.get('title', 'unknown')}': 缺少 **执行动作**")
+                if not step.get("acceptance_all"):
+                    errors.append(f"Step '{step.get('title', 'unknown')}': 缺少 **本步验收**")
+                if not step.get("close_condition"):
+                    errors.append(f"Step '{step.get('title', 'unknown')}': 缺少 **本步关闭条件**")
+                if not step.get("blockers"):
+                    errors.append(f"Step '{step.get('title', 'unknown')}': 缺少 **阻塞条件**")
+
+        passed = not errors and not fixable_errors
+        return passed, errors, fixable_errors
+
+    @staticmethod
+    def auto_fix_plan_template(plan_file, template_file=None):
+        """自动修复 plan 文件中可修复的模板结构问题。
+
+        策略：解析为区块 → 插入缺失子章节 → 按模板顺序重组。
+        返回 (fixed, fixed_items, remaining_errors) 三元组。
+        """
+        try:
+            text = Path(plan_file).read_text(encoding='utf-8')
+        except Exception as exc:
+            return False, [], [f"无法读取 plan 文件: {exc}"]
+
+        fixed_items = []
+        lines = text.splitlines()
+
+        # 定义模板结构
+        required_sections_order = [
+            "## 1. 需求概述", "## 2. 技术分析", "## 3. 实施步骤",
+            "## 4. 测试计划", "## 5. 风险与注意事项", "## 6. 验收标准",
+            "## 7. 需求变更记录", "## 8. 计划审核记录",
+        ]
+        required_subsections_map = {
+            "## 1. 需求概述": [],
+            "## 2. 技术分析": [
+                "### 2.1 涉及模块", "### 2.2 数据模型变更", "### 2.3 API 变更",
+                "### 2.4 依赖影响", "### 2.5 文件边界总览", "### 2.6 高风险路径与缺陷族",
+            ],
+            "## 3. 实施步骤": [],
+            "## 4. 测试计划": [
+                "### 4.1 单元测试", "### 4.2 集成测试",
+                "### 4.3 回归验证", "### 4.4 定向验证矩阵",
+            ],
+            "## 5. 风险与注意事项": [],
+            "## 6. 验收标准": [],
+            "## 7. 需求变更记录": [],
+            "## 8. 计划审核记录": [
+                "### 8.1 当前审核结论", "### 8.2 偏差与建议", "### 8.3 审核历史",
+            ],
+        }
+        default_subsection_content = {
+            "### 2.1 涉及模块": "| 模块 | 仓库 | 职责 | 变更类型 |\n|------|------|------|----------|\n",
+            "### 2.2 数据模型变更": "不涉及数据库变更\n",
+            "### 2.3 API 变更": "| 接口 | 方法 | 路径 | 说明 |\n|------|------|------|------|\n无新增/修改接口\n",
+            "### 2.4 依赖影响": "无\n",
+            "### 2.5 文件边界总览": "| 文件 | 仓库 | 操作 | 职责 | 对应 Step ID |\n|------|------|------|------|----------|\n",
+            "### 2.6 高风险路径与缺陷族": "| 高风险能力/路径 | 影响面 | 典型失效模式 | 对应缺陷族 | 必须覆盖的验证方式 |\n|----------------|--------|--------------|------------|--------------------|\n",
+            "### 4.1 单元测试": "- [ ] 补充单元测试用例\n",
+            "### 4.2 集成测试": "- [ ] 补充集成测试用例\n",
+            "### 4.3 回归验证": "- [ ] 执行回归验证\n",
+            "### 4.4 定向验证矩阵": "| 缺陷族 | 目标风险路径 | 定向验证命令 | 验证类型 | 通过标准 |\n|--------|--------------|--------------|----------|----------|\n",
+            "### 8.1 当前审核结论": "- 审核状态：待审核\n- 与原始需求一致性：待审核\n- 是否允许进入 `/ai-flow-plan-coding`：否\n- 当前审核轮次：0\n- 审核引擎/模型：待审核\n",
+            "### 8.2 偏差与建议": "- 待审核\n",
+            "### 8.3 审核历史": "- 第 0 轮：初始化 draft，待审核。\n",
+        }
+        default_section_body = {
+            "## 1. 需求概述": "**目标**：待补充\n\n**背景**：待补充\n\n**原始需求（原文）**：待补充\n\n**非目标**：待补充\n",
+            "## 3. 实施步骤": "待补充实施步骤\n",
+            "## 5. 风险与注意事项": "无\n",
+            "## 6. 验收标准": "- [ ] 待补充验收标准\n",
+            "## 7. 需求变更记录": "| 时间 | 变更描述 | 确认方式 |\n|------|----------|----------|\n",
+        }
+
+        # Step 1: 解析文件为区块 —— 找到所有 ## 顶级章节的位置
+        section_positions = {}
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped in required_sections_order:
+                section_positions[stripped] = i
+
+        existing_sections = [s for s in required_sections_order if s in section_positions]
+        if not existing_sections:
+            return False, [], ["文件中找不到任何顶级章节，无法自动修复"]
+
+        # 将每个章节的内容提取出来
+        section_content_map = {}  # section_title -> list of lines (without the ## title line)
+        for idx, sec in enumerate(existing_sections):
+            start = section_positions[sec] + 1
+            if idx + 1 < len(existing_sections):
+                end = section_positions[existing_sections[idx + 1]]
+            else:
+                end = len(lines)
+            section_content_map[sec] = lines[start:end]
+
+        # Step 2: 对每个已有章节，插入缺失的子章节
+        for parent_section in required_sections_order:
+            if parent_section not in section_content_map:
+                continue  # 章节完全缺失，后面会插入默认内容
+            content_lines = section_content_map[parent_section]
+            content_text = "\n".join(content_lines)
+            subsections = required_subsections_map.get(parent_section, [])
+
+            for subsection in subsections:
+                if subsection not in content_text:
+                    # 插入子章节
+                    content_lines.insert(0, subsection)
+                    sub_content = default_subsection_content.get(subsection, "")
+                    for ci, cl in enumerate(sub_content.strip().split("\n")):
+                        content_lines.insert(1 + ci, cl)
+                    fixed_items.append(f"插入缺失子章节: {subsection}")
+
+        # Step 3: 按模板顺序重组文件
+        # 保留文件头部（首行 + 元数据块）
+        header_lines = []
+        for line in lines:
+            if line.startswith("## "):
+                break
+            header_lines.append(line)
+        # 去掉尾部空行
+        while header_lines and header_lines[-1].strip() == "":
+            header_lines.pop()
+
+        # 按顺序构建
+        new_lines = list(header_lines)
+        new_lines.append("")  # 空行分隔
+        for sec in required_sections_order:
+            if sec in section_content_map:
+                new_lines.append(sec)
+                new_lines.extend(section_content_map[sec])
+            else:
+                # 插入缺失的顶级章节 + 默认内容
+                fixed_items.append(f"插入缺失顶级章节: {sec}")
+                new_lines.append(sec)
+                new_lines.append("")
+                # 插入子章节
+                for subsection in required_subsections_map.get(sec, []):
+                    new_lines.append(subsection)
+                    sub_content = default_subsection_content.get(subsection, "")
+                    new_lines.extend(sub_content.strip().split("\n"))
+                    new_lines.append("")
+                # 插入章节默认内容
+                default_body = default_section_body.get(sec, "待补充\n")
+                new_lines.extend(default_body.strip().split("\n"))
+            new_lines.append("")  # 章节间空一行
+
+        new_text = "\n".join(new_lines)
+        if text.endswith("\n"):
+            new_text += "\n"
+        Path(plan_file).write_text(new_text, encoding='utf-8')
+
+        # 运行一次验证，获取 remaining errors
+        _, remaining_errors, _ = FlowUtils.validate_plan_template_compliance(plan_file)
+
+        return bool(fixed_items), fixed_items, remaining_errors
+
+    @staticmethod
     def render_template(template_path, env_vars):
         """通用模板渲染逻辑"""
         try:
@@ -966,5 +1270,53 @@ if __name__ == "__main__":
         res = FlowUtils.validate_plan_coverage(sys.argv[2], sys.argv[3], review_mode)
         for err in res:
             print(err)
+    elif cmd == "validate-plan-filename":
+        ok, errs = FlowUtils.validate_plan_filename(sys.argv[2])
+        if not ok:
+            for e in errs:
+                print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+        print("OK")
+        sys.exit(0)
+    elif cmd == "validate-plan-template":
+        plan_file = sys.argv[2]
+        template_file = sys.argv[3] if len(sys.argv) > 3 else None
+        auto_fix = "--auto-fix" in sys.argv
+        passed, errors, fixable = FlowUtils.validate_plan_template_compliance(plan_file, template_file)
+        if auto_fix and fixable:
+            fixed, fixed_items, remaining = FlowUtils.auto_fix_plan_template(plan_file, template_file)
+            for item in fixed_items:
+                print(f"FIXED: {item}")
+            # 重新验证
+            passed, errors, fixable = FlowUtils.validate_plan_template_compliance(plan_file, template_file)
+
+        if passed and not errors and not fixable:
+            print("PASS: plan 模板合规")
+            sys.exit(0)
+        elif not fixable and errors:
+            for e in errors:
+                print(f"ERROR: {e}", file=sys.stderr)
+            print(f"FAIL: {len(errors)} 个不可修复错误", file=sys.stderr)
+            sys.exit(1)
+        else:
+            for e in errors:
+                print(f"ERROR: {e}", file=sys.stderr)
+            for f in fixable:
+                print(f"FIXABLE: {f}", file=sys.stderr)
+            sys.exit(2)
+    elif cmd == "auto-fix-plan-template":
+        plan_file = sys.argv[2]
+        template_file = sys.argv[3] if len(sys.argv) > 3 else None
+        fixed, fixed_items, remaining = FlowUtils.auto_fix_plan_template(plan_file, template_file)
+        if fixed:
+            for item in fixed_items:
+                print(f"FIXED: {item}")
+        if remaining:
+            for e in remaining:
+                print(f"REMAINING: {e}", file=sys.stderr)
+            sys.exit(1 if remaining else 0)
+        else:
+            print("PASS: 无需修复")
+            sys.exit(0)
     elif cmd == "trim-marker":
         FlowUtils.trim_to_marker(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else "")

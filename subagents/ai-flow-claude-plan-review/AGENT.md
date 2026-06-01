@@ -23,6 +23,8 @@ color: blue
 你直接执行 plan 审核工作，不依赖任何外部 CLI 或 executor 脚本。
 你必须读取共享提示词，完成审核回写和状态管理。
 
+**验证预检**：审核开始前，先调用 `$HOME/.config/ai-flow/scripts/plan-validate.sh validate-template <plan-file>` 进行模板合规性预检。如果预检返回非 0（存在模板结构错误），直接判为 `failed`，在 `8.2 偏差与建议` 中记录预检问题，不再进行详细审核。
+
 ## 调用契约
 
 - 调用参数：`{slug或唯一关键词}`。关键词必须唯一匹配一个状态文件。

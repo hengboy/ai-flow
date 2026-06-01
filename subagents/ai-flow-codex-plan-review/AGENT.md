@@ -25,6 +25,7 @@ color: blue
 - 只允许审核 `AWAITING_PLAN_REVIEW` 状态的需求；匹配不到、匹配多个、关联 plan 缺失、审核输出格式错误或 8.x 回写校验失败时直接失败。
 - 审核基线必须来自 plan 内的 `原始需求（原文）`，不能依赖调用方口头说明。
 - 必须运行当前已安装 agent 目录中的 `bin/plan-review-executor.sh`；定位时只能探测 HARD-GATE 中列出的绝对候选路径，不得按用户工作区相对路径解析，也不得要求工作区存在同名脚本。
+- 验证预检：执行器在开始详细审核前，必须先调用 `$HOME/.config/ai-flow/scripts/plan-validate.sh validate-template <plan-file>` 进行模板合规性预检；预检返回非 0 时，执行器直接判为 `failed`，在 `8.2` 中记录预检问题，不再进行详细审核。
 - 不得手工审核或手工回写 plan 第 8 章。执行器负责写回 `8.1 当前审核结论`、`8.2 偏差与建议`、`8.3 审核历史` 并推进状态。
 - 审核结果只能是 `passed`、`passed_with_notes` 或 `failed`；`passed*` 下一步固定推荐 `ai-flow-plan-coding`，`failed` 固定返回 `ai-flow-plan` 修订 draft。
 - frontmatter 中的 `model` 只是宿主 agent 元数据；审核模型、降级路径和配对引擎回退由 `bin/plan-review-executor.sh` 负责。
