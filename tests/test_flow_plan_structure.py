@@ -268,6 +268,22 @@ class TestFlowPlanStructure(unittest.TestCase):
         self.assertTrue(errors)
         self.assertIn("plan 实施步骤结构不符合标准模板", errors[0])
 
+    def test_validate_plan_structure_fails_when_step_id_field_missing(self):
+        path = self._write_temp_plan(build_plan().replace("\n**Step ID**：`step-one`\n", "\n"))
+        errors = FlowUtils.validate_plan_structure(path)
+        self.assertTrue(errors)
+        self.assertIn("第一步: 缺少 **Step ID**", errors)
+
+    def test_validate_plan_structure_fails_when_step_id_is_not_first_field(self):
+        plan = build_plan().replace(
+            "\n**Step ID**：`step-one`\n\n**目标**：完成测试步骤\n",
+            "\n**目标**：完成测试步骤\n\n**Step ID**：`step-one`\n",
+        )
+        path = self._write_temp_plan(plan)
+        errors = FlowUtils.validate_plan_structure(path)
+        self.assertTrue(errors)
+        self.assertIn("step-one: **Step ID** 必须是 Step 标题后的第一个非空字段", errors)
+
     def test_validate_plan_completion_fails_when_actions_pending(self):
         path = self._write_temp_plan(build_plan(action_mark=" ", acceptance_mark="x"))
         errors = FlowUtils.validate_plan_completion(path)
@@ -338,6 +354,103 @@ class TestFlowPlanStructure(unittest.TestCase):
             )
         )
         self.assertEqual(FlowUtils.validate_plan_coverage(plan, report), [])
+
+
+class TestReviewPacket(unittest.TestCase):
+    def _write_temp_plan(self, content: str) -> str:
+        tmpdir = tempfile.mkdtemp()
+        path = Path(tmpdir) / "plan.md"
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def test_build_review_packet_extracts_all_fields(self):
+        """使用完整 plan 验证 build_review_packet 能提取所有字段。"""
+        path = self._write_temp_plan(build_plan())
+        result = FlowUtils.build_review_packet(path, "regular")
+        self.assertTrue(result.get("ok"), f"build_review_packet 失败: {result.get('error')}")
+        self.assertIn("step-one", result.get("step_ids", []))
+        self.assertIn("test-family", result.get("defect_families", []))
+        self.assertIn("verification_matrix", result)
+        self.assertTrue(len(result["verification_matrix"]) > 0, "4.4 定向验证矩阵应为非空")
+
+    def test_build_review_packet_errors_on_missing_verification_matrix(self):
+        """缺少 4.4 定向验证矩阵时应返回明确错误。"""
+        plan_text = build_plan().replace(
+            "### 4.4 定向验证矩阵",
+            "### 4.4 缺失矩阵",
+        )
+        path = self._write_temp_plan(plan_text)
+        result = FlowUtils.build_review_packet(path, "regular")
+        self.assertFalse(result.get("ok"))
+        self.assertIn("缺少 4.4 定向验证矩阵", result.get("error", ""))
+
+    def test_build_review_packet_errors_on_missing_step_id(self):
+        """缺少 Step ID 时应返回明确错误。"""
+        plan_text = build_plan().replace(
+            "\n**Step ID**：`step-one`\n",
+            "\n",
+        )
+        path = self._write_temp_plan(plan_text)
+        result = FlowUtils.build_review_packet(path, "regular")
+        self.assertFalse(result.get("ok"))
+        self.assertIn("缺少 Step ID", result.get("error", ""))
+
+
+class TestRepoScopeValidation(unittest.TestCase):
+    def _write_temp_plan(self, content: str) -> str:
+        tmpdir = tempfile.mkdtemp()
+        path = Path(tmpdir) / "plan.md"
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def _write_temp_state(self, content: str) -> str:
+        tmpdir = tempfile.mkdtemp()
+        path = Path(tmpdir) / "state.json"
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def test_validate_repo_scope_single_owner(self):
+        """单仓 plan 仓库列为 owner 时应通过。"""
+        state_content = '{"execution_scope": {"mode": "plan_repos", "repos": [{"id": "owner", "path": ".", "git_root": ".", "role": "owner"}]}}'
+        state_path = self._write_temp_state(state_content)
+        path = self._write_temp_plan(build_plan())
+        result = FlowUtils.validate_plan_repo_scope(path, state_path)
+        self.assertTrue(result.get("ok"), f"单仓 owner 校验失败: {result.get('errors')}")
+
+    def test_validate_repo_scope_cross_repo_missing_prefix(self):
+        """跨仓路径缺少 repo_id/ 前缀时应失败。"""
+        state_content = '{"execution_scope": {"mode": "plan_repos", "repos": [{"id": "owner", "path": ".", "git_root": ".", "role": "owner"}, {"id": "sub", "path": "sub", "git_root": "sub", "role": "participant"}]}}'
+        state_path = self._write_temp_state(state_content)
+        # 文件边界表中使用了 sub 仓库但路径不带 sub/ 前缀
+        plan_text = build_plan().replace(
+            "| `a.txt` | owner | Modify | test | `step-one` |",
+            "| `a.txt` | owner | Modify | test | `step-one` |\n| `b.txt` | sub | Modify | sub test | `step-one` |",
+        )
+        path = self._write_temp_plan(plan_text)
+        result = FlowUtils.validate_plan_repo_scope(path, state_path)
+        self.assertFalse(result.get("ok"))
+        errors = result.get("errors", [])
+        self.assertTrue(
+            any("repo_id" in e.lower() or "前缀" in e or "prefix" in e.lower() for e in errors),
+            f"应包含跨仓路径前缀错误，实际: {errors}",
+        )
+
+    def test_validate_repo_scope_invalid_repo_id(self):
+        """非 owner repo id 不在 state repos 中时应失败。"""
+        state_content = '{"execution_scope": {"mode": "plan_repos", "repos": [{"id": "owner", "path": ".", "git_root": ".", "role": "owner"}]}}'
+        state_path = self._write_temp_state(state_content)
+        plan_text = build_plan().replace(
+            "| `a.txt` | owner | Modify | test | `step-one` |",
+            "| `a.txt` | unknown-repo | Modify | test | `step-one` |",
+        )
+        path = self._write_temp_plan(plan_text)
+        result = FlowUtils.validate_plan_repo_scope(path, state_path)
+        self.assertFalse(result.get("ok"))
+        errors = result.get("errors", [])
+        self.assertTrue(
+            any("unknown-repo" in e or "不存在" in e or "not found" in e.lower() for e in errors),
+            f"应包含非法 repo id 错误，实际: {errors}",
+        )
 
 
 if __name__ == "__main__":

@@ -16,6 +16,9 @@ usage() {
   plan-validate.sh validate-template <plan-file> [--auto-fix]
       验证 plan 文件内容是否与模板匹配；传 --auto-fix 时自动修复结构问题
 
+  plan-validate.sh validate-repo-scope <plan-file> <state-file>
+      校验 plan 的仓库列与 state execution_scope.repos 是否一致
+
   plan-validate.sh auto-fix <plan-file>
       仅执行自动修复，不输出验证结果
 
@@ -53,6 +56,13 @@ case "$1" in
             exit 1
         fi
         python3 "$FLOW_UTILS" auto-fix-plan-template "$2"
+        ;;
+    validate-repo-scope)
+        if [ $# -lt 3 ]; then
+            echo "ERROR: validate-repo-scope 需要 plan-file 和 state-file 参数" >&2
+            exit 1
+        fi
+        python3 "$FLOW_UTILS" validate-plan-repo-scope "$2" "$3"
         ;;
     *)
         echo "ERROR: 未知子命令: $1" >&2

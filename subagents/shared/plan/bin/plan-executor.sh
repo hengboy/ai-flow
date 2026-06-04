@@ -781,18 +781,45 @@ file_line_count() {
 plan_authoring_reasoning() {
     local reasoning="$PLAN_REASONING"
 
-    local requirement_length stack_count
-    requirement_length=$(printf '%s' "$REQUIREMENT" | wc -m | tr -d ' ')
+    local stack_count
     stack_count=$(printf '%s' "$DETECT_STACK" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
 
-    if [ "$requirement_length" -ge 120 ] \
+    # 风险信号：跨仓（2.1 涉及模块仓库列唯一值 > 1）
+    local repo_count=0
+    if [ -n "${REPO_SCOPE_JSON:-}" ]; then
+        repo_count=$(printf '%s\n' "$REPO_SCOPE_JSON" | python3 -c 'import json,sys; scope=json.loads(sys.stdin.read()); repos=scope.get("repos",[]); print(len(repos))' 2>/dev/null || echo 0)
+    fi
+
+    # 风险信号：修订失败轮次（从 state transitions 读取 plan_review_failed 次数）
+    local revision_failures=0
+    if [ -f "${EXISTING_STATE_FILE:-}" ]; then
+        revision_failures=$(python3 - "$EXISTING_STATE_FILE" <<'PY'
+import json, sys
+state = json.loads(open(sys.argv[1]).read())
+print(sum(1 for t in state.get("transitions", []) if t.get("event") == "plan_review_failed"))
+PY
+)
+    fi
+
+    # 风险信号：Step 数超阈值（从 draft plan 解析）
+    local step_count=0
+    if [ -f "$PLAN_FILE" ]; then
+        step_count=$(python3 "$AGENT_DIR/../lib/flow_utils.py" parse-plan-step-count "$PLAN_FILE" 2>/dev/null || echo 0)
+    fi
+
+    # 旧条件 requirement_length >= 120 已移除，替换为以下风险信号
+    if [ "$repo_count" -gt 1 ] \
         || [ "$stack_count" -ge 4 ] \
+        || [ "$revision_failures" -gt 0 ] \
+        || [ "$step_count" -gt 5 ] \
         || { [ "${SLUG_EXPLICIT:-false}" = true ] && [ -f "${EXISTING_STATE_FILE:-}" ]; }; then
         reasoning="xhigh"
     fi
 
     echo "$reasoning"
 }
+
+# 解析 plan 中的 Step 数量（CLI 辅助入口）
 
 plan_review_reasoning() {
     local reasoning="$PLAN_REVIEW_REASONING"
@@ -2420,26 +2447,47 @@ else
 
     PLAN_CONTENT_FOR_PROMPT=$(cat "$PLAN_FILE")
     PLAN_REVIEW_ITEMS_FOR_PROMPT=""
-    SECOND_STAGE_PROMPT=$(render_prompt_template "$PLAN_REVISION_PROMPT_TEMPLATE")
-    second_stage_output=$(mktemp)
-    echo ">>> 按参与仓库规则补强 draft plan..."
-    if ! run_plan_authoring_prompt "$SECOND_STAGE_PROMPT" "$second_stage_output" "# 实施计划：" "$AUTHORING_REASONING"; then
-        if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
-            if [ "$PLAN_ENGINE_MODE" = "claude" ]; then
-                fail_protocol "PLAN_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
-            fi
-            rm -f "$second_stage_output"
-            PROTOCOL_ARTIFACT="none"
-            PROTOCOL_STATE="none"
-            PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan。"
-            emit_current_protocol "degraded"
-            exit 0
+
+    # --- 条件触发第二轮补强 ---
+    # 先执行确定性校验（模板结构），通过则跳过第二轮模型调用
+    PLAN_VALIDATE_SH="$SCRIPT_DIR/../../../runtime/scripts/plan-validate.sh"
+    RUN_SECOND_STAGE=0
+    VALIDATION_ERRORS=""
+
+    # 模板结构校验
+    if [ -f "$PLAN_VALIDATE_SH" ]; then
+        template_validate_err=""
+        if ! template_validate_err=$(bash "$PLAN_VALIDATE_SH" validate-template "$PLAN_FILE" 2>&1); then
+            VALIDATION_ERRORS="${template_validate_err}"
+            RUN_SECOND_STAGE=1
         fi
     fi
-    mv "$second_stage_output" "$PLAN_FILE"
-    sync_plan_header_metadata "$PLAN_FILE"
-    ensure_requirement_literal "$PLAN_FILE"
-    validate_plan_structure "$PLAN_FILE" "draft"
+
+    if [ "$RUN_SECOND_STAGE" -eq 1 ]; then
+        echo ">>> 确定性校验未通过，触发第二轮补强..."
+        printf '%s\n' "$VALIDATION_ERRORS" | head -20
+        SECOND_STAGE_PROMPT=$(render_prompt_template "$PLAN_REVISION_PROMPT_TEMPLATE")
+        second_stage_output=$(mktemp)
+        if ! run_plan_authoring_prompt "$SECOND_STAGE_PROMPT" "$second_stage_output" "# 实施计划：" "$AUTHORING_REASONING"; then
+            if [ "$PLAN_ENGINE_NAME" = "Codex(unavailable)" ]; then
+                if [ "$PLAN_ENGINE_MODE" = "claude" ]; then
+                    fail_protocol "PLAN_ENGINE_MODE=claude 模式下不应进入 codex 执行路径"
+                fi
+                rm -f "$second_stage_output"
+                PROTOCOL_ARTIFACT="none"
+                PROTOCOL_STATE="none"
+                PROTOCOL_SUMMARY="Codex 不可用，已降级到 ai-flow-claude-plan。"
+                emit_current_protocol "degraded"
+                exit 0
+            fi
+        fi
+        mv "$second_stage_output" "$PLAN_FILE"
+        sync_plan_header_metadata "$PLAN_FILE"
+        ensure_requirement_literal "$PLAN_FILE"
+        validate_plan_structure "$PLAN_FILE" "draft"
+    else
+        echo ">>> 确定性校验通过，跳过第二轮补强"
+    fi
 
     # best-effort 渲染 plan HTML
     _ai_flow_render_html_best_effort() {

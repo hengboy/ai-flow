@@ -9,7 +9,7 @@
 > 状态文件：`.ai-flow/state/{需求简称}.json`（内部自动添加日期前缀）
 > 文档角色：本文件仅记录实施证据与执行步骤；流程状态以 JSON 状态文件为准。
 > 状态文件约束：`.ai-flow/state/{需求简称}.json`（内部自动添加日期前缀）只能使用 `flow-state.sh` 的固定 schema；不得在 plan 中设计 `requirement_key`、`status`、`steps`、`verification_results`、`change_register` 等自定义字段。
-> 执行约定：使用 `/ai-flow-plan-coding` 按 Step 顺序执行；Step 标题不使用可见序号，统一通过 `Step ID` 引用；每个 Step 内的动作使用 `- [ ]` 复选框追踪进度；每完成一个 Step 后，必须立即勾选该 Step 下对应的 `执行动作` 与 `本步验收` 复选框，禁止等到全部 Step 完成后统一勾选。
+> 执行约定：使用 `/ai-flow-plan-coding` 按 Step 顺序执行；Step 标题不使用可见序号，统一通过独立字段 `**Step ID**：` 引用；每个 Step 标题后的第一个字段必须是 `**Step ID**：`，不得省略、改名、合并到标题或写入表格；每个 Step 内的动作使用 `- [ ]` 复选框追踪进度；每完成一个 Step 后，必须立即勾选该 Step 下对应的 `执行动作` 与 `本步验收` 复选框，禁止等到全部 Step 完成后统一勾选。
 > 验证约定：代码行为变更默认使用测试优先顺序；完成前必须运行本计划列出的验证命令并记录结果。
 > 规则标识：`intake`、`plan-writing`、`file-boundary`、`step-run`、`test-first`、`verify-before-done`、`change-register`
 

@@ -71,6 +71,8 @@ class FlowUtils:
                 "raw": [],
                 "valid": True,
                 "errors": [],
+                "_first_content_seen": False,
+                "_step_id_first": False,
                 "_mode": None,
                 "_in_file_boundary": False,
                 "_in_actions": False,
@@ -106,6 +108,9 @@ class FlowUtils:
 
             current["raw"].append(line)
             stripped = line.strip()
+            if stripped and not current["_first_content_seen"]:
+                current["_first_content_seen"] = True
+                current["_step_id_first"] = bool(re.match(r"^\*\*Step ID\*\*\s*[：:]\s*", line))
             # 兼容全角/半角冒号，以及前后可能存在的空格
             if re.match(r"^\*\*Step ID\*\*\s*[：:]\s*", line):
                 current["step_id"] = re.sub(r"^\*\*Step ID\*\*\s*[：:]\s*", "", line).strip().strip("`")
@@ -153,7 +158,9 @@ class FlowUtils:
         for step in steps:
             errors = []
             if not step["step_id"]:
-                errors.append("缺少 Step ID")
+                errors.append("缺少 **Step ID**")
+            elif not step.get("_step_id_first"):
+                errors.append("**Step ID** 必须是 Step 标题后的第一个非空字段")
             if not step["goal"]:
                 errors.append("缺少目标")
             if not step["file_boundary"]:
@@ -170,7 +177,7 @@ class FlowUtils:
                 errors.append("缺少阻塞条件")
             step["valid"] = not errors
             step["errors"] = errors
-            for key in ("_mode", "_in_file_boundary", "_in_actions", "_in_acceptance"):
+            for key in ("_first_content_seen", "_step_id_first", "_mode", "_in_file_boundary", "_in_actions", "_in_acceptance"):
                 step.pop(key, None)
 
         ok = bool(steps) and all(step["valid"] for step in steps)
@@ -603,6 +610,207 @@ class FlowUtils:
 
         passed = not errors and not fixable_errors
         return passed, errors, fixable_errors
+
+    @staticmethod
+    def _extract_section_table(text, section_heading):
+        """从 Markdown 文本中提取特定章节下的表格数据（不依赖文件）。
+
+        返回 (headers, rows) 元组，headers 为表头列表，rows 为数据行列表。
+        """
+        lines = text.splitlines()
+        in_section = False
+        table_lines = []
+
+        for line in lines:
+            if line.startswith('##') or line.startswith('###'):
+                if section_heading in line:
+                    in_section = True
+                    table_lines = []
+                    continue
+                if in_section:
+                    break
+            if in_section and line.strip().startswith('|'):
+                table_lines.append(line.strip())
+
+        if len(table_lines) < 2:
+            return [], []
+
+        headers = [cell.strip() for cell in table_lines[0].strip('|').split('|')]
+        rows = []
+        for raw in table_lines[2:]:
+            cells = [cell.strip() for cell in raw.strip('|').split('|')]
+            if any(cells):
+                rows.append(cells)
+        return headers, rows
+
+    @staticmethod
+    def build_review_packet(plan_file, review_mode="regular", changed_files_json=""):
+        """从 plan 文件中提取精简 review packet。
+
+        返回 dict，包含：
+        - ok: bool
+        - error: str（失败原因）
+        - step_ids: list[str]
+        - file_boundaries: dict[step_id, list[str]]
+        - review_focus: dict[step_id, str]
+        - close_conditions: dict[step_id, str]
+        - verification_matrix: list[dict]
+        - defect_families: list[str]
+        - requirement_summary: str
+        """
+        try:
+            text = Path(plan_file).read_text(encoding='utf-8')
+        except Exception as exc:
+            return {"ok": False, "error": f"无法读取 plan 文件: {exc}"}
+
+        # 解析 Step 信息
+        step_result = FlowUtils.parse_plan_steps(plan_file)
+        if not step_result.get("steps"):
+            return {"ok": False, "error": "plan 缺少可执行 Step"}
+
+        step_ids = []
+        file_boundaries = {}
+        review_focus = {}
+        close_conditions = {}
+        missing_step_ids = []
+
+        for step in step_result["steps"]:
+            sid = step.get("step_id", "")
+            if not sid:
+                missing_step_ids.append(step.get("title", "unknown"))
+                continue
+            step_ids.append(sid)
+            file_boundaries[sid] = step.get("file_boundary", [])
+            review_focus[sid] = step.get("review_focus", "")
+            close_conditions[sid] = step.get("close_condition", "")
+
+        if missing_step_ids:
+            return {
+                "ok": False,
+                "error": f"缺少 Step ID: {', '.join(missing_step_ids)}",
+            }
+
+        # 提取 4.4 定向验证矩阵
+        _, matrix_rows = FlowUtils._extract_section_table(text, "4.4 定向验证矩阵")
+        if not matrix_rows:
+            return {"ok": False, "error": "缺少 4.4 定向验证矩阵"}
+
+        matrix_headers = ["缺陷族", "目标风险路径", "定向验证命令", "验证类型", "通过标准"]
+        verification_matrix = []
+        for row in matrix_rows:
+            entry = {}
+            for i, header in enumerate(matrix_headers):
+                entry[header] = row[i].strip() if i < len(row) else ""
+            verification_matrix.append(entry)
+
+        # 提取 2.6 高风险路径与缺陷族
+        headers_26, defect_rows = FlowUtils._extract_section_table(text, "2.6 高风险路径与缺陷族")
+        defect_families = []
+        # "对应缺陷族" 通常在表头中定位列索引
+        family_col_idx = None
+        if headers_26:
+            for i, h in enumerate(headers_26):
+                if "缺陷族" in h:
+                    family_col_idx = i
+                    break
+        if family_col_idx is None:
+            family_col_idx = 3  # 默认第 4 列（0-based）
+        for row in defect_rows:
+            if len(row) <= family_col_idx:
+                continue
+            family = row[family_col_idx].strip()
+            if family and family not in {"高风险能力/路径", "--------", "对应缺陷族"}:
+                defect_families.append(family)
+
+        # 提取需求目标摘要（从 1. 需求概述 中的 **目标** 字段）
+        requirement_summary = ""
+        target_match = re.search(r'\*\*目标\*\*[：:]\s*(.+)', text)
+        if target_match:
+            requirement_summary = target_match.group(1).strip()
+
+        return {
+            "ok": True,
+            "error": "",
+            "step_ids": step_ids,
+            "file_boundaries": file_boundaries,
+            "review_focus": review_focus,
+            "close_conditions": close_conditions,
+            "verification_matrix": verification_matrix,
+            "defect_families": defect_families,
+            "requirement_summary": requirement_summary,
+        }
+
+    @staticmethod
+    def validate_plan_repo_scope(plan_file, state_file):
+        """校验 plan 的仓库列与 state 的 execution_scope.repos 是否一致。
+
+        校验项：
+        - 2.1 和 2.5 仓库列必填
+        - 单仓 plan 的仓库列必须为 owner
+        - 非 owner repo id 必须存在于 state 的 execution_scope.repos
+        - 跨仓路径必须带 repo_id/ 前缀
+
+        返回 dict：{ok: bool, errors: list[str]}
+        """
+        try:
+            text = Path(plan_file).read_text(encoding='utf-8')
+        except Exception as exc:
+            return {"ok": False, "errors": [f"无法读取 plan 文件: {exc}"]}
+
+        try:
+            state = json.loads(Path(state_file).read_text(encoding='utf-8'))
+        except Exception as exc:
+            return {"ok": False, "errors": [f"无法读取 state 文件: {exc}"]}
+
+        scope = state.get("execution_scope") or {}
+        repos = scope.get("repos") or []
+        state_repo_ids = {repo.get("id", "") for repo in repos if repo.get("id")}
+        is_single_owner = len(state_repo_ids) == 1 and "owner" in state_repo_ids
+
+        errors = []
+
+        # 提取 2.1 涉及模块 的仓库列
+        _, module_rows = FlowUtils._extract_section_table(text, "2.1 涉及模块")
+        if not module_rows:
+            errors.append("2.1 涉及模块表格为空或缺少仓库列")
+        else:
+            # 仓库列为第 2 列（索引 1）
+            for row in module_rows:
+                if len(row) < 2:
+                    errors.append("2.1 涉及模块表格行缺少仓库列")
+                    continue
+                repo_id = row[1].strip()
+                if not repo_id or repo_id == "仓库":
+                    errors.append("2.1 涉及模块仓库列为空")
+                    continue
+                if is_single_owner and repo_id != "owner":
+                    errors.append(f"2.1 涉及模块单仓 plan 仓库列必须为 owner，实际为 {repo_id}")
+                elif repo_id != "owner" and repo_id not in state_repo_ids:
+                    errors.append(f"2.1 涉及模块 repo id 不存在于 state: {repo_id}")
+
+        # 提取 2.5 文件边界总览 的仓库列和路径
+        _, boundary_rows = FlowUtils._extract_section_table(text, "2.5 文件边界总览")
+        if not boundary_rows:
+            errors.append("2.5 文件边界总览表格为空或缺少仓库列")
+        else:
+            for row in boundary_rows:
+                if len(row) < 2:
+                    errors.append("2.5 文件边界总览表格行缺少仓库列")
+                    continue
+                repo_id = row[1].strip()
+                file_path = row[0].strip().strip('`')
+                if not repo_id or repo_id == "仓库":
+                    errors.append("2.5 文件边界总览仓库列为空")
+                    continue
+                if is_single_owner and repo_id != "owner":
+                    errors.append(f"2.5 文件边界总览单仓 plan 仓库列必须为 owner，实际为 {repo_id}")
+                elif repo_id != "owner" and repo_id not in state_repo_ids:
+                    errors.append(f"2.5 文件边界总览 repo id 不存在于 state: {repo_id}")
+                # 跨仓路径检查：非 owner 仓库的路径应带 repo_id/ 前缀
+                if repo_id != "owner" and not file_path.startswith(f"{repo_id}/"):
+                    errors.append(f"2.5 文件边界总览跨仓路径缺少 repo_id 前缀: [{repo_id}] {file_path}")
+
+        return {"ok": len(errors) == 0, "errors": errors}
 
     @staticmethod
     def auto_fix_plan_template(plan_file, template_file=None):
@@ -1253,6 +1461,9 @@ if __name__ == "__main__":
         res = FlowUtils.collect_repo_args(sys.argv[2], sys.argv[3])
         for line in res:
             print(line)
+    elif cmd == "parse-plan-step-count":
+        result = FlowUtils.parse_plan_steps(sys.argv[2])
+        print(len(result.get("steps", [])))
     elif cmd == "validate-plan-paths":
         res = FlowUtils.validate_plan_paths(sys.argv[2], sys.argv[3])
         for err in res:
@@ -1318,5 +1529,28 @@ if __name__ == "__main__":
         else:
             print("PASS: 无需修复")
             sys.exit(0)
+    elif cmd == "build-review-packet":
+        plan_file = sys.argv[2]
+        review_mode = sys.argv[3] if len(sys.argv) > 3 else "regular"
+        changed_files_json = sys.argv[4] if len(sys.argv) > 4 else ""
+        result = FlowUtils.build_review_packet(plan_file, review_mode, changed_files_json)
+        if result.get("ok"):
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            sys.exit(0)
+        else:
+            print(f"ERROR: {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
+    elif cmd == "validate-plan-repo-scope":
+        if len(sys.argv) < 4:
+            print("ERROR: validate-plan-repo-scope 需要 plan-file 和 state-file 参数", file=sys.stderr)
+            sys.exit(1)
+        result = FlowUtils.validate_plan_repo_scope(sys.argv[2], sys.argv[3])
+        if result.get("ok"):
+            print("PASS: 仓库 scope 校验通过")
+            sys.exit(0)
+        else:
+            for err in result.get("errors", []):
+                print(f"ERROR: {err}", file=sys.stderr)
+            sys.exit(1)
     elif cmd == "trim-marker":
         FlowUtils.trim_to_marker(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else "")
