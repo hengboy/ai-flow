@@ -24,14 +24,17 @@ __AI_FLOW_HISTORY_RULES__
    - 非文档代码变更时，必须在“1.2 定向验证执行证据”中写出本轮实际执行的命令、结果、结果含义；未执行也要说明原因和人工验证边界
 8. 检查代码质量、规范性、安全性和性能，并按缺陷族组织思路审查；不要只做逐文件表面扫描
 
-实施计划内容：
-__AI_FLOW_PLAN_CONTENT____AI_FLOW_HISTORY_CONTEXT__
+Review Packet：
+__AI_FLOW_REVIEW_PACKET__
+
+**局部读取指引**：若 packet 不足以判断某个 Step 的细节，可读取 plan 文件对应局部章节（Step 的执行动作、验收、关闭条件），不要整篇复述。__AI_FLOW_HISTORY_CONTEXT__
 
 审查模板结构：
 __AI_FLOW_TEMPLATE_CONTENT__
 
 审查原则（必须严格执行）：
-- **精确上下文**：只基于 plan 文件、上一轮缺陷正文/追踪、git status、git diff、untracked 文件内容、实际文件内容和本轮定向验证结果审查，不依赖执行者会话历史或口头解释
+- **精确上下文**：review 只基于 review packet、git diff、untracked 文件内容、上一轮缺陷摘要和必要的局部文件读取完成判断，不要整篇复述完整 plan
+- **计划文件读取**：若 packet 不足以判断某个 Step 的细节，可读取 plan 文件对应局部章节（Step 的执行动作、验收、关闭条件），不注入完整 plan 正文
 - **问题优先**：优先报告会导致行为错误、回归、安全风险、数据损坏、测试缺失的具体问题
 - **证据完整**：每个问题必须给出文件位置、影响、复现或推理依据、修复建议
 - **严重级别**：Critical/Important 问题必须进入缺陷清单；Minor 建议进入建议改进

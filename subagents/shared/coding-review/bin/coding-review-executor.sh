@@ -273,6 +273,7 @@ EOF
     AI_FLOW_REVIEW_SCOPE_GUIDANCE="$REVIEW_SCOPE_GUIDANCE" \
     AI_FLOW_HISTORY_RULES="$HISTORY_RULES" \
     AI_FLOW_PLAN_CONTENT="$PLAN_CONTENT" \
+    AI_FLOW_REVIEW_PACKET="$REVIEW_PACKET" \
     AI_FLOW_HISTORY_CONTEXT="$HISTORY_CONTEXT" \
     AI_FLOW_TEMPLATE_CONTENT="$TEMPLATE_CONTENT" \
     AI_FLOW_SLUG="$SLUG" \
@@ -292,6 +293,7 @@ replacements = {
     "__AI_FLOW_REVIEW_SCOPE_GUIDANCE__": os.environ["AI_FLOW_REVIEW_SCOPE_GUIDANCE"],
     "__AI_FLOW_HISTORY_RULES__": os.environ["AI_FLOW_HISTORY_RULES"],
     "__AI_FLOW_PLAN_CONTENT__": os.environ["AI_FLOW_PLAN_CONTENT"],
+    "__AI_FLOW_REVIEW_PACKET__": os.environ.get("AI_FLOW_REVIEW_PACKET", ""),
     "__AI_FLOW_HISTORY_CONTEXT__": os.environ["AI_FLOW_HISTORY_CONTEXT"],
     "__AI_FLOW_TEMPLATE_CONTENT__": os.environ["AI_FLOW_TEMPLATE_CONTENT"],
     "__AI_FLOW_SLUG__": os.environ["AI_FLOW_SLUG"],
@@ -721,7 +723,7 @@ review_reasoning() {
     local reasoning="$REASONING"
 
     local reviewable_paths="${1:-0}"
-    local plan_lines="${2:-0}"
+    local packet_size="${2:-0}"
     local current_round="${3:-1}"
     local prev_review_present="${4:-0}"
 
@@ -730,7 +732,7 @@ review_reasoning() {
         || [ "$current_round" -ge 2 ] \
         || [ "$prev_review_present" -eq 1 ] \
         || [ "$reviewable_paths" -ge 8 ] \
-        || [ "$plan_lines" -ge 220 ]; then
+        || [ "$packet_size" -ge 150 ]; then
         reasoning="xhigh"
     fi
 
@@ -1414,8 +1416,17 @@ fi
 
 if [ "$IS_STANDALONE" -eq 0 ]; then
     PLAN_CONTENT=$(cat "$PLAN_FILE_ABS")
-    REASONING=$(review_reasoning "$(count_reviewable_git_paths)" "$(printf '%s\n' "$PLAN_CONTENT" | wc -l | tr -d ' ')" "$CURRENT_ROUND" "$( [ -n "$PREV_REVIEW_ABS" ] && echo 1 || echo 0 )")
+    # 生成 review packet，失败时 fallback 到完整 plan
+    REVIEW_PACKET=""
+    if [ -n "$PLAN_FILE_ABS" ] && [ -f "$PLAN_FILE_ABS" ]; then
+        REVIEW_PACKET=$(python3 "$FLOW_UTILS_PY" build-review-packet "$PLAN_FILE_ABS" "$REVIEW_MODE" "" 2>/dev/null || true)
+    fi
+    if [ -z "$REVIEW_PACKET" ]; then
+        REVIEW_PACKET="$PLAN_CONTENT"
+    fi
+    REASONING=$(review_reasoning "$(count_reviewable_git_paths)" "$(printf '%s\n' "$REVIEW_PACKET" | wc -l | tr -d ' ')" "$CURRENT_ROUND" "$( [ -n "$PREV_REVIEW_ABS" ] && echo 1 || echo 0 )")
 else
+    REVIEW_PACKET=""
     REASONING=$(review_reasoning "$(count_reviewable_git_paths)" 0 "$CURRENT_ROUND" 0)
 fi
 

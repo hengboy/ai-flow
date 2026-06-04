@@ -58,6 +58,19 @@ class CodingReviewContractTest(unittest.TestCase):
         self.assertIn(expected, codex_agent)
         self.assertIn(expected, claude_agent)
 
+    def test_review_prompt_uses_review_packet(self):
+        """验证 review-generation.md 包含 __AI_FLOW_REVIEW_PACKET__ 变量引用。"""
+        review_gen = (
+            PROJECT_ROOT
+            / "subagents/shared/coding-review/prompts/review-generation.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("__AI_FLOW_REVIEW_PACKET__", review_gen)
+        # 确认不再是主上下文（__AI_FLOW_PLAN_CONTENT__ 不应作为主注入项出现）
+        # 注意：__AI_FLOW_PLAN_CONTENT__ 仍保留在 render_prompt_template 中作为 fallback
+        # 但在 review prompt 模板中不应作为主上下文出现
+        self.assertNotIn("__AI_FLOW_PLAN_CONTENT__", review_gen)
+
 
 if __name__ == "__main__":
     unittest.main()
