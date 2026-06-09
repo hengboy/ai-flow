@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/testkit.bash"
 
 INSTALL_SH="$PROJECT_ROOT/install.sh"
-THIN_SKILLS="ai-flow-plan ai-flow-plan-review ai-flow-plan-coding-review"
+THIN_SKILLS="ai-flow-plan ai-flow-plan-review ai-flow-plan-coding-review ai-flow-plan-orchestrate"
 CODEX_NATIVE_AGENTS="ai-flow-codex-plan ai-flow-codex-plan-review ai-flow-codex-plan-coding-review"
 CLAUDE_AGENT_BUNDLES="ai-flow-codex-plan ai-flow-codex-plan-review ai-flow-codex-plan-coding-review ai-flow-claude-plan ai-flow-claude-plan-review ai-flow-claude-plan-coding-review"
 
@@ -110,6 +110,12 @@ test_runtime_lib_is_preserved() {
         test_pass "安装后保留 shared lib"
     else
         test_fail "安装后保留 shared lib" "缺少 $ai_flow_home/lib/rule-loader.sh"
+    fi
+
+    if [ -f "$ai_flow_home/scripts/flow-plan-orchestrate.sh" ] && [ -x "$ai_flow_home/scripts/flow-plan-orchestrate-launch.sh" ]; then
+        test_pass "安装后包含 plan orchestrate runtime"
+    else
+        test_fail "安装后包含 plan orchestrate runtime" "缺少 orchestrate runtime 脚本"
     fi
 
     assert_skill_set_installed "$claude_home/skills" "Claude skill"
