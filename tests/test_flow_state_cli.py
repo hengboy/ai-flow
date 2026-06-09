@@ -473,6 +473,32 @@ class TestStateTransition(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertIn("AWAITING_PLAN_REVIEW", r.stdout)
 
+    def test_plan_reopened_from_plan_review_failed_records_revision_flow(self):
+        self.proj.create_state(self.slug)
+        r = self._run(
+            "transition", "--slug", self.slug, "--event", "plan_review_failed",
+            "--result", "failed", "--engine", "e", "--model", "m",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+        r = self._run(
+            "transition", "--slug", self.slug, "--event", "plan_reopened",
+            "--note", "draft plan 修订完成，重新进入计划审核",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("AWAITING_PLAN_REVIEW", r.stdout)
+
+        state_file = self.proj.state_dir / f"{self.slug}.json"
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        self.assertEqual(state["current_status"], "AWAITING_PLAN_REVIEW")
+        self.assertEqual([item["event"] for item in state["transitions"]], [
+            "plan_created",
+            "plan_review_failed",
+            "plan_reopened",
+        ])
+        self.assertEqual(state["transitions"][-1]["from"], "PLAN_REVIEW_FAILED")
+        self.assertEqual(state["transitions"][-1]["to"], "AWAITING_PLAN_REVIEW")
+
     def test_recheck_from_done(self):
         self.proj.create_state(self.slug)
         self._write_plan(self._standard_plan(all_done=True))

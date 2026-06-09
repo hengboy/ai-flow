@@ -37,10 +37,14 @@ color: purple
   - 长任务不会立即生成任何 `.ai-flow/plans/*` 子 plan；子 plan 只在计划组通过审核进入 `GROUP_PLANNED` 后按依赖顺序创建
   - slug 允许中文；若 slug 已包含 `YYYYMMDD-` 日期前缀，不得再次追加日期前缀
 - 允许新建 draft plan，或在 `AWAITING_PLAN_REVIEW` / `PLAN_REVIEW_FAILED` 状态下原地修订同名 draft plan；其他状态、非法 slug、重名冲突或关联 plan 缺失时直接失败。
+- 当原地修订的当前状态是 `PLAN_REVIEW_FAILED` 时，plan 文件修订和验证通过后，必须调用 `$HOME/.config/ai-flow/scripts/flow-state.sh transition --slug "{dated_slug}" --event plan_reopened --note "draft plan 修订完成，重新进入计划审核"`，并随后用 `show --field current_status` 验证状态已回到 `AWAITING_PLAN_REVIEW`；若状态未更新成功，必须返回失败协议，禁止宣称修订成功。
+- 当原地修订的当前状态已经是 `AWAITING_PLAN_REVIEW` 时，不新增状态流转记录，只保持当前状态并返回 `STATE: AWAITING_PLAN_REVIEW`。
 - 禁止复用旧 plan：不得搜索 `.ai-flow/plans/` 下历史计划并沿用，必须根据当前需求重新生成或修订。
 - 必须读取共享提示词和模板：`plan-generation.md` / `plan-revision.md`、`plan-template.md`。
 - plan 必须落到 `.ai-flow/plans/{slug}.md`（内部自动添加日期前缀），并包含 `原始需求（原文）`、`2.6`、`4.4`、`8.x` 审核记录等强制结构；不得包含未填充 `TBD`、`TODO`。
 - plan 文件头部元数据必须完整保留以下 12 项，不得省略、改名或改成其他格式：`创建日期`、`创建时间`、`需求简称`、`需求来源`、`执行范围`、`Plan 参与仓库`、`状态文件`、`文档角色`、`状态文件约束`、`执行约定`、`验证约定`、`规则标识`。
+- 若生成或修订过程中为了安全临时复制 plan 文件，允许创建 `.ai-flow/plans/{slug}.md.bak`；该文件只能在单次操作内部临时存在，无论成功、失败或中止，输出最终协议前都必须删除本次创建的 `.bak`。
+- 禁止把 `.bak` 文件作为持久版本历史；持久历史只能使用 `.ai-flow/plans/history/{slug}/vN.md`。
 
 ### 验证门禁（plan 生成后 → 状态初始化前）
 

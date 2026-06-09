@@ -1669,6 +1669,17 @@ state_json_value_optional() {
     state_json_value "$1" "$2" 2>/dev/null || true
 }
 
+require_plan_status() {
+    local slug="$1"
+    local expected_status="$2"
+    local actual_status
+    actual_status=$("$FLOW_STATE_SH" show --slug "$slug" --field current_status)
+    if [ "$actual_status" != "$expected_status" ]; then
+        fail_protocol "状态更新失败：期望 [$expected_status]，实际 [$actual_status]。"
+    fi
+    printf '%s\n' "$actual_status"
+}
+
 load_state_context() {
     local state_file="$1"
     python3 - "$state_file" <<'PY'
@@ -2402,7 +2413,7 @@ if [ "$SLUG_EXPLICIT" = true ] && [ -f "$EXISTING_STATE_FILE" ]; then
             --slug "$EXISTING_DATED_SLUG" \
             --event plan_reopened \
             --note "draft plan 修订完成，重新进入计划审核" >/dev/null
-        PLAN_STATUS=$("$FLOW_STATE_SH" show --slug "$EXISTING_DATED_SLUG" --field current_status)
+        PLAN_STATUS=$(require_plan_status "$EXISTING_DATED_SLUG" "AWAITING_PLAN_REVIEW")
     fi
     echo "    状态更新为 [$PLAN_STATUS]"
     PROTOCOL_STATE="$PLAN_STATUS"
