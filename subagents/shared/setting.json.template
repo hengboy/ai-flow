@@ -16,6 +16,15 @@
   "state": {
     "actor": "flow-state.sh"
   },
+  "orchestration": {
+    "tool": "auto",
+    "launcher": "auto",
+    "command_templates": {
+      "codex": "codex --cd {cwd} {prompt}",
+      "claude": "claude {prompt}",
+      "custom": ""
+    }
+  },
   "html": {
     "enabled": false,
     "theme": "html-effectiveness",
